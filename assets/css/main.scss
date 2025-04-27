@@ -1,0 +1,51 @@
+
+// assets/vuetifyTheme.scss
+
+
+
+@font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: bold;
+    font-display: swap;
+    src: url('../fonts/Poppins-Bold.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: lighter;
+    font-display: swap;
+    src: url('../fonts/Poppins-Light.ttf') format('truetype');
+}
+
+@font-face {
+    font-family: 'Poppins';
+    font-style: normal;
+    font-weight: normal;
+    font-display: swap;
+    src: url('../fonts/Poppins-Regular.ttf') format('truetype');
+}
+
+* {
+    font-family: 'Poppins';
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #E35353;
+}
+
+.swal2-confirm.swal2-styled {
+    background-color: #E35353 !important;
+    color: white;
+  }
+
+  .swal2-cancel {
+    background-color: #CBCDCB !important;
+    color: #1A1A1A !important;
+  }
+  
+  .swal2-deny {
+    background-color: #CBCDCB !important;
+    color: #1A1A1A !important;
+  }
