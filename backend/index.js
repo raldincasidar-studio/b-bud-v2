@@ -111,7 +111,18 @@ app.get('/api/residents', async (req, res) => {
 
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const query = search ? { $text: { $search: search } } : {};
+  const query = search ? {
+    $or: [
+      { firstName: { $regex: new RegExp(search, 'i') } },
+      { middleName: { $regex: new RegExp(search, 'i') } },
+      { lastName: { $regex: new RegExp(search, 'i') } },
+      { emailAddress: { $regex: new RegExp(search, 'i') } },
+      { contactNo: { $regex: new RegExp(search, 'i') } },
+      { block: { $regex: new RegExp(search, 'i') } },
+      { lot: { $regex: new RegExp(search, 'i') } },
+      { subdivision: { $regex: new RegExp(search, 'i') } },
+    ]
+  } : {};
   const residents = await residentsCollection.find(query, {
     projection: {
       firstName: 1,
@@ -143,6 +154,14 @@ app.get('/api/residents/:id', async (req, res) => {
   const residentsCollection = dab.collection('residents');
   const resident = await residentsCollection.findOne({ _id: new ObjectId(req.params.id) });
   res.json({resident});
+})
+
+// DELETE RESIDENT BY ID (DELETE)
+app.delete('/api/residents/:id', async (req, res) => {
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  await residentsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({message: 'Resident deleted successfully'});
 })
 
 

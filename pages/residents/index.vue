@@ -10,7 +10,7 @@
 
         <!-- Your content goes here -->
         <div class="my-10">
-          <v-text-field v-model="searchKey" prepend-inner-icon="mdi-magnify" variant="outlined" color="primary" label="Search Products" placeholder="Search for Account ID, Name, Collector, etc..." rounded="lg"></v-text-field>
+          <v-text-field v-model="searchKey" prepend-inner-icon="mdi-magnify" variant="outlined" color="primary" label="Search Residents" placeholder="Search for Account ID, Name, Collector, etc..." rounded="lg"></v-text-field>
 
 
           <v-data-table-server :items-length="totalCustomers" :search="searchKey" :items="customers" @update:options="updateTable">
@@ -49,7 +49,7 @@ async function updateTable(tableData) {
   });
 
   console.log(data);
-  console.log(data.value.data);
+  console.log(data.value?.data);
 
   customers.value = data.value?.residents;
   totalCustomers.value = data.value?.totalResidents
