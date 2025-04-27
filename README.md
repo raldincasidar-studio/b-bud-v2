@@ -46,7 +46,7 @@ b-bud/
 ### 📥 Clone the Repository
 
 ```bash
-git clone https://github.com/raldincasidar-studio/b-bud.git
+git clone https://github.com/developer/b-bud.git
 cd b-bud
 ```
 
