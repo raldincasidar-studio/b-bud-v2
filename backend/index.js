@@ -148,11 +148,56 @@ app.get('/api/residents', async (req, res) => {
   });
 })
 
+// SEARCH FOR RESIDENT
+app.get('/api/residents/search', async (req, res) => {
+  const search = req.query.q?.toString().trim() || '';
+
+  if (search.length < 2) {
+    return res.json({ residents: [] });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+
+  const query = {
+    $or: [
+      { firstName: { $regex: new RegExp(search, 'i') } },
+      { middleName: { $regex: new RegExp(search, 'i') } },
+      { lastName: { $regex: new RegExp(search, 'i') } },
+      { emailAddress: { $regex: new RegExp(search, 'i') } },
+      { contactNo: { $regex: new RegExp(search, 'i') } },
+      { block: { $regex: new RegExp(search, 'i') } },
+      { lot: { $regex: new RegExp(search, 'i') } },
+      { subdivision: { $regex: new RegExp(search, 'i') } }
+    ]
+  };
+
+  const residents = await residentsCollection.find(query, {
+    projection: {
+      _id: 1,
+      firstName: 1,
+      middleName: 1,
+      lastName: 1,
+    }
+  })
+    .limit(10)
+    .toArray();
+
+  console.log(residents);
+
+  const formattedResidents = residents.map(resident => ({
+    id: resident._id,
+    name: `${resident.firstName} ${resident.middleName || ''} ${resident.lastName}`.trim()
+  }));
+
+  res.json({ residents: formattedResidents });
+});
+
 // GET RESIDENT BY ID (GET)
 app.get('/api/residents/:id', async (req, res) => {
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const resident = await residentsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  const resident = await residentsCollection.findOne({ _id: req.params.id });
   res.json({resident});
 })
 
@@ -163,6 +208,131 @@ app.delete('/api/residents/:id', async (req, res) => {
   await residentsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
   res.json({message: 'Resident deleted successfully'});
 })
+
+// UPDATE RESIDENT BY ID (PUT)
+app.put('/api/residents/:id', async (req, res) => {
+
+  const dab = await db();
+
+  const residentsCollection = dab.collection('residents');
+  await residentsCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: req.body }
+  );
+
+  res.json({message: 'Resident updated successfully'});
+})
+
+
+
+// ======================= DOCUMENT REQUEST ======================= //
+
+// ADD NEW DOCUMENT (POST)
+app.post('/api/documents', async (req, res) => {
+  const dab = await db();
+
+  const requiredFields = ['residentId', 'Address', 'type', 'YearsInBarangay', 'status', 'description', 'PurposeOfDocument', 'ContactNumber'];
+  if (requiredFields.some(field => !req.body[field])) {
+    res.json({ error: 'Missing required fields' });
+    return;
+  }
+
+  const documentsCollection = dab.collection('documents');
+  const documentToInsert = {
+    residentId: req.body.residentId,
+    Address: req.body.Address,
+    type: req.body.type,
+    YearsInBarangay: parseInt(req.body.YearsInBarangay),
+    status: req.body.status,
+    description: req.body.description,
+    PurposeOfDocument: req.body.PurposeOfDocument,
+    ContactNumber: req.body.ContactNumber,
+    date_added: new Date(),
+  };
+
+  await documentsCollection.insertOne(documentToInsert);
+  res.json({ message: 'Document added successfully' });
+});
+
+// GET ALL DOCUMENTS (GET)
+app.get('/api/documents', async (req, res) => {
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+
+  const dab = await db();
+  const documentsCollection = dab.collection('documents');
+
+  const query = search
+    ? {
+        $or: [
+          { Address: { $regex: new RegExp(search, 'i') } },
+          { type: { $regex: new RegExp(search, 'i') } },
+          { status: { $regex: new RegExp(search, 'i') } },
+          { description: { $regex: new RegExp(search, 'i') } },
+          { PurposeOfDocument: { $regex: new RegExp(search, 'i') } },
+          { ContactNumber: { $regex: new RegExp(search, 'i') } },
+        ]
+      }
+    : {};
+
+  const documents = await documentsCollection
+    .find(query, {
+      projection: {
+        residentId: 1,
+        Address: 1,
+        type: 1,
+        YearsInBarangay: 1,
+        status: 1,
+        description: 1,
+        PurposeOfDocument: 1,
+        ContactNumber: 1,
+      }
+    })
+    .skip((page - 1) * itemsPerPage)
+    .limit(itemsPerPage)
+    .toArray();
+
+  const totalDocuments = await documentsCollection.countDocuments(query);
+
+  res.json({
+    documents,
+    totalDocuments
+  });
+});
+
+// GET DOCUMENT BY ID (GET)
+app.get('/api/documents/:id', async (req, res) => {
+  const dab = await db();
+  const documentsCollection = dab.collection('documents');
+  const document = await documentsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  res.json({ document });
+});
+
+// DELETE DOCUMENT BY ID (DELETE)
+app.delete('/api/documents/:id', async (req, res) => {
+  const dab = await db();
+  const documentsCollection = dab.collection('documents');
+  await documentsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({ message: 'Document deleted successfully' });
+});
+
+// UPDATE DOCUMENT BY ID (PUT)
+app.put('/api/documents/:id', async (req, res) => {
+  const dab = await db();
+  const documentsCollection = dab.collection('documents');
+
+  const updateData = { ...req.body };
+  if (updateData.residentId) updateData.residentId = updateData.residentId;
+  if (updateData.YearsInBarangay) updateData.YearsInBarangay = parseInt(updateData.YearsInBarangay);
+
+  await documentsCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: updateData }
+  );
+
+  res.json({ message: 'Document updated successfully' });
+});
 
 
 
