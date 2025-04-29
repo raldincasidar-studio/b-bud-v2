@@ -335,6 +335,104 @@ app.put('/api/documents/:id', async (req, res) => {
 });
 
 
+// ====================== ADMINS CRUD =========================== //
+
+// ADD NEW ADMIN (POST)
+app.post('/api/admins', async (req, res) => {
+
+  const dab = await db();
+
+  // validate required fields
+  const required_fields = ['username', 'password', 'name', 'email', 'role'];
+
+  if (required_fields.some(field => !req.body[field])) {
+    res.json({error: 'Missing required fields'});
+    return;
+  }
+
+  const adminsCollection = dab.collection('admins');
+  await adminsCollection.insertOne({...req.body, password: md5(req.body.password)});
+
+  res.json({message: 'Admin added successfully'});
+})
+
+// GET ALL ADMINS (GET)
+app.get('/api/admins', async (req, res) => {
+
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+
+  const dab = await db();
+  const adminsCollection = dab.collection('admins');
+  const query = search ? {
+    $or: [
+      { username: { $regex: new RegExp(search, 'i') } },
+      { name: { $regex: new RegExp(search, 'i') } },
+      { email: { $regex: new RegExp(search, 'i') } },
+      { role: { $regex: new RegExp(search, 'i') } },
+    ]
+  } : {};
+  const admins = await adminsCollection.find(query, {
+    projection: {
+      username: 1,
+      name: 1,
+      email: 1,
+      role: 1,
+      _id: 1,
+    }
+  })
+    .skip((page - 1) * itemsPerPage)
+    .limit(itemsPerPage)
+    .toArray();
+  const totalAdmins = await adminsCollection.countDocuments(query);
+  res.json({
+    admins: admins,
+    totalAdmins: totalAdmins
+  });
+})
+
+// GET ADMIN BY ID (GET)
+app.get('/api/admins/:id', async (req, res) => {
+  const dab = await db();
+  const adminsCollection = dab.collection('admins');
+  const admin = await adminsCollection.findOne(
+    { _id: new ObjectId(req.params.id) },
+    {
+      projection: {
+        password: 0,
+      }
+    }
+  );
+  res.json({admin});
+})
+
+// DELETE ADMIN BY ID (DELETE)
+app.delete('/api/admins/:id', async (req, res) => {
+  const dab = await db();
+  const adminsCollection = dab.collection('admins');
+  await adminsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({message: 'Admin deleted successfully'});
+})
+
+// UPDATE ADMIN BY ID (PUT)
+app.put('/api/admins/:id', async (req, res) => {
+
+  const dab = await db();
+
+  const adminsCollection = dab.collection('admins');
+
+  const data = { ...req.body };
+  if (data.password) data.password = md5(data.password);
+
+  await adminsCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: data }
+  );
+
+  res.json({message: 'Admin updated successfully'});
+})
+
 
 
 
