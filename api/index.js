@@ -88,19 +88,32 @@ app.post('/api/residents', async (req, res) => {
 
   const dab = await db();
 
-  // validate required fields
-  const required_fields = ['firstName', 'lastName', 'gender', 'civilStatus', 'yearLived', 'occupation', 'isVoter', 'contactNo', 'emailAddress'];
+  const { firstName, lastName, gender, civilStatus, yearLived, occupation, isVoter, contactNo, emailAddress } = req.body;
 
-  if (required_fields.some(field => !req.body[field])) {
-    res.json({error: 'Missing required fields'});
+  const requiredFields = [
+    { field: 'firstName', value: firstName, format: /^[a-zA-Z\s]+$/ },
+    { field: 'lastName', value: lastName, format: /^[a-zA-Z\s]+$/ },
+    { field: 'gender', value: gender, format: /^(Male|Female|Other)$/ },
+    { field: 'civilStatus', value: civilStatus, format: /^(Single|Married|Divorced|Widowed|Separated)$/ },
+    { field: 'yearLived', value: yearLived, format: /^\d{4}$/ },
+    { field: 'occupation', value: occupation, format: /^[a-zA-Z\s]+$/ },
+    { field: 'isVoter', value: isVoter, format: /^(Yes|No)$/ },
+    { field: 'contactNo', value: contactNo, format: /^\d{11}$/ },
+    { field: 'emailAddress', value: emailAddress, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  ];
+
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
     return;
   }
 
   const residentsCollection = dab.collection('residents');
   await residentsCollection.insertOne(req.body);
 
-  res.json({message: 'Resident added successfully'});
-})
+  res.json({ message: 'Resident added successfully' });
+});
 
 // GET ALL RESIDENT (GET)
 app.get('/api/residents', async (req, res) => {
@@ -135,7 +148,7 @@ app.get('/api/residents', async (req, res) => {
       contactNo: 1,
       emailAddress: 1,
       _id: 1,
-      // action: { $ifNull: [ "$action", "" ] }
+      action: { $ifNull: [ "$action", "" ] }
     }
   })
     .skip((page - 1) * itemsPerPage)
@@ -178,6 +191,8 @@ app.get('/api/residents/search', async (req, res) => {
       firstName: 1,
       middleName: 1,
       lastName: 1,
+      gender: 1,
+      dateOfBirth: 1,
     }
   })
     .limit(10)
@@ -197,7 +212,7 @@ app.get('/api/residents/search', async (req, res) => {
 app.get('/api/residents/:id', async (req, res) => {
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const resident = await residentsCollection.findOne({ _id: req.params.id });
+  const resident = await residentsCollection.findOne({ _id: new ObjectId(req.params.id) });
   res.json({resident});
 })
 
@@ -214,6 +229,25 @@ app.put('/api/residents/:id', async (req, res) => {
 
   const dab = await db();
 
+  const requiredFields = [
+    { field: 'firstName', value: req.body.firstName, format: /^[a-zA-Z\s]+$/ },
+    { field: 'lastName', value: req.body.lastName, format: /^[a-zA-Z\s]+$/ },
+    { field: 'gender', value: req.body.gender, format: /^(Male|Female|Other)$/ },
+    { field: 'civilStatus', value: req.body.civilStatus, format: /^(Single|Married|Divorced|Widowed|Separated)$/ },
+    { field: 'yearLived', value: req.body.yearLived, format: /^\d{4}$/ },
+    { field: 'occupation', value: req.body.occupation, format: /^[a-zA-Z\s]+$/ },
+    { field: 'isVoter', value: req.body.isVoter, format: /^(Yes|No)$/ },
+    { field: 'contactNo', value: req.body.contactNo, format: /^\d{11}$/ },
+    { field: 'emailAddress', value: req.body.emailAddress, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+  ];
+
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
+    return;
+  }
+
   const residentsCollection = dab.collection('residents');
   await residentsCollection.updateOne(
     { _id: new ObjectId(req.params.id) },
@@ -222,6 +256,54 @@ app.put('/api/residents/:id', async (req, res) => {
 
   res.json({message: 'Resident updated successfully'});
 })
+
+
+
+// ======================= HOUSEHOLD ======================= //
+
+// GET ALL RESIDENT (GET)
+app.get('/api/households', async (req, res) => {
+
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  const query = search ? {
+    $or: [
+      { firstName: { $regex: new RegExp(search, 'i') } },
+      { middleName: { $regex: new RegExp(search, 'i') } },
+      { lastName: { $regex: new RegExp(search, 'i') } },
+      { emailAddress: { $regex: new RegExp(search, 'i') } },
+      { contactNo: { $regex: new RegExp(search, 'i') } },
+      { block: { $regex: new RegExp(search, 'i') } },
+      { lot: { $regex: new RegExp(search, 'i') } },
+      { subdivision: { $regex: new RegExp(search, 'i') } },
+    ],
+    $and: [
+      { isHouseholdHead: true }
+    ]
+  } : {isHouseholdHead: true};
+  const residents = await residentsCollection.find(query, {
+    projection: {
+      name: { $concat: [ "$lastName", "'s Household" ] },
+      head: { $concat: [ "$firstName", " ", "$middleName", " ", "$lastName"] },
+      householdCount: { $ifNull: [{ $size: "$householdList" }, 0] },
+      _id: 1,
+      action: { $ifNull: [ "$action", "" ] }
+    }
+  })
+    .skip((page - 1) * itemsPerPage)
+    .limit(itemsPerPage)
+    .toArray();
+  const totalResidents = await residentsCollection.countDocuments(query);
+  res.json({
+    residents: residents,
+    totalResidents: totalResidents
+  });
+})
+
 
 
 
@@ -287,6 +369,7 @@ app.get('/api/documents', async (req, res) => {
         description: 1,
         PurposeOfDocument: 1,
         ContactNumber: 1,
+        action: { $ifNull: [ "$action", "" ] }
       }
     })
     .skip((page - 1) * itemsPerPage)
@@ -342,11 +425,18 @@ app.post('/api/admins', async (req, res) => {
 
   const dab = await db();
 
-  // validate required fields
-  const required_fields = ['username', 'password', 'name', 'email', 'role'];
+  const requiredFields = [
+    { field: 'username', value: req.body.username, format: /^[a-zA-Z0-9._%+-]+$/ },
+    { field: 'password', value: req.body.password, format: /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$/ },
+    { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+    { field: 'role', value: req.body.role, format: /^(Admin|Staff|Resident)$/ },
+  ];
 
-  if (required_fields.some(field => !req.body[field])) {
-    res.json({error: 'Missing required fields'});
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({error: 'Invalid field format: ' + errors.map(error => error.message).join(', ')});
     return;
   }
 
@@ -380,6 +470,7 @@ app.get('/api/admins', async (req, res) => {
       email: 1,
       role: 1,
       _id: 1,
+      action: { $ifNull: [ "$action", "" ] }
     }
   })
     .skip((page - 1) * itemsPerPage)
@@ -422,6 +513,26 @@ app.put('/api/admins/:id', async (req, res) => {
 
   const adminsCollection = dab.collection('admins');
 
+  const { username, name, email, role, password } = req.body;
+
+  const requiredFields = [
+    { field: 'username', value: username, format: /^[a-zA-Z0-9_]+$/ },
+    { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'email', value: email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
+    { field: 'role', value: role, format: /^(Admin|User)$/ },
+  ];
+
+  if (password) {
+    requiredFields.push({ field: 'password', value: password, format: /^[a-zA-Z0-9_]+$/ });
+  }
+
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
+    return;
+  }
+
   const data = { ...req.body };
   if (data.password) data.password = md5(data.password);
 
@@ -436,6 +547,136 @@ app.put('/api/admins/:id', async (req, res) => {
 
 
 
+
+// ====================== OFFICIALS CRUD =========================== //
+
+// ADD NEW OFFICIAL (POST)
+app.post('/api/officials', async (req, res) => {
+
+  const dab = await db();
+
+  const requiredFields = [
+    { field: 'picture', value: req.body.picture, format: /^.*$/ }, // Assuming any string is acceptable
+    { field: 'zone', value: req.body.zone, format: /^[a-zA-Z0-9\s]+$/ }, // Assuming zone is a number
+    { field: 'brgy', value: req.body.brgy, format: /^[a-zA-Z\s]+$/ },
+    { field: 'designation', value: req.body.designation, format: /^(PB|K|A|G|A|W|A|D|SEC|TREAS)$/ },
+    { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'blood_type', value: req.body.blood_type, format: /^(A|B|AB|O)[+-]$/ },
+  ];
+
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
+    return;
+  }
+
+  const officialsCollection = dab.collection('officials');
+  try {
+    await officialsCollection.insertOne(req.body);
+  } catch (error) {
+    res.json({ error: 'Error adding official: ' + error.message });
+    return;
+  }
+
+  res.json({ message: 'Official added successfully' });
+})
+
+// GET ALL OFFICIALS (GET)
+app.get('/api/officials', async (req, res) => {
+
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+
+  const dab = await db();
+  const officialsCollection = dab.collection('officials');
+  const query = search ? {
+    $or: [
+      { picture: { $regex: new RegExp(search, 'i') } },
+      { zone: { $regex: new RegExp(search, 'i') } },
+      { brgy: { $regex: new RegExp(search, 'i') } },
+      { designation: { $regex: new RegExp(search, 'i') } },
+      { name: { $regex: new RegExp(search, 'i') } },
+      { blood_type: { $regex: new RegExp(search, 'i') } },
+    ]
+  } : {};
+  const officials = await officialsCollection.find(query, {
+    projection: {
+      // picture: 1,
+      zone: 1,
+      brgy: 1,
+      designation: 1,
+      name: 1,
+      blood_type: 1,
+      _id: 1,
+      action: { $ifNull: [ "$action", "" ] }
+    }
+  })
+    .skip((page - 1) * itemsPerPage)
+    .limit(itemsPerPage)
+    .toArray();
+  const totalOfficials = await officialsCollection.countDocuments(query);
+  res.json({
+    officials: officials,
+    totalOfficials: totalOfficials
+  });
+})
+
+// GET OFFICIAL BY ID (GET)
+app.get('/api/officials/:id', async (req, res) => {
+  const dab = await db();
+  const officialsCollection = dab.collection('officials');
+  const official = await officialsCollection.findOne(
+    { _id: new ObjectId(req.params.id) }
+  );
+  res.json({ official });
+})
+
+// DELETE OFFICIAL BY ID (DELETE)
+app.delete('/api/officials/:id', async (req, res) => {
+  const dab = await db();
+  const officialsCollection = dab.collection('officials');
+  await officialsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
+  res.json({ message: 'Official deleted successfully' });
+})
+
+// UPDATE OFFICIAL BY ID (PUT)
+app.put('/api/officials/:id', async (req, res) => {
+
+  const dab = await db();
+
+  const officialsCollection = dab.collection('officials');
+
+  const { picture, zone, brgy, designation, name, blood_type } = req.body;
+
+  const requiredFields = [
+    { field: 'picture', value: picture, format: /^.*$/ },
+    { field: 'zone', value: zone, format: /^\d+$/ },
+    { field: 'brgy', value: brgy, format: /^[a-zA-Z\s]+$/ },
+    { field: 'designation', value: designation, format: /^(PB|K|A|G|A|W|A|D|SEC|TREAS)$/ },
+    { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'blood_type', value: blood_type, format: /^(A|B|AB|O)[+-]$/ },
+  ];
+
+  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+
+  if (errors.length > 0) {
+    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
+    return;
+  }
+
+  await officialsCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: req.body }
+  );
+
+  res.json({ message: 'Official updated successfully' });
+})
+
+
+
+
 // Server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
@@ -445,65 +686,4 @@ app.listen(PORT, () => {
 // Helper function
 function generateToken(length = 32) {
   return crypto.randomBytes(length).toString("hex"); // 32 bytes = 64 hex chars
-}
-
-function calculateCustomerBalance(user_id) {
-  const stmt = db.prepare(`SELECT * FROM payments WHERE customer_id = ?`);
-  const payments = stmt.all(user_id);
-
-
-  const user = db.prepare('SELECT * FROM customers WHERE id = ?').get(user_id);
-  const product = db.prepare('SELECT * FROM products WHERE id = ?').get(user.item_id);
-  let balance = 0;
-  let amount_per_month = 0;
-
-  if (user.selected_terms == 3) amount_per_month = user.three_months_calc;
-  if (user.selected_terms == 6) amount_per_month = user.six_months_calc;
-  if (user.selected_terms == 12) amount_per_month = user.twelve_months_calc;
-  if (user.selected_terms == 18) amount_per_month = user.eighteen_months_calc;
-  if (user.selected_terms == 24) amount_per_month = user.twenty_four_months_calc;
-
-
-  balance = (amount_per_month * user.selected_terms) + user.down_payment;
-  console.log(balance, amount_per_month, user.selected_terms, user.down_payment);
-
-  for (const payment of payments) {
-    balance -= payment.amount;
-  }
-
-  return Number(balance).toFixed(2);
-}
-
-function getPastDues(startingDate, terms, payments, amount_per_month) {
-  const missedDues = [];
-  const now = new Date();
-  const start = new Date(startingDate);
-
-  for (let i = 0; i < terms; i++) {
-    const dueMonth = new Date(start);
-    dueMonth.setMonth(start.getMonth() + i);
-
-    // Skip future months
-    if (dueMonth > now) break;
-
-    const monthStart = new Date(dueMonth.getFullYear(), dueMonth.getMonth(), 1);
-    const monthEnd = new Date(dueMonth.getFullYear(), dueMonth.getMonth() + 1, 0); // end of the month
-
-    // Sum all payments made in this calendar month
-    const totalPaid = payments
-      .filter(p => {
-        const pd = new Date(p.pay_for_the_month_of);
-        return pd >= monthStart && pd <= monthEnd;
-      })
-      .reduce((sum, p) => sum + p.amount, 0);
-
-    if (totalPaid < amount_per_month) {
-      missedDues.push({
-        due_month: `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, '0')}`,
-        totalPaid,
-      });
-    }
-  }
-
-  return missedDues;
 }

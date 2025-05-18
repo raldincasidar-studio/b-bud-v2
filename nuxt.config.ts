@@ -1,54 +1,73 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
-import vuetify, { transformAssetUrls } from 'vite-plugin-vuetify'
+import vuetify, { transformAssetUrls } from "vite-plugin-vuetify";
 export default defineNuxtConfig({
   app: {
     head: {
-      title: 'Nex - Modern Accounting & Stocks Management Software',
+      title: "B-Bud - A Barangay Management System",
       htmlAttrs: {
-        lang: 'en',
+        lang: "en",
       },
       meta: [
-        { charset: 'utf-8' },
-        { name: 'viewport', content: 'width=device-width, initial-scale=1' },
-        { hid: 'description', name: 'description', content: 'Nex is a modern, user-friendly accounting and stock management software designed to streamline your business operations with powerful features and real-time insights.' },
-        { name: 'keywords', content: 'Nex, accounting software, stock management, inventory system, business tools, ERP, finance management' },
-        { name: 'author', content: 'Nex Team' },
+        { charset: "utf-8" },
+        { name: "viewport", content: "width=device-width, initial-scale=1" },
+        {
+          hid: "description",
+          name: "description",
+          content:
+            "B-Bud is a modern, user-friendly barangay management system designed to streamline local governance with powerful features and real-time insights.",
+        },
+        {
+          name: "keywords",
+          content:
+            "B-Bud, barangay system, barangay management, local governance, resident database, document requests, barangay tools, community ERP",
+        },
+        { name: "author", content: "B-Bud Team" },
 
         // Open Graph
-        { property: 'og:type', content: 'website' },
-        { property: 'og:url', content: '/' }, // Use the root URL
-        { property: 'og:title', content: 'Nex - Modern Accounting & Stocks Management Software' },
-        { property: 'og:description', content: 'Streamline your accounting and inventory tasks with Nex – a powerful, modern software built for growing businesses.' },
-        { property: 'og:image', content: '/og-image.png' }, // Relative path
+        { property: "og:type", content: "website" },
+        { property: "og:url", content: "/" },
+        {
+          property: "og:title",
+          content: "B-Bud - A Barangay Management System",
+        },
+        {
+          property: "og:description",
+          content:
+            "Streamline local governance and community services with B-Bud – a powerful, modern system built for barangays.",
+        },
+        { property: "og:image", content: "/og-image.png" },
 
         // Twitter Card
-        { name: 'twitter:card', content: 'summary_large_image' },
-        { name: 'twitter:url', content: '/' }, // Use the root URL
-        { name: 'twitter:title', content: 'Nex - Modern Accounting & Stocks Management Software' },
-        { name: 'twitter:description', content: 'Streamline your accounting and inventory tasks with Nex – a powerful, modern software built for growing businesses.' },
-        { name: 'twitter:image', content: '/og-image.png' }, // Relative path
+        { name: "twitter:card", content: "summary_large_image" },
+        { name: "twitter:url", content: "/" },
+        {
+          name: "twitter:title",
+          content: "B-Bud - A Barangay Management System",
+        },
+        {
+          name: "twitter:description",
+          content:
+            "Streamline local governance and community services with B-Bud – a powerful, modern system built for barangays.",
+        },
+        { name: "twitter:image", content: "/og-image.png" },
       ],
-      link: [
-        { rel: 'icon', type: 'image/x-icon', href: '/favicon.ico' },
-      ],
+      link: [{ rel: "icon", type: "image/x-icon", href: "/favicon.ico" }],
     },
   },
 
-
-
   ssr: false,
-  compatibilityDate: '2024-11-01',
+  compatibilityDate: "2024-11-01",
   devtools: { enabled: true },
   build: {
-    transpile: ['vuetify'],
+    transpile: ["vuetify"],
   },
-  css: ['vuetify/lib/styles/main.sass', '@/assets/css/main.scss'],
+  css: ["vuetify/lib/styles/main.sass", "@/assets/css/main.scss"],
   modules: [
     (_options, nuxt) => {
-      nuxt.hooks.hook('vite:extendConfig', (config) => {
+      nuxt.hooks.hook("vite:extendConfig", (config) => {
         // @ts-expect-error
-        config.plugins.push(vuetify({ autoImport: true }))
-      })
+        config.plugins.push(vuetify({ autoImport: true }));
+      });
     },
     //...
   ],
@@ -57,7 +76,7 @@ export default defineNuxtConfig({
   //     dir: 'backend'
   //   }
   // },
-  plugins: ['~/plugins/swal.js'],
+  plugins: ["~/plugins/swal.js"],
   vite: {
     vue: {
       template: {
@@ -67,8 +86,8 @@ export default defineNuxtConfig({
   },
   runtimeConfig: {
     public: {
-      baseURL: process.env.BASE_URL || 'http://localhost:3001',
-      apiBase: process.env.BASE_URL || 'http://localhost:3001',
+      baseURL: process.env.BASE_URL || "http://localhost:3001",
+      apiBase: process.env.BASE_URL || "http://localhost:3001",
     },
   },
-})
+});

@@ -1,6 +1,6 @@
 <template>
     <v-container class="text-center" max-width="800">
-        <h1 class="text-h2 text-bold my-2 mt-12">B-Bud v2.0</h1>
+        <h1 class="text-h2 text-bold my-2 mt-12">B-Bud</h1>
         <h3 class="my-5">Welcome {{ userData?.name }}!</h3>
 
         <h2 class="mb-10 mt-15">Let's start your work!</h2>

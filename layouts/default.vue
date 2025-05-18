@@ -4,7 +4,7 @@
             <v-list>
                 <v-list-item
                     prepend-icon="mdi-account"
-                    subtitle="Administrator"
+                    :subtitle="userData?.role"
                     :title="userData?.name"
                 >
                     <template v-slot:append>
@@ -24,7 +24,7 @@
                 nav
                 >
                 <v-list-item
-                    v-for="(item, i) in items"
+                    v-for="(item, i) in itemsFiltered"
                     :to="item.to"
                     :key="i"
                     :value="item"
@@ -51,7 +51,7 @@
 
         <v-app-bar color="primary">
             <v-app-bar-nav-icon variant="text" @click.stop="drawer = !drawer"></v-app-bar-nav-icon>
-            <v-toolbar-title>B-Bud v2.0</v-toolbar-title>
+            <v-toolbar-title>B-Bud</v-toolbar-title>
         </v-app-bar>
 
         <v-main>
@@ -68,7 +68,7 @@ const drawer = ref(false);
 const items = [
 { to: '/residents', text: 'Residents', icon: 'mdi-account-group' },
     { to: '/households', text: 'Households', icon: 'mdi-home-group' },
-    { to: '/admins', text: 'Admins', icon: 'mdi-shield-account' },
+    { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', superAdmin: true },
     { to: '/documents', text: 'Documents', icon: 'mdi-file-document' },
     { to: '/officials', text: 'Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Notifications', icon: 'mdi-bell-ring' },
@@ -79,4 +79,8 @@ async function logout() {
     userData.value = null;
     router.replace('/')
 }
+
+const itemsFiltered = computed(() => {
+    return items.filter(item => !item.superAdmin || userData.value?.role === 'Superadmin');
+})
 </script>

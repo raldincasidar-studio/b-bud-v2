@@ -1,8 +1,8 @@
 <template>
     <v-container class="my-10">
         <v-row justify="space-between">
-          <v-col><h2>Residents</h2></v-col>
-          <v-col class="text-right"><v-btn rounded size="large" variant="tonal" to="/residents/new" prepend-icon="mdi-account-plus" color="primary">New Resident</v-btn></v-col>
+          <v-col><h2>Households</h2></v-col>
+          <!-- <v-col class="text-right"><v-btn rounded size="large" variant="tonal" to="/households/new" prepend-icon="mdi-home-plus" color="primary">New Household</v-btn></v-col> -->
         </v-row>
 
 
@@ -10,10 +10,10 @@
 
         <!-- Your content goes here -->
         <div class="my-10">
-          <v-text-field v-model="searchKey" prepend-inner-icon="mdi-magnify" variant="outlined" color="primary" label="Search Residents" placeholder="Search for Account ID, Name, Collector, etc..." rounded="lg"></v-text-field>
+          <v-text-field v-model="searchKey" prepend-inner-icon="mdi-magnify" variant="outlined" color="primary" label="Search Households" placeholder="Search for Name, Household Head, Family Member Counts, etc..." rounded="lg"></v-text-field>
 
 
-          <v-data-table-server :items-length="totalCustomers" :search="searchKey" :items="customers" @update:options="updateTable">
+          <v-data-table-server :items-length="totalHouseholds" :search="searchKey" :items="households" @update:options="updateTable">
             <template v-slot:item.action="{item}">
               <!-- {{ value }} -->
               <v-btn variant="outlined" color="grey-darken-2" :to="`/residents/${item._id}`" prepend-icon="mdi-eye">View</v-btn>
@@ -34,14 +34,14 @@ const items = [
   ]
 
 const searchKey = ref('')
-const totalCustomers = ref(0);
-const customers = ref([])
+const totalHouseholds = ref(0);
+const households = ref([])
 
 
 async function updateTable(tableData) {
   console.log(tableData);
 
-  const {data, error} = await useMyFetch('/api/residents', {
+  const {data, error} = await useMyFetch('/api/households', {
     query: {
       search: tableData.search,
       page: tableData.page,
@@ -52,7 +52,7 @@ async function updateTable(tableData) {
   console.log(data);
   console.log(data.value?.data);
 
-  customers.value = data.value?.residents;
-  totalCustomers.value = data.value?.totalResidents
+  households.value = data.value?.residents;
+  totalHouseholds.value = data.value?.totalResidents
 }
 </script>

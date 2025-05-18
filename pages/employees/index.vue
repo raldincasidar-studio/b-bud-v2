@@ -14,8 +14,8 @@
 
 
           <v-data-table-server :items-length="totalCustomers" :search="searchKey" :items="customers" @update:options="updateTable">
-            <template v-slot:item.action="item">
-              <v-btn variant="outlined" color="grey-darken-2" :to="`/employees/${item.item.id}`" prepend-icon="mdi-eye">View</v-btn>
+            <template v-slot:item.action="{item}">
+              <v-btn variant="outlined" color="grey-darken-2" :to="`/employees/${item._id}`" prepend-icon="mdi-eye">View</v-btn>
             </template>
           </v-data-table-server>
         </div>
