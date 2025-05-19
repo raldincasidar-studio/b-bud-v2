@@ -195,7 +195,7 @@ app.get('/api/residents/search', async (req, res) => {
       dateOfBirth: 1,
     }
   })
-    .limit(10)
+    .limit(5)
     .toArray();
 
   console.log(residents);
