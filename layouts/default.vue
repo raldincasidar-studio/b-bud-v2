@@ -66,7 +66,8 @@ const userData = useCookie('userData');
 
 const drawer = ref(false);
 const items = [
-{ to: '/residents', text: 'Residents', icon: 'mdi-account-group' },
+    { to: '/dashboard', text: 'Dashboard', icon: 'mdi-speedometer' },
+    { to: '/residents', text: 'Residents', icon: 'mdi-account-group' },
     { to: '/households', text: 'Households', icon: 'mdi-home-group' },
     { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', superAdmin: true },
     { to: '/documents', text: 'Documents', icon: 'mdi-file-document' },

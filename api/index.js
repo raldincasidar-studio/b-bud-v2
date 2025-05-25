@@ -1303,6 +1303,107 @@ app.delete('/api/notifications/:id', async (req, res) => {
 });
 
 
+
+
+
+// ======================== DASHBOARD STATISTICS ======================== //
+
+// ----- Express.js API for Dashboard Metrics -----
+// Ensure you have 'app' (Express app instance) and 'db' (DB connection function)
+// and ObjectId from mongodb if needed for other parts, though not directly here.
+
+app.get('/api/dashboard', async (req, res) => {
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+
+  try {
+    // 1. Number of population
+    const totalPopulation = await residentsCollection.countDocuments({});
+
+    // 2. Number of households (household heads)
+    // 3. Number of families (same as households for this context)
+    const totalHouseholds = await residentsCollection.countDocuments({ is_household_head: true });
+
+    // 4. Number of registered voters
+    const totalRegisteredVoters = await residentsCollection.countDocuments({ is_registered_voter: true });
+
+    // 5. Age brackets
+    // For age calculation, we'll approximate for simplicity in aggregation.
+    // More precise age calculation can be done but adds complexity.
+    // $dateFromString is available from MongoDB 4.0. Ensure date_of_birth is stored as ISODate for best results.
+    // If date_of_birth is already a Date object in MongoDB, the $project stage for age is simpler.
+    
+    const ageBracketsAggregation = await residentsCollection.aggregate([
+      {
+        $match: { date_of_birth: { $exists: true, $ne: null } } // Ensure date_of_birth exists
+      },
+      {
+        $project: {
+          age: {
+            $floor: { // Calculate age in years
+              $divide: [
+                { $subtract: [new Date(), "$date_of_birth"] }, // Difference in milliseconds
+                365.25 * 24 * 60 * 60 * 1000 // Milliseconds in an average year
+              ]
+            }
+          }
+        }
+      },
+      {
+        $bucket: {
+          groupBy: "$age",
+          boundaries: [0, 6, 13, 18, 36, 51, 66], // Lower bounds for 0-5, 6-12, 13-17, 18-35, 36-50, 51-65
+          default: "66+", // For ages 66 and above
+          output: {
+            count: { $sum: 1 }
+          }
+        }
+      },
+      {
+        $project: { // Remap _id (bucket lower bound) to descriptive bracket names
+            _id: 0, // Exclude the original _id from $bucket
+            bracket: {
+                $switch: {
+                    branches: [
+                        { case: { $eq: ["$_id", 0] }, then: "0-5" },
+                        { case: { $eq: ["$_id", 6] }, then: "6-12" },
+                        { case: { $eq: ["$_id", 13] }, then: "13-17" },
+                        { case: { $eq: ["$_id", 18] }, then: "18-35" },
+                        { case: { $eq: ["$_id", 36] }, then: "36-50" },
+                        { case: { $eq: ["$_id", 51] }, then: "51-65" },
+                        { case: { $eq: ["$_id", "66+"] }, then: "66+" },
+                    ],
+                    default: "Unknown"
+                }
+            },
+            count: 1
+        }
+      },
+      { $sort: { count: -1 } } // Optional: sort brackets by count or define a specific order later
+    ]).toArray();
+
+    // Ensure all brackets are present in the result, even if count is 0
+    const allBracketNames = ["0-5", "6-12", "13-17", "18-35", "36-50", "51-65", "66+"];
+    const ageBracketsMap = new Map(ageBracketsAggregation.map(item => [item.bracket, item.count]));
+    const completeAgeBrackets = allBracketNames.map(name => ({
+        bracket: name,
+        count: ageBracketsMap.get(name) || 0
+    }));
+
+
+    res.json({
+      totalPopulation,
+      totalHouseholds, // Also used for families
+      totalRegisteredVoters,
+      ageBrackets: completeAgeBrackets,
+    });
+
+  } catch (error) {
+    console.error("Error fetching dashboard metrics:", error);
+    res.status(500).json({ error: "Failed to fetch dashboard metrics", message: error.message });
+  }
+});
+
 // Server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
