@@ -83,83 +83,301 @@ app.post('/api/login', async (req, res) => {
 
 // ========================= RESIDENTS =================== //
 
-// ADD NEW RESIDENT (POST)
+// ADD NEW RESIDENT (POST) - Storing Base64 directly in DB
 app.post('/api/residents', async (req, res) => {
+  const dab = await db(); // Your database connection
 
-  const dab = await db();
+  const {
+    // Personal Info
+    is_household_head,
+    first_name,
+    middle_name,
+    last_name,
+    sex,
+    age,
+    date_of_birth,
+    civil_status,
+    occupation_status,
+    place_of_birth,
+    citizenship,
+    is_pwd,
 
-  const { firstName, lastName, gender, civilStatus, yearLived, occupation, isVoter, contactNo, emailAddress } = req.body;
+    // Voter Info
+    is_registered_voter,
+    precinct_number,
+    voter_registration_proof_base64, // Base64 string
+    // voter_registration_proof_name, // Name might still be useful for context, optional to store
 
-  const requiredFields = [
-    { field: 'firstName', value: firstName, format: /^[a-zA-Z\s]+$/ },
-    { field: 'lastName', value: lastName, format: /^[a-zA-Z\s]+$/ },
-    { field: 'gender', value: gender, format: /^(Male|Female|Other)$/ },
-    { field: 'civilStatus', value: civilStatus, format: /^(Single|Married|Divorced|Widowed|Separated)$/ },
-    { field: 'yearLived', value: yearLived, format: /^\d{4}$/ },
-    { field: 'occupation', value: occupation, format: /^[a-zA-Z\s]+$/ },
-    { field: 'isVoter', value: isVoter, format: /^(Yes|No)$/ },
-    { field: 'contactNo', value: contactNo, format: /^\d{11}$/ },
-    { field: 'emailAddress', value: emailAddress, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-  ];
+    // Address Info
+    address_house_number,
+    address_street,
+    address_subdivision_zone,
+    address_city_municipality,
+    years_lived_current_address,
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+    // Contact Info
+    contact_number,
+    email,
 
-  if (errors.length > 0) {
-    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
+    // Proofs
+    residency_proof_base64, // Base64 string
+    // residency_proof_name,   // Name might still be useful for context, optional to store
+
+    // Household List
+    household_member_ids,
+  } = req.body;
+
+  // --- Validation (largely the same as before) ---
+  const validationErrors = [];
+
+  const validateRequiredString = (field, value, regex, message) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+      validationErrors.push({ field, message: `${field} is required.` });
+    } else if (regex && !regex.test(String(value))) {
+      validationErrors.push({ field, message: message || `${field} has an invalid format.` });
+    }
+  };
+
+  const validateOptionalString = (field, value, regex, message) => {
+    if (value !== undefined && value !== null && String(value).trim() !== '' && regex && !regex.test(String(value))) {
+      validationErrors.push({ field, message: message || `${field} has an invalid format.` });
+    }
+  };
+  
+  const validateEnum = (field, value, allowedValues) => {
+    if (value === undefined || value === null || String(value).trim() === '') {
+        validationErrors.push({ field, message: `${field} is required.`});
+    } else if (!allowedValues.includes(String(value))) {
+        validationErrors.push({ field, message: `${field} must be one of: ${allowedValues.join(', ')}.` });
+    }
+  };
+
+  const validateBase64 = (field, value) => {
+    if (value && typeof value === 'string') {
+        const matches = value.match(/^data:(.+?);base64,(.+)$/);
+        if (!matches || matches.length !== 3) {
+            validationErrors.push({ field, message: `${field} is not a valid Base64 data URL.` });
+        }
+    }
+    // If not provided, it's optional, so no error
+  };
+
+  // Personal Info
+  validateRequiredString('first_name', first_name, /^[a-zA-Z\s.'-]+$/, 'First name can only contain letters, spaces, periods, apostrophes, and hyphens.');
+  validateOptionalString('middle_name', middle_name, /^[a-zA-Z\s.'-]*$/, 'Middle name can only contain letters, spaces, periods, apostrophes, and hyphens.');
+  validateRequiredString('last_name', last_name, /^[a-zA-Z\s.'-]+$/, 'Last name can only contain letters, spaces, periods, apostrophes, and hyphens.');
+  validateEnum('sex', sex, ['Male', 'Female', 'Other']);
+  if (age !== null && age !== undefined && (typeof age !== 'number' || age < 0 || !Number.isInteger(age))) {
+    validationErrors.push({ field: 'age', message: 'Age must be a non-negative integer.' });
+  }
+  validateRequiredString('date_of_birth', date_of_birth, /^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be in YYYY-MM-DD format.');
+  validateEnum('civil_status', civil_status, ['Single', 'Married', 'Divorced', 'Widowed', 'Separated']);
+  validateEnum('occupation_status', occupation_status, ['Employed', 'Unemployed', 'Student', 'Retired', 'Other']);
+  validateRequiredString('place_of_birth', place_of_birth, /^.{2,}$/);
+  validateRequiredString('citizenship', citizenship, /^[a-zA-Z\s]+$/);
+
+  // Address Info
+  validateRequiredString('address_house_number', address_house_number, /^.{1,}$/);
+  validateRequiredString('address_street', address_street, /^.{2,}$/);
+  validateRequiredString('address_subdivision_zone', address_subdivision_zone, /^.{2,}$/);
+  validateRequiredString('address_city_municipality', address_city_municipality, /^[a-zA-Z\s.,-]+$/);
+  if (years_lived_current_address !== null && years_lived_current_address !== undefined && (typeof years_lived_current_address !== 'number' || years_lived_current_address < 0 || !Number.isInteger(years_lived_current_address))) {
+    validationErrors.push({ field: 'years_lived_current_address', message: 'Years lived must be a non-negative integer.' });
   }
 
-  const residentsCollection = dab.collection('residents');
-  await residentsCollection.insertOne(req.body);
+  // Contact Info
+  validateRequiredString('contact_number', contact_number, /^\+?[0-9\s-]{7,15}$/);
+  validateRequiredString('email', email, /^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email address format.');
 
-  res.json({ message: 'Resident added successfully' });
+  // Voter Info Specific
+  if (is_registered_voter === true) {
+    validateRequiredString('precinct_number', precinct_number, /^[a-zA-Z0-9\s-]+$/, 'Precinct number is required.');
+    validateBase64('voter_registration_proof_base64', voter_registration_proof_base64);
+  } else if (precinct_number && String(precinct_number).trim() !== '') {
+     validationErrors.push({ field: 'precinct_number', message: 'Precinct number should only be provided if registered voter.' });
+  }
+
+  // Validate Residency Proof Base64
+  validateBase64('residency_proof_base64', residency_proof_base64);
+
+
+  if (validationErrors.length > 0) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      fields: validationErrors.map(err => ({ field: err.field, message: err.message })),
+      message: 'Validation errors: ' + validationErrors.map(e => `${e.field}: ${e.message}`).join('; ')
+    });
+  }
+
+  // --- Prepare document for MongoDB ---
+  // (Ensuring snake_case for DB and correct data types)
+  const residentDocument = {
+    is_household_head: Boolean(is_household_head),
+    first_name: String(first_name).trim(),
+    middle_name: middle_name ? String(middle_name).trim() : null,
+    last_name: String(last_name).trim(),
+    sex: String(sex),
+    age: (age !== null && age !== undefined) ? parseInt(age, 10) : null,
+    date_of_birth: new Date(date_of_birth),
+    civil_status: String(civil_status),
+    occupation_status: String(occupation_status),
+    place_of_birth: String(place_of_birth).trim(),
+    citizenship: String(citizenship).trim(),
+    is_pwd: Boolean(is_pwd),
+
+    is_registered_voter: Boolean(is_registered_voter),
+    precinct_number: (is_registered_voter && precinct_number) ? String(precinct_number).trim() : null,
+    // Store Base64 string directly. The schema suggested 'TEXT or JSON'.
+    // If it's just one Base64 string, a TEXT type (string in Mongo) is fine.
+    // If you intend to store multiple Base64 proofs, this should be an array.
+    voter_registration_proof_data: (is_registered_voter && voter_registration_proof_base64) ? voter_registration_proof_base64 : null,
+
+
+    address_house_number: String(address_house_number).trim(),
+    address_street: String(address_street).trim(),
+    address_subdivision_zone: String(address_subdivision_zone).trim(),
+    address_city_municipality: String(address_city_municipality).trim(),
+    years_lived_current_address: (years_lived_current_address !== null && years_lived_current_address !== undefined) ? parseInt(years_lived_current_address, 10) : null,
+
+    contact_number: String(contact_number).trim(),
+    email: String(email).trim().toLowerCase(),
+
+    residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
+
+    household_member_ids: Array.isArray(household_member_ids) ? household_member_ids : [],
+
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+
+  // Optional: If you still want to store the original file names for context
+  // if (req.body.voter_registration_proof_name && residentDocument.voter_registration_proof_data) {
+  //   residentDocument.voter_registration_proof_name = req.body.voter_registration_proof_name;
+  // }
+  // if (req.body.residency_proof_name && residentDocument.residency_proof_data) {
+  //   residentDocument.residency_proof_name = req.body.residency_proof_name;
+  // }
+
+  try {
+    const residentsCollection = dab.collection('residents');
+    const result = await residentsCollection.insertOne(residentDocument);
+
+    if (result.insertedId) {
+      res.status(201).json({ message: 'Resident added successfully', residentId: result.insertedId });
+    } else {
+      throw new Error('Failed to insert resident.');
+    }
+  } catch (error) {
+    console.error('Error adding resident to DB:', error);
+    if (error.code === 11000) {
+        return res.status(409).json({ error: 'Conflict', message: 'A resident with this email or other unique identifier already exists.' });
+    }
+    res.status(500).json({ error: 'Database error', message: 'Could not add resident.' });
+  }
 });
 
-// GET ALL RESIDENT (GET)
+// GET ALL RESIDENTS (GET) - Updated for new schema
 app.get('/api/residents', async (req, res) => {
-
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
 
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const query = search ? {
-    $or: [
-      { firstName: { $regex: new RegExp(search, 'i') } },
-      { middleName: { $regex: new RegExp(search, 'i') } },
-      { lastName: { $regex: new RegExp(search, 'i') } },
-      { emailAddress: { $regex: new RegExp(search, 'i') } },
-      { contactNo: { $regex: new RegExp(search, 'i') } },
-      { block: { $regex: new RegExp(search, 'i') } },
-      { lot: { $regex: new RegExp(search, 'i') } },
-      { subdivision: { $regex: new RegExp(search, 'i') } },
-    ]
-  } : {};
-  const residents = await residentsCollection.find(query, {
-    projection: {
-      firstName: 1,
-      middleName: 1,
-      lastName: 1,
-      lot: 1,
-      block: 1,
-      subdivision: 1,
-      civilStatus: 1,
-      contactNo: 1,
-      emailAddress: 1,
-      _id: 1,
-      action: { $ifNull: [ "$action", "" ] }
-    }
-  })
-    .skip((page - 1) * itemsPerPage)
-    .limit(itemsPerPage)
-    .toArray();
-  const totalResidents = await residentsCollection.countDocuments(query);
-  res.json({
-    residents: residents,
-    totalResidents: totalResidents
-  });
-})
+
+  let query = {};
+  if (search) {
+    const searchRegex = new RegExp(search, 'i'); // Case-insensitive search
+    query = {
+      $or: [
+        { first_name: { $regex: searchRegex } },
+        { middle_name: { $regex: searchRegex } },
+        { last_name: { $regex: searchRegex } },
+        { email: { $regex: searchRegex } }, // Updated field name
+        { contact_number: { $regex: searchRegex } }, // Updated field name
+        { address_house_number: { $regex: searchRegex } }, // Updated field name
+        { address_street: { $regex: searchRegex } }, // Updated field name
+        { address_subdivision_zone: { $regex: searchRegex } }, // Updated field name
+        { address_city_municipality: { $regex: searchRegex } }, // New searchable address field
+        { citizenship: { $regex: searchRegex } }, // New searchable field
+        { place_of_birth: { $regex: searchRegex } }, // New searchable field
+        { precinct_number: { $regex: searchRegex } }, // New searchable field
+      ],
+    };
+  }
+
+  // Define the projection to select fields to return
+  // Exclude large Base64 fields by default to keep payload size manageable for listings
+  // Only include them if specifically requested or for a GET /api/residents/:id endpoint
+  const projection = {
+    // Personal Info
+    first_name: 1,
+    middle_name: 1,
+    last_name: 1,
+    sex: 1,
+    age: 1,
+    date_of_birth: 1, // Consider formatting this for display if needed client-side
+    civil_status: 1,
+    occupation_status: 1,
+    // place_of_birth: 1, // Can be long, consider for detail view
+    // citizenship: 1,
+    is_pwd: 1,
+    is_household_head: 1,
+
+    // Voter Info
+    is_registered_voter: 1,
+    precinct_number: 1,
+    // voter_registration_proof_data: 0, // Exclude by default from list view
+
+    // Address Info
+    address_house_number: 1,
+    address_street: 1,
+    address_subdivision_zone: 1,
+    address_city_municipality: 1,
+    years_lived_current_address: 1,
+    // residency_proof_data: 0, // Exclude by default from list view
+
+    // Contact Info
+    contact_number: 1,
+    email: 1,
+
+    // Household List (consider if needed for list view, could be many IDs)
+    // household_member_ids: 1,
+
+    created_at: 1, // Useful for sorting or display
+    updated_at: 1,
+    _id: 1, // Always include _id
+    // 'action' field seems custom, if it's from your old schema and you still need it,
+    // you might need to re-evaluate how it's populated or if it's still relevant.
+    // For now, I'm removing it as it's not in the new schema directly.
+    // If you still want a default "action" field if it's null:
+    // action: { $ifNull: [ "$action", "" ] } // This would require 'action' to exist or be set elsewhere.
+  };
+
+  try {
+    const residents = await residentsCollection
+      .find(query)
+      .project(projection)
+      .skip(skip)
+      .limit(itemsPerPage)
+      .sort({ created_at: -1 }) // Optional: sort by creation date descending
+      .toArray();
+
+    const totalResidents = await residentsCollection.countDocuments(query);
+
+    res.json({
+      residents: residents,
+      total: totalResidents, // Renamed for clarity, or use totalResidents
+      page: page,
+      itemsPerPage: itemsPerPage,
+      totalPages: Math.ceil(totalResidents / itemsPerPage),
+    });
+  } catch (error) {
+    console.error("Error fetching residents:", error);
+    res.status(500).json({ error: "Failed to fetch residents", message: error.message });
+  }
+});
 
 // SEARCH FOR RESIDENT
 app.get('/api/residents/search', async (req, res) => {
@@ -208,6 +426,94 @@ app.get('/api/residents/search', async (req, res) => {
   res.json({ residents: formattedResidents });
 });
 
+
+// GET ELIGIBLE RESIDENTS FOR HOUSEHOLD SEARCH (LIMITED RESULTS) - REVISED
+app.get('/api/residents/eligible-for-household-search', async (req, res) => {
+  const searchKey = req.query.searchKey || '';
+  const limitResults = 5;
+
+  if (!searchKey || searchKey.trim().length < 2) {
+    return res.json({ searchResults: [] });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  const { ObjectId } = require('mongodb'); // Import ObjectId constructor
+
+  try {
+    // --- Step 1: Get all IDs of residents who are already members of any household ---
+    const householdHeadsAndMembers = await residentsCollection.aggregate([
+      {
+        $match: {
+          is_household_head: true,
+          household_member_ids: { $exists: true, $ne: [], $not: {$size: 0} } // Ensure it exists and is not empty
+        }
+      },
+      { $unwind: '$household_member_ids' }, // Unwind the array
+      {
+        $group: {
+          _id: null,
+          // Collect all member IDs. These might be strings or ObjectIds depending on how they are stored.
+          allMemberIdsAsStringOrObjectId: { $addToSet: '$household_member_ids' }
+        }
+      }
+    ]).toArray();
+
+    let memberObjectIds = [];
+    if (householdHeadsAndMembers.length > 0 && householdHeadsAndMembers[0].allMemberIdsAsStringOrObjectId) {
+      // Convert all collected IDs to ObjectId for consistent comparison
+      memberObjectIds = householdHeadsAndMembers[0].allMemberIdsAsStringOrObjectId
+        .map(id => {
+          if (typeof id === 'string' && ObjectId.isValid(id)) {
+            return new ObjectId(id); // Convert valid string to ObjectId
+          } else if (id instanceof ObjectId) {
+            return id; // Already an ObjectId
+          }
+          return null; // Invalid ID format, will be filtered out
+        })
+        .filter(id => id !== null); // Remove any nulls from invalid conversions
+    }
+
+    // --- Debugging ---
+    // console.log("Search Key:", searchKey);
+    // console.log("Collected Member ObjectIDs for $nin:", JSON.stringify(memberObjectIds));
+    // --- End Debugging ---
+
+    const searchRegex = new RegExp(searchKey, 'i');
+    
+    let query = {
+      is_household_head: false,
+      _id: { $nin: memberObjectIds }, // Now using an array of ObjectIds
+      $or: [
+        { first_name: { $regex: searchRegex } },
+        { last_name: { $regex: searchRegex } },
+        { middle_name: { $regex: searchRegex } },
+        { email: { $regex: searchRegex } },
+      ]
+    };
+    // console.log("Final Query:", JSON.stringify(query));
+
+    const searchResults = await residentsCollection
+      .find(query)
+      .project({
+        _id: 1,
+        first_name: 1,
+        last_name: 1,
+        middle_name: 1,
+        sex: 1,
+      })
+      .limit(limitResults)
+      .sort({ last_name: 1, first_name: 1 })
+      .toArray();
+
+    res.json({ searchResults });
+
+  } catch (error) {
+    console.error('Error searching eligible residents for household:', error);
+    res.status(500).json({ error: 'Failed to search eligible residents', message: error.message });
+  }
+});
+
 // GET RESIDENT BY ID (GET)
 app.get('/api/residents/:id', async (req, res) => {
   const dab = await db();
@@ -226,83 +532,204 @@ app.delete('/api/residents/:id', async (req, res) => {
 
 // UPDATE RESIDENT BY ID (PUT)
 app.put('/api/residents/:id', async (req, res) => {
-
+  const { id } = req.params;
   const dab = await db();
+  const residentsCollection = dab.collection('residents');
 
-  const requiredFields = [
-    { field: 'firstName', value: req.body.firstName, format: /^[a-zA-Z\s]+$/ },
-    { field: 'lastName', value: req.body.lastName, format: /^[a-zA-Z\s]+$/ },
-    { field: 'gender', value: req.body.gender, format: /^(Male|Female|Other)$/ },
-    { field: 'civilStatus', value: req.body.civilStatus, format: /^(Single|Married|Divorced|Widowed|Separated)$/ },
-    { field: 'yearLived', value: req.body.yearLived, format: /^\d{4}$/ },
-    { field: 'occupation', value: req.body.occupation, format: /^[a-zA-Z\s]+$/ },
-    { field: 'isVoter', value: req.body.isVoter, format: /^(Yes|No)$/ },
-    { field: 'contactNo', value: req.body.contactNo, format: /^\d{11}$/ },
-    { field: 'emailAddress', value: req.body.emailAddress, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-  ];
+  // Destructure all expected fields from req.body
+  const {
+    is_household_head, first_name, middle_name, last_name, sex, age, date_of_birth,
+    civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
+    is_registered_voter, precinct_number, 
+    // Base64 fields - these might be absent if not updated
+    voter_registration_proof_data, 
+    residency_proof_data,
+    address_house_number, address_street, address_subdivision_zone, address_city_municipality,
+    years_lived_current_address, contact_number, email, 
+    household_member_ids
+  } = req.body;
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+  // --- Perform Validation (CRUCIAL!) ---
+  // (Your existing validation logic here for fields that are always present or required for an update)
+  // Example:
+  // if (first_name !== undefined && (typeof first_name !== 'string' || first_name.trim() === '')) {
+  //   return res.status(400).json({ error: 'Validation failed', message: 'First name, if provided, cannot be empty.' });
+  // }
+  // ... more validation ...
 
-  if (errors.length > 0) {
-    res.json({error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
+  const updateFields = {}; // Object to build $set operator
+
+  // Helper to add field to updateFields if it's defined in req.body
+  const addIfDefined = (key, value, transform = v => v) => {
+    if (value !== undefined) {
+      updateFields[key] = transform(value);
+    }
+  };
+
+  // Add non-file fields to the update object
+  addIfDefined('is_household_head', is_household_head, Boolean);
+  addIfDefined('first_name', first_name, v => String(v).trim());
+  addIfDefined('middle_name', middle_name, v => v ? String(v).trim() : null); // Allow null for optional fields
+  addIfDefined('last_name', last_name, v => String(v).trim());
+  addIfDefined('sex', sex, String);
+  addIfDefined('age', age, v => (v !== null && v !== undefined) ? parseInt(v, 10) : null);
+  addIfDefined('date_of_birth', date_of_birth, v => v ? new Date(v) : null);
+  addIfDefined('civil_status', civil_status, String);
+  addIfDefined('occupation_status', occupation_status, String);
+  addIfDefined('place_of_birth', place_of_birth, v => String(v).trim());
+  addIfDefined('citizenship', citizenship, v => String(v).trim());
+  addIfDefined('is_pwd', is_pwd, Boolean);
+  
+  addIfDefined('is_registered_voter', is_registered_voter, Boolean);
+  // Only update precinct_number if is_registered_voter is true or if precinct_number is explicitly set to null
+  if (req.body.is_registered_voter === true) {
+    addIfDefined('precinct_number', precinct_number, v => v ? String(v).trim() : null);
+  } else if (req.body.is_registered_voter === false) { // If voter status is changed to false
+    updateFields['precinct_number'] = null;
+    // Also clear voter proof if changing to not a voter
+    if (req.body.voter_registration_proof_data === undefined) { // If client isn't sending a new one, explicitly clear it
+        updateFields['voter_registration_proof_data'] = null;
+    }
+  } else if (req.body.precinct_number !== undefined) { // If voter status isn't changing but precinct is sent
+    addIfDefined('precinct_number', precinct_number, v => v ? String(v).trim() : null);
   }
 
-  const residentsCollection = dab.collection('residents');
-  await residentsCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
 
-  res.json({message: 'Resident updated successfully'});
-})
+  addIfDefined('address_house_number', address_house_number, v => String(v).trim());
+  addIfDefined('address_street', address_street, v => String(v).trim());
+  addIfDefined('address_subdivision_zone', address_subdivision_zone, v => String(v).trim());
+  addIfDefined('address_city_municipality', address_city_municipality, v => String(v).trim());
+  addIfDefined('years_lived_current_address', years_lived_current_address, v => (v !== null && v !== undefined) ? parseInt(v, 10) : null);
+  
+  addIfDefined('contact_number', contact_number, v => String(v).trim());
+  addIfDefined('email', email, v => String(v).trim().toLowerCase());
+  
+  addIfDefined('household_member_ids', household_member_ids, v => Array.isArray(v) ? v : []);
+
+  // --- Handle Base64 File Fields Conditionally ---
+  // Only update if new data is provided (can be a new Base64 string or explicitly null to clear)
+  if (req.body.hasOwnProperty('voter_registration_proof_data')) {
+    // If is_registered_voter is true and data is provided, or if data is explicitly null
+    if ((req.body.is_registered_voter === true && voter_registration_proof_data !== undefined) || voter_registration_proof_data === null) {
+        updateFields['voter_registration_proof_data'] = voter_registration_proof_data; // This will be null if client sent null
+    } else if (req.body.is_registered_voter === false) { // If becoming not a voter, ensure it's nulled
+        updateFields['voter_registration_proof_data'] = null;
+    }
+    // If is_registered_voter is true but voter_registration_proof_data is undefined, we don't touch it.
+  }
+
+  if (req.body.hasOwnProperty('residency_proof_data')) {
+    updateFields['residency_proof_data'] = residency_proof_data; // This will be null if client sent null
+  }
+
+  // Always update the 'updated_at' timestamp
+  updateFields['updated_at'] = new Date();
+
+  if (Object.keys(updateFields).length === 1 && updateFields.hasOwnProperty('updated_at')) {
+    // Only updated_at would be changed, meaning no actual data change from client
+    // You might choose to not even hit the DB or return a specific "no changes" message
+     const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+     if (!currentResident) return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+     return res.json({ message: 'No changes detected.', resident: currentResident });
+  }
+
+
+  try {
+    const result = await residentsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    }
+
+    // Fetch and return the updated document to ensure client has the latest state
+    const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+    res.json({ message: 'Resident updated successfully', resident: updatedResident });
+
+  } catch (error) {
+    console.error('Error updating resident:', error);
+    if (error.code === 11000) { // Duplicate key
+        return res.status(409).json({ error: 'Conflict', message: 'Update violates a unique constraint (e.g., email already exists).' });
+    }
+    res.status(500).json({ error: 'Database error', message: 'Could not update resident.' });
+  }
+});
+
+
 
 
 
 // ======================= HOUSEHOLD ======================= //
 
-// GET ALL RESIDENT (GET)
+// GET ALL HOUSEHOLDS (formatted list of household heads)
 app.get('/api/households', async (req, res) => {
-
-  const search = req.query.search || '';
+  // Pagination (optional, but good practice for potentially long lists)
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  // Search (optional, can search by head's name or household number)
+  const search = req.query.search || '';
 
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const query = search ? {
-    $or: [
-      { firstName: { $regex: new RegExp(search, 'i') } },
-      { middleName: { $regex: new RegExp(search, 'i') } },
-      { lastName: { $regex: new RegExp(search, 'i') } },
-      { emailAddress: { $regex: new RegExp(search, 'i') } },
-      { contactNo: { $regex: new RegExp(search, 'i') } },
-      { block: { $regex: new RegExp(search, 'i') } },
-      { lot: { $regex: new RegExp(search, 'i') } },
-      { subdivision: { $regex: new RegExp(search, 'i') } },
-    ],
-    $and: [
-      { isHouseholdHead: true }
-    ]
-  } : {isHouseholdHead: true};
-  const residents = await residentsCollection.find(query, {
-    projection: {
-      name: { $concat: [ "$lastName", "'s Household" ] },
-      head: { $concat: [ "$firstName", " ", "$middleName", " ", "$lastName"] },
-      householdCount: { $ifNull: [{ $size: "$householdList" }, 0] },
-      _id: 1,
-      action: { $ifNull: [ "$action", "" ] }
+
+  try {
+    let query = {
+      is_household_head: true // Only fetch residents who are household heads
+    };
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      query.$or = [
+        { last_name: { $regex: searchRegex } },          // Search by head's last name
+        { first_name: { $regex: searchRegex } },         // Search by head's first name
+        { address_house_number: { $regex: searchRegex } } // Search by household number
+      ];
     }
-  })
-    .skip((page - 1) * itemsPerPage)
-    .limit(itemsPerPage)
-    .toArray();
-  const totalResidents = await residentsCollection.countDocuments(query);
-  res.json({
-    residents: residents,
-    totalResidents: totalResidents
-  });
-})
+
+    // Fetch household heads with necessary fields for transformation
+    const householdHeads = await residentsCollection
+      .find(query)
+      .project({ // Select only the fields needed
+        _id: 1, // ID of the household head (can be useful)
+        last_name: 1,
+        first_name: 1, // In case last_name is not unique for display
+        address_house_number: 1,
+        household_member_ids: 1 // For counting members
+      })
+      .skip(skip)
+      .limit(itemsPerPage)
+      .sort({ last_name: 1, first_name: 1 }) // Sort by head's name
+      .toArray();
+
+    // Transform the data
+    const formattedHouseholds = householdHeads.map(head => ({
+      household_id: head._id, // The ID of the resident who is the head
+      household_name: `${head.last_name}'s Household`,
+      household_number: head.address_house_number || 'N/A', // Use 'N/A' if not available
+      number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
+      head_first_name: head.first_name, // Include for clarity if needed
+      head_last_name: head.last_name,   // Include for clarity if needed
+    }));
+
+    const totalHouseholds = await residentsCollection.countDocuments(query);
+
+    res.json({
+      households: formattedHouseholds,
+      total: totalHouseholds,
+      page: page,
+      itemsPerPage: itemsPerPage,
+      totalPages: Math.ceil(totalHouseholds / itemsPerPage),
+    });
+
+  } catch (error) {
+    console.error('Error fetching households:', error);
+    res.status(500).json({ error: 'Failed to fetch households', message: error.message });
+  }
+});
 
 
 
@@ -675,6 +1102,205 @@ app.put('/api/officials/:id', async (req, res) => {
 })
 
 
+
+
+// =================== NOTIFICATION MODULE CRUD =========================== //
+
+// GET ALL NOTIFICATIONS (with search and pagination)
+app.get('/api/notifications', async (req, res) => {
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+
+  let query = {};
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    query = {
+      $or: [
+        { name: { $regex: searchRegex } },
+        { content: { $regex: searchRegex } },
+        { by: { $regex: searchRegex } },
+      ],
+    };
+  }
+
+  try {
+    const notifications = await notificationsCollection
+      .find(query)
+      .sort({ date: -1 }) // Sort by date descending (newest first)
+      .skip(skip)
+      .limit(itemsPerPage)
+      .toArray();
+
+    const totalNotifications = await notificationsCollection.countDocuments(query);
+
+    res.json({
+      notifications: notifications,
+      total: totalNotifications,
+      page: page,
+      itemsPerPage: itemsPerPage,
+      totalPages: Math.ceil(totalNotifications / itemsPerPage),
+    });
+  } catch (error) {
+    console.error("Error fetching notifications:", error);
+    res.status(500).json({ error: "Failed to fetch notifications", message: error.message });
+  }
+});
+
+// ADD NEW NOTIFICATION (POST)
+app.post('/api/notifications', async (req, res) => {
+  const { name, content, date, by } = req.body;
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+
+  // Basic Validation
+  if (!name || !content || !date || !by) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Name, content, date, and by (admin name) are required.' });
+  }
+  if (typeof name !== 'string' || typeof content !== 'string' || typeof by !== 'string') {
+    return res.status(400).json({ error: 'Validation failed', message: 'Name, content, and by must be strings.' });
+  }
+  // Validate date format (optional, but good)
+  const parsedDate = new Date(date);
+  if (isNaN(parsedDate.getTime())) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format for notification date.' });
+  }
+
+
+  try {
+    const newNotification = {
+      name: String(name).trim(),
+      content: String(content).trim(),
+      date: parsedDate, // Store as Date object
+      by: String(by).trim(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const result = await notificationsCollection.insertOne(newNotification);
+    // Send back the inserted document, as it will have the _id and created/updated_at
+    const insertedNotification = await notificationsCollection.findOne({ _id: result.insertedId });
+
+
+    res.status(201).json({ message: 'Notification added successfully', notification: insertedNotification });
+  } catch (error) {
+    console.error("Error adding notification:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not add notification.' });
+  }
+});
+
+
+// GET NOTIFICATION BY ID (GET)
+app.get('/api/notifications/:id', async (req, res) => {
+  const { id } = req.params;
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const notification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+    if (!notification) {
+      return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
+    }
+    res.json({ notification });
+  } catch (error) {
+    console.error("Error fetching notification by ID:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not fetch notification.' });
+  }
+});
+
+// UPDATE NOTIFICATION BY ID (PUT)
+app.put('/api/notifications/:id', async (req, res) => {
+  const { id } = req.params;
+  const { name, content, date, by } = req.body;
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  // Basic Validation for update
+  if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Name, if provided, cannot be empty.' });
+  }
+  if (content !== undefined && (typeof content !== 'string' || content.trim() === '')) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Content, if provided, cannot be empty.' });
+  }
+  if (by !== undefined && (typeof by !== 'string' || by.trim() === '')) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Author (by), if provided, cannot be empty.' });
+  }
+  let parsedDate;
+  if (date !== undefined) {
+    parsedDate = new Date(date);
+    if (isNaN(parsedDate.getTime())) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format for notification date, if provided.' });
+    }
+  }
+
+
+  try {
+    const updateFields = {};
+    if (name !== undefined) updateFields.name = String(name).trim();
+    if (content !== undefined) updateFields.content = String(content).trim();
+    if (parsedDate) updateFields.date = parsedDate;
+    if (by !== undefined) updateFields.by = String(by).trim();
+
+    if (Object.keys(updateFields).length === 0) {
+      // If no fields to update are provided, you might return a specific message or the current doc
+      const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+      if (!currentNotification) return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
+      return res.json({ message: 'No changes provided.', notification: currentNotification });
+    }
+
+    updateFields.updated_at = new Date(); // Always update this
+
+    const result = await notificationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
+    }
+    
+    const updatedNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+    res.json({ message: 'Notification updated successfully', notification: updatedNotification });
+
+  } catch (error) {
+    console.error("Error updating notification:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not update notification.' });
+  }
+});
+
+// DELETE NOTIFICATION BY ID (DELETE)
+app.delete('/api/notifications/:id', async (req, res) => {
+  const { id } = req.params;
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const result = await notificationsCollection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
+    }
+    res.json({ message: 'Notification deleted successfully' });
+  } catch (error) {
+    console.error("Error deleting notification:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not delete notification.' });
+  }
+});
 
 
 // Server

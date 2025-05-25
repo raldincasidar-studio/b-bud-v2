@@ -14,7 +14,7 @@ c<template>
                         <v-text-field v-model="username" prepend-inner-icon="mdi-account" variant="outlined" color="primary" label="Username"></v-text-field>
                         <v-text-field v-model="password" prepend-inner-icon="mdi-key" variant="outlined" color="primary" label="Password" type="password"></v-text-field>
                         
-                        <v-btn @click="login()" block class="mt-2" color="primary" size="large">Login</v-btn>
+                        <v-btn @click="login()" :loading="isLoading" :disabled="isLoading" block class="mt-2" color="primary" size="large">Login</v-btn>
                         <p class="my-5 d-flex justify-space-between">
                             <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Forgot Password?</a>
                             <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Contact Developer</a>
@@ -41,7 +41,7 @@ const password = ref('');
 const router = useRouter();
 async function login() {
     isLoading.value = true;
-    const {data, error} = useMyFetch('/api/login', {
+    const {data, error} = await useMyFetch('/api/login', {
         method: 'post',
         body: {
             username: username.value,
@@ -50,7 +50,7 @@ async function login() {
     })
 
     if (data.value?.error || error.value) {
-        isLoading.value = true;
+        isLoading.value = false;
         $toast.fire({
             title: data.value?.error || 'Invalid username or password',
             icon: 'error'
@@ -68,5 +68,6 @@ async function login() {
     })
 
     router.replace('/dashboard');
+    isLoading.value = false;
 }
 </script>
