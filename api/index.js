@@ -379,51 +379,74 @@ app.get('/api/residents', async (req, res) => {
   }
 });
 
-// SEARCH FOR RESIDENT
+// GET RESIDENTS BY SEARCH QUERY (GET /api/residents/search?q=searchTerm)
+// This endpoint is generic and can be used by various parts of your application.
 app.get('/api/residents/search', async (req, res) => {
-  const search = req.query.q?.toString().trim() || '';
+  const searchQuery = req.query.q || ''; // 'q' is a common query parameter for search
+  const limitResults = parseInt(req.query.limit) || 15; // Allow a limit, default to 15
 
-  if (search.length < 2) {
-    return res.json({ residents: [] });
+  if (!searchQuery || searchQuery.trim() === '') {
+    return res.json({ residents: [] }); // Return empty if no search query
   }
 
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
-  const query = {
-    $or: [
-      { firstName: { $regex: new RegExp(search, 'i') } },
-      { middleName: { $regex: new RegExp(search, 'i') } },
-      { lastName: { $regex: new RegExp(search, 'i') } },
-      { emailAddress: { $regex: new RegExp(search, 'i') } },
-      { contactNo: { $regex: new RegExp(search, 'i') } },
-      { block: { $regex: new RegExp(search, 'i') } },
-      { lot: { $regex: new RegExp(search, 'i') } },
-      { subdivision: { $regex: new RegExp(search, 'i') } }
-    ]
-  };
+  try {
+    const searchRegex = new RegExp(searchQuery.trim(), 'i'); // 'i' for case-insensitive
 
-  const residents = await residentsCollection.find(query, {
-    projection: {
-      _id: 1,
-      firstName: 1,
-      middleName: 1,
-      lastName: 1,
-      gender: 1,
-      dateOfBirth: 1,
-    }
-  })
-    .limit(5)
-    .toArray();
+    // Define the fields you want to search across.
+    // Ensure these field names EXACTLY match your MongoDB schema for the 'residents' collection.
+    const query = {
+      $or: [
+        { first_name: { $regex: searchRegex } },
+        { last_name: { $regex: searchRegex } },
+        { middle_name: { $regex: searchRegex } },
+        { email: { $regex: searchRegex } },
+        { contact_number: { $regex: searchRegex } },
+        // Add other relevant string fields you want to include in the search
+        // For example, if you stored a combined name field:
+        // { full_name_searchable: { $regex: searchRegex } }, 
+        { address_street: { $regex: searchRegex } },
+        { address_subdivision_zone: { $regex: searchRegex } },
+        { address_city_municipality: { $regex: searchRegex } },
+      ],
+    };
 
-  console.log(residents);
+    // --- Debugging: Log the constructed query ---
+    // console.log("Executing Resident Search with Query:", JSON.stringify(query));
+    // console.log("Search Term:", searchQuery);
+    // --- End Debugging ---
 
-  const formattedResidents = residents.map(resident => ({
-    id: resident._id,
-    name: `${resident.firstName} ${resident.middleName || ''} ${resident.lastName}`.trim()
-  }));
+    const residents = await residentsCollection
+      .find(query)
+      .project({ // Select fields you want to return for the search results
+        _id: 1,
+        first_name: 1,
+        last_name: 1,
+        middle_name: 1,
+        email: 1, // Useful for display or contact
+        sex: 1,   // Often useful for context in search results
+        // Add any other concise fields relevant for search result display
+        // Avoid large fields like Base64 image data here
+      })
+      .limit(limitResults) // Limit the number of results
+      .sort({ last_name: 1, first_name: 1 }) // Optional: sort results
+      .toArray();
 
-  res.json({ residents: formattedResidents });
+    // --- Debugging: Log the results from DB ---
+    // console.log("Residents found:", residents.length);
+    // if (residents.length > 0) {
+    //   console.log("First resident found:", residents[0]);
+    // }
+    // --- End Debugging ---
+
+    res.json({ residents: residents }); // The Vue component expects an object with a 'residents' array
+
+  } catch (error) {
+    console.error("Error searching residents:", error);
+    res.status(500).json({ error: "Failed to search residents", message: error.message });
+  }
 });
 
 
@@ -1301,6 +1324,825 @@ app.delete('/api/notifications/:id', async (req, res) => {
     res.status(500).json({ error: 'Database error', message: 'Could not delete notification.' });
   }
 });
+
+
+
+// ====================== BORROW ASSETS CRUD (REVISED for Resident Borrower) =========================== //
+// Ensure ObjectId is imported: import { ObjectId } from 'mongodb';
+
+// ADD NEW BORROW ASSET TRANSACTION (POST)
+app.post('/api/borrowed-assets', async (req, res) => {
+  const dab = await db();
+  const {
+    borrower_resident_id, // ID of the resident borrowing
+    borrower_display_name,  // Name of the resident (for convenience, sent by frontend)
+    borrow_datetime,
+    borrowed_from_personnel,
+    item_borrowed,
+    status,
+    notes,
+  } = req.body;
+
+  // Validation
+  if (!borrower_resident_id || !borrower_display_name || !borrow_datetime || !borrowed_from_personnel || !item_borrowed || !status) {
+    return res.status(400).json({ error: 'Missing required fields. Borrower, item, date, personnel, and status are required.' });
+  }
+  if (!ObjectId.isValid(borrower_resident_id)) {
+    return res.status(400).json({ error: 'Invalid borrower resident ID format.' });
+  }
+
+  try {
+    const newTransaction = {
+      borrower_resident_id: new ObjectId(borrower_resident_id),
+      borrower_display_name: String(borrower_display_name).trim(), // Store for easy display
+      borrow_datetime: new Date(borrow_datetime),
+      borrowed_from_personnel: String(borrowed_from_personnel).trim(),
+      item_borrowed: String(item_borrowed),
+      status: String(status).trim(),
+      date_returned: null,
+      return_condition: null,
+      notes: notes ? String(notes).trim() : null,
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    const collection = dab.collection('borrowed_assets');
+    const result = await collection.insertOne(newTransaction);
+    const insertedDoc = await collection.findOne({ _id: result.insertedId }); // Fetch to include _id
+    res.status(201).json({ message: 'Asset borrowing transaction added successfully', transaction: insertedDoc });
+  } catch (error) {
+    console.error('Error adding borrow asset transaction:', error);
+    res.status(500).json({ error: 'Error adding transaction: ' + error.message });
+  }
+});
+
+// GET ALL BORROWED ASSETS TRANSACTIONS (GET) - WITH BORROWER NAME LOOKUP
+app.get('/api/borrowed-assets', async (req, res) => {
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  const dab = await db();
+  const collection = dab.collection('borrowed_assets');
+  
+  // Base match stage for search (applied after lookup if searching on borrower's actual name)
+  let searchMatchStage = {};
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    searchMatchStage = { // This will be part of the main aggregation pipeline
+        $or: [
+            // Search on fields from borrowed_assets collection directly
+            { borrower_display_name: { $regex: searchRegex } }, // Search on the stored display name
+            { item_borrowed: { $regex: searchRegex } },
+            { status: { $regex: searchRegex } },
+            { borrowed_from_personnel: { $regex: searchRegex } },
+            // Search on looked-up borrower fields
+            { "borrower_details.first_name": { $regex: searchRegex } },
+            { "borrower_details.last_name": { $regex: searchRegex } },
+        ]
+    };
+  }
+
+  try {
+    const aggregationPipeline = [
+      { // Optional: initial match on borrowed_assets fields if not searching resident details
+        $match: search ? {} : {} // If search is complex and needs pre-filtering before lookup
+      },
+      {
+        $lookup: {
+          from: 'residents', // The collection to join
+          localField: 'borrower_resident_id', // Field from the borrowed_assets input
+          foreignField: '_id', // Field from the residents collection
+          as: 'borrower_details_array' // Output array field
+        }
+      },
+      { // $lookup returns an array, so $unwind or $addFields to get the single borrower object
+        $addFields: {
+          borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] }
+        }
+      },
+      { // Now apply searchMatchStage which can include borrower_details fields
+        $match: searchMatchStage
+      },
+      {
+        $project: { // Define the output structure
+          _id: 1,
+          borrow_datetime: 1,
+          borrowed_from_personnel: 1,
+          item_borrowed: 1,
+          status: 1,
+          date_returned: 1,
+          return_condition: 1,
+          notes: 1,
+          created_at: 1,
+          borrower_resident_id: 1,
+          // Include borrower's full name from the lookup
+          borrower_name: { 
+            $concat: [
+              "$borrower_details.first_name", 
+              " ", 
+              { $ifNull: ["$borrower_details.middle_name", ""] }, // Handle if middle_name is null
+              { $cond: { if: { $eq: [{ $ifNull: ["$borrower_details.middle_name", ""] }, ""] }, then: "", else: " " } }, // Add space only if middle_name exists
+              "$borrower_details.last_name"
+            ]
+          },
+          // borrower_display_name: 1, // Can also return the stored display name
+        }
+      },
+      { $sort: { borrow_datetime: -1 } },
+      { $skip: skip },
+      { $limit: itemsPerPage }
+    ];
+
+    const transactions = await collection.aggregate(aggregationPipeline).toArray();
+
+    // For total count, we need a separate aggregation without skip/limit but with the match stages
+    const countPipeline = [
+        // ... (same $lookup, $addFields, $match as above) ...
+         {
+            $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array'}
+        },
+        {
+            $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } }
+        },
+        {
+            $match: searchMatchStage // Apply the same search criteria
+        },
+        { $count: 'total' }
+    ];
+    const countResult = await collection.aggregate(countPipeline).toArray();
+    const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({
+      transactions: transactions,
+      total: totalTransactions,
+      page: page,
+      itemsPerPage: itemsPerPage,
+      totalPages: Math.ceil(totalTransactions / itemsPerPage),
+    });
+  } catch (error) {
+    console.error('Error fetching borrowed assets:', error);
+    res.status(500).json({ error: "Failed to fetch transactions." });
+  }
+});
+
+
+// GET BORROWED ASSET TRANSACTION BY ID (GET) - WITH BORROWER NAME LOOKUP
+app.get('/api/borrowed-assets/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+  const dab = await db();
+  const collection = dab.collection('borrowed_assets');
+  try {
+    const aggregationPipeline = [
+      { $match: { _id: new ObjectId(id) } },
+      {
+        $lookup: {
+          from: 'residents',
+          localField: 'borrower_resident_id',
+          foreignField: '_id',
+          as: 'borrower_details_array'
+        }
+      },
+      {
+        $addFields: {
+          borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] }
+        }
+      },
+      {
+        $project: {
+          // Select fields from borrowed_assets
+          borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, status: 1,
+          date_returned: 1, return_condition: 1, notes: 1, created_at: 1, updated_at: 1,
+          borrower_resident_id: 1, borrower_display_name: 1, // Keep stored display name
+          // Add borrower's actual details from lookup
+          borrower_first_name: '$borrower_details.first_name',
+          borrower_last_name: '$borrower_details.last_name',
+          borrower_middle_name: '$borrower_details.middle_name',
+          borrower_contact_number: '$borrower_details.contact_number', // Example additional field
+          borrower_address_street: '$borrower_details.address_street', // Example
+        }
+      }
+    ];
+    const result = await collection.aggregate(aggregationPipeline).toArray();
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+    res.json({ transaction: result[0] });
+  } catch (error) {
+    console.error('Error fetching transaction by ID:', error);
+    res.status(500).json({ error: "Failed to fetch transaction." });
+  }
+});
+
+// UPDATE BORROWED ASSET TRANSACTION BY ID (PUT)
+app.put('/api/borrowed-assets/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+  const dab = await db();
+  const collection = dab.collection('borrowed_assets');
+  const {
+    borrower_resident_id, // Expecting ID
+    borrower_display_name,  // Expecting Name
+    borrow_datetime,
+    borrowed_from_personnel,
+    item_borrowed,
+    status,
+    date_returned,
+    return_condition,
+    notes,
+  } = req.body;
+
+  const updateFields = {};
+  // Only update borrower_resident_id and borrower_display_name if they are explicitly provided
+  if (borrower_resident_id !== undefined) {
+    if (!ObjectId.isValid(borrower_resident_id)) return res.status(400).json({ error: 'Invalid borrower resident ID format for update.' });
+    updateFields.borrower_resident_id = new ObjectId(borrower_resident_id);
+  }
+  if (borrower_display_name !== undefined) updateFields.borrower_display_name = String(borrower_display_name).trim();
+  
+  if (borrow_datetime !== undefined) updateFields.borrow_datetime = new Date(borrow_datetime);
+  if (borrowed_from_personnel !== undefined) updateFields.borrowed_from_personnel = String(borrowed_from_personnel).trim();
+  if (item_borrowed !== undefined) updateFields.item_borrowed = String(item_borrowed);
+  if (status !== undefined) updateFields.status = String(status).trim();
+  if (date_returned !== undefined) updateFields.date_returned = date_returned ? new Date(date_returned) : null;
+  if (return_condition !== undefined) updateFields.return_condition = return_condition ? String(return_condition).trim() : null;
+  if (notes !== undefined) updateFields.notes = notes ? String(notes).trim() : null;
+
+  if (Object.keys(updateFields).length === 0) {
+    return res.status(400).json({ error: 'No fields to update provided.' });
+  }
+  updateFields.updated_at = new Date();
+
+  try {
+    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+    // Fetch the updated doc with looked-up borrower details for the response
+    const updatedTransactionResult = await collection.aggregate([
+        { $match: { _id: new ObjectId(id) } },
+        { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' }},
+        { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } }},
+        // Project fields similar to GET by ID
+    ]).toArray();
+
+    res.json({ message: 'Transaction updated successfully', transaction: updatedTransactionResult[0] || null });
+  } catch (error) {
+    console.error('Error updating transaction:', error);
+    res.status(500).json({ error: 'Error updating transaction: ' + error.message });
+  }
+});
+
+// DELETE BORROWED ASSET TRANSACTION BY ID (DELETE)
+app.delete('/api/borrowed-assets/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+  const dab = await db();
+  const collection = dab.collection('borrowed_assets');
+  try {
+    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+    res.json({ message: 'Transaction deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting transaction:', error);
+    res.status(500).json({ error: 'Error deleting transaction: ' + error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+// ====================== COMPLAINT REQUESTS CRUD (REVISED) =========================== //
+
+// ADD NEW COMPLAINT REQUEST (POST)
+app.post('/api/complaints', async (req, res) => {
+  const dab = await db();
+  const {
+    complainant_resident_id,
+    complainant_display_name,
+    complainant_address,
+    contact_number,
+    date_of_complaint,
+    time_of_complaint,
+    person_complained_against_name, // Name (can be manual or from resident search)
+    person_complained_against_resident_id, // Optional ObjectId
+    status,
+    notes_description,
+  } = req.body;
+
+  // Validation
+  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number ||
+      !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
+    return res.status(400).json({ error: 'Missing required fields for complaint request.' });
+  }
+  if (!ObjectId.isValid(complainant_resident_id)) {
+    return res.status(400).json({ error: 'Invalid complainant resident ID format.' });
+  }
+  if (person_complained_against_resident_id && !ObjectId.isValid(person_complained_against_resident_id)) {
+    return res.status(400).json({ error: 'Invalid person complained against resident ID format.' });
+  }
+
+  try {
+    const complaintDate = new Date(date_of_complaint);
+
+    const newComplaint = {
+      complainant_resident_id: new ObjectId(complainant_resident_id),
+      complainant_display_name: String(complainant_display_name).trim(),
+      complainant_address: String(complainant_address).trim(),
+      contact_number: String(contact_number).trim(),
+      date_of_complaint: complaintDate,
+      time_of_complaint: String(time_of_complaint).trim(),
+      person_complained_against_name: String(person_complained_against_name).trim(),
+      person_complained_against_resident_id: person_complained_against_resident_id ? new ObjectId(person_complained_against_resident_id) : null,
+      status: String(status).trim(),
+      notes_description: String(notes_description).trim(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    const collection = dab.collection('complaints');
+    const result = await collection.insertOne(newComplaint);
+    const insertedDoc = await collection.findOne({ _id: result.insertedId });
+    res.status(201).json({ message: 'Complaint request added successfully', complaint: insertedDoc });
+  } catch (error) {
+    console.error('Error adding complaint request:', error);
+    res.status(500).json({ error: 'Error adding complaint: ' + error.message });
+  }
+});
+
+// GET ALL COMPLAINT REQUESTS (GET)
+app.get('/api/complaints', async (req, res) => {
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  const dab = await db();
+  const collection = dab.collection('complaints');
+  
+  let searchMatchStage = {};
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    searchMatchStage = {
+      $or: [
+        { complainant_display_name: { $regex: searchRegex } },
+        { "complainant_details.first_name": { $regex: searchRegex } },
+        { "complainant_details.last_name": { $regex: searchRegex } },
+        { person_complained_against_name: { $regex: searchRegex } }, // Search the stored name
+        { "person_complained_details.first_name": { $regex: searchRegex } }, // Search looked-up name
+        { "person_complained_details.last_name": { $regex: searchRegex } },
+        { status: { $regex: searchRegex } },
+        { notes_description: { $regex: searchRegex } },
+      ],
+    };
+  }
+
+  try {
+    const aggregationPipeline = [
+      { $match: {} }, // Initial match if needed
+      { // Lookup complainant
+        $lookup: {
+          from: 'residents', localField: 'complainant_resident_id',
+          foreignField: '_id', as: 'complainant_details_array'
+        }
+      },
+      { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } } },
+      { // Lookup person complained against (only if ID exists)
+        $lookup: {
+          from: 'residents', localField: 'person_complained_against_resident_id',
+          foreignField: '_id', as: 'person_complained_details_array'
+        }
+      },
+      { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
+      { $match: searchMatchStage },
+      {
+        $project: {
+          _id: 1,
+          complainant_name: { /* ... same as before ... */ 
+            $ifNull: [
+                { $concat: [ "$complainant_details.first_name", " ", { $ifNull: ["$complainant_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$complainant_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$complainant_details.last_name"] }, 
+                "$complainant_display_name"
+            ]
+          },
+          // Display person complained against: use looked-up name if ID exists, else the stored name
+          person_complained_against: {
+            $ifNull: [
+              { $concat: [ "$person_complained_details.first_name", " ", { $ifNull: ["$person_complained_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$person_complained_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$person_complained_details.last_name"] },
+              "$person_complained_against_name" // Fallback to manually entered/stored name
+            ]
+          },
+          date_of_complaint: 1, status: 1, notes_description: 1, created_at: 1,
+        }
+      },
+      { $sort: { date_of_complaint: -1, created_at: -1 } },
+      { $skip: skip }, { $limit: itemsPerPage }
+    ];
+
+    const complaints = await collection.aggregate(aggregationPipeline).toArray();
+    
+    const countPipeline = [ // For total count, include lookups for accurate search filtering
+        { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
+        { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
+        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
+        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
+        { $match: searchMatchStage },
+        { $count: 'total' }
+    ];
+    const countResult = await collection.aggregate(countPipeline).toArray();
+    const totalComplaints = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({ complaints, total: totalComplaints, page, itemsPerPage, totalPages: Math.ceil(totalComplaints / itemsPerPage) });
+  } catch (error) {
+    console.error('Error fetching complaints:', error);
+    res.status(500).json({ error: "Failed to fetch complaints." });
+  }
+});
+
+// GET COMPLAINT REQUEST BY ID (GET)
+app.get('/api/complaints/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+  const collection = dab.collection('complaints');
+  try {
+    const aggregationPipeline = [
+      { $match: { _id: new ObjectId(id) } },
+      { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
+      { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
+      { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
+      { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
+      { $project: { /* ... project all necessary fields, including from lookups ... */
+          // Complaint fields
+          complainant_resident_id: 1, complainant_display_name: 1, complainant_address: 1,
+          contact_number: 1, date_of_complaint: 1, time_of_complaint: 1,
+          person_complained_against_name: 1, person_complained_against_resident_id: 1,
+          status: 1, notes_description: 1, created_at: 1, updated_at: 1,
+          // Complainant details
+          "complainant_details._id": 1, "complainant_details.first_name": 1, /* ... etc ... */
+          // Person complained against details
+          "person_complained_details._id": 1, "person_complained_details.first_name": 1, /* ... etc ... */
+        }
+      }
+    ];
+    const result = await collection.aggregate(aggregationPipeline).toArray();
+    if (result.length === 0) return res.status(404).json({ error: 'Complaint not found.' });
+    res.json({ complaint: result[0] });
+  } catch (error) { console.error('Error fetching complaint by ID:', error); res.status(500).json({ error: "Failed to fetch complaint." }); }
+});
+
+// UPDATE COMPLAINT REQUEST BY ID (PUT)
+app.put('/api/complaints/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+  const collection = dab.collection('complaints');
+  const {
+    complainant_resident_id, complainant_display_name, complainant_address, contact_number,
+    date_of_complaint, time_of_complaint,
+    person_complained_against_name, person_complained_against_resident_id, // New fields
+    status, notes_description,
+  } = req.body;
+
+  const updateFields = {};
+  // Complainant
+  if (complainant_resident_id !== undefined) {
+    if (!ObjectId.isValid(complainant_resident_id)) return res.status(400).json({ error: 'Invalid complainant ID for update.' });
+    updateFields.complainant_resident_id = new ObjectId(complainant_resident_id);
+  }
+  if (complainant_display_name !== undefined) updateFields.complainant_display_name = String(complainant_display_name).trim();
+  if (complainant_address !== undefined) updateFields.complainant_address = String(complainant_address).trim();
+  if (contact_number !== undefined) updateFields.contact_number = String(contact_number).trim();
+  
+  // Complaint details
+  if (date_of_complaint !== undefined) updateFields.date_of_complaint = new Date(date_of_complaint);
+  if (time_of_complaint !== undefined) updateFields.time_of_complaint = String(time_of_complaint).trim();
+  
+  // Person Complained Against
+  if (person_complained_against_name !== undefined) updateFields.person_complained_against_name = String(person_complained_against_name).trim();
+  if (person_complained_against_resident_id !== undefined) { // Can be null to unset resident link
+    updateFields.person_complained_against_resident_id = person_complained_against_resident_id && ObjectId.isValid(person_complained_against_resident_id)
+      ? new ObjectId(person_complained_against_resident_id)
+      : null;
+  }
+  
+  if (status !== undefined) updateFields.status = String(status).trim();
+  if (notes_description !== undefined) updateFields.notes_description = String(notes_description).trim();
+
+  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  updateFields.updated_at = new Date();
+
+  try {
+    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Complaint not found.' });
+    
+    // Fetch updated doc with lookups for consistent response
+    const updatedComplaintResult = await collection.aggregate([
+        { $match: { _id: new ObjectId(id) } },
+        { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
+        { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
+        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
+        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
+        // Project necessary fields
+    ]).toArray();
+    res.json({ message: 'Complaint updated successfully', complaint: updatedComplaintResult[0] || null });
+  } catch (error) { console.error('Error updating complaint:', error); res.status(500).json({ error: 'Error updating complaint.' }); }
+});
+
+// DELETE COMPLAINT REQUEST BY ID (DELETE)
+app.delete('/api/complaints/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+  const dab = await db();
+  const collection = dab.collection('complaints');
+  try {
+    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    res.json({ message: 'Complaint deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting complaint:', error);
+    res.status(500).json({ error: 'Error deleting complaint: ' + error.message });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// ====================== DOCUMENT REQUESTS CRUD =========================== //
+// Ensure ObjectId is imported: import { ObjectId } from 'mongodb';
+
+// ADD NEW DOCUMENT REQUEST (POST)
+app.post('/api/document-requests', async (req, res) => {
+  const dab = await db();
+  const {
+    request_type,
+    requestor_resident_id,
+    requestor_display_name,
+    requestor_address,
+    requestor_contact_number,
+    date_of_request,
+    purpose_of_request,
+    requested_by_resident_id, // Optional ID of admin/official
+    requested_by_display_name,  // Optional name of admin/official
+    document_status, // Initial status, e.g., "Pending"
+  } = req.body;
+
+  // Basic Validation
+  if (!request_type || !requestor_resident_id || !requestor_display_name || !requestor_address ||
+      !requestor_contact_number || !date_of_request || !purpose_of_request || !document_status) {
+    return res.status(400).json({ error: 'Missing required fields for document request.' });
+  }
+  if (!ObjectId.isValid(requestor_resident_id)) {
+    return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
+  }
+  if (requested_by_resident_id && !ObjectId.isValid(requested_by_resident_id)) {
+    return res.status(400).json({ error: 'Invalid "requested by" resident ID format.' });
+  }
+
+  try {
+    const newRequest = {
+      request_type: String(request_type).trim(),
+      requestor_resident_id: new ObjectId(requestor_resident_id),
+      requestor_display_name: String(requestor_display_name).trim(),
+      requestor_address: String(requestor_address).trim(),
+      requestor_contact_number: String(requestor_contact_number).trim(),
+      date_of_request: new Date(date_of_request),
+      purpose_of_request: String(purpose_of_request).trim(),
+      requested_by_resident_id: requested_by_resident_id ? new ObjectId(requested_by_resident_id) : null,
+      requested_by_display_name: requested_by_display_name ? String(requested_by_display_name).trim() : null,
+      document_status: String(document_status).trim(),
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+    const collection = dab.collection('document_requests');
+    const result = await collection.insertOne(newRequest);
+    const insertedDoc = await collection.findOne({ _id: result.insertedId });
+    res.status(201).json({ message: 'Document request added successfully', request: insertedDoc });
+  } catch (error) {
+    console.error('Error adding document request:', error);
+    res.status(500).json({ error: 'Error adding document request: ' + error.message });
+  }
+});
+
+// GET ALL DOCUMENT REQUESTS (GET) - WITH LOOKUPS
+app.get('/api/document-requests', async (req, res) => {
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  const dab = await db();
+  const collection = dab.collection('document_requests');
+  
+  let searchMatchStage = {};
+  if (search) {
+    const searchRegex = new RegExp(search, 'i');
+    searchMatchStage = {
+      $or: [
+        { request_type: { $regex: searchRegex } },
+        { requestor_display_name: { $regex: searchRegex } },
+        { "requestor_details.first_name": { $regex: searchRegex } },
+        { "requestor_details.last_name": { $regex: searchRegex } },
+        { purpose_of_request: { $regex: searchRegex } },
+        { requested_by_display_name: { $regex: searchRegex } },
+        { "requested_by_details.first_name": { $regex: searchRegex } },
+        { "requested_by_details.last_name": { $regex: searchRegex } },
+        { document_status: { $regex: searchRegex } },
+      ],
+    };
+  }
+
+  try {
+    const aggregationPipeline = [
+      { $match: {} }, // Initial match if needed
+      { // Lookup requestor
+        $lookup: {
+          from: 'residents', localField: 'requestor_resident_id',
+          foreignField: '_id', as: 'requestor_details_array'
+        }
+      },
+      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } } },
+      { // Lookup requested_by personnel (admin/official)
+        $lookup: {
+          from: 'residents', // Or 'admins', 'officials' if they are in separate collections
+          localField: 'requested_by_resident_id',
+          foreignField: '_id', as: 'requested_by_details_array'
+        }
+      },
+      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } } },
+      { $match: searchMatchStage },
+      {
+        $project: {
+          _id: 1, request_type: 1,
+          requestor_name: { /* ... same as complaint ... */ 
+             $ifNull: [ { $concat: [ "$requestor_details.first_name", " ", { $ifNull: ["$requestor_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$requestor_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$requestor_details.last_name"] }, "$requestor_display_name" ]
+          },
+          date_of_request: 1, purpose_of_request: 1, document_status: 1,
+          requested_by_name: { /* ... same as complaint ... */ 
+            $ifNull: [ { $concat: [ "$requested_by_details.first_name", " ", { $ifNull: ["$requested_by_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$requested_by_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$requested_by_details.last_name"] }, "$requested_by_display_name" ]
+          },
+          created_at: 1,
+        }
+      },
+      { $sort: { date_of_request: -1, created_at: -1 } },
+      { $skip: skip }, { $limit: itemsPerPage }
+    ];
+
+    const requests = await collection.aggregate(aggregationPipeline).toArray();
+    
+    const countPipeline = [
+        { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
+        { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
+        { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
+        { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
+        { $match: searchMatchStage },
+        { $count: 'total' }
+    ];
+    const countResult = await collection.aggregate(countPipeline).toArray();
+    const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({ requests, total: totalRequests, page, itemsPerPage, totalPages: Math.ceil(totalRequests / itemsPerPage) });
+  } catch (error) {
+    console.error('Error fetching document requests:', error);
+    res.status(500).json({ error: "Failed to fetch document requests." });
+  }
+});
+
+// GET DOCUMENT REQUEST BY ID (GET)
+app.get('/api/document-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+  const collection = dab.collection('document_requests');
+  try {
+    const aggregationPipeline = [
+      { $match: { _id: new ObjectId(id) } },
+      { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
+      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
+      { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
+      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
+      { $project: { /* ... project all fields including from lookups ... */
+            request_type: 1, requestor_resident_id: 1, requestor_display_name: 1, requestor_address: 1,
+            requestor_contact_number: 1, date_of_request: 1, purpose_of_request: 1,
+            requested_by_resident_id: 1, requested_by_display_name: 1, document_status: 1,
+            created_at: 1, updated_at: 1,
+            "requestor_details": "$requestor_details", // Send whole object or specific fields
+            "requested_by_details": "$requested_by_details",
+        }
+      }
+    ];
+    const result = await collection.aggregate(aggregationPipeline).toArray();
+    if (result.length === 0) return res.status(404).json({ error: 'Document request not found.' });
+    res.json({ request: result[0] });
+  } catch (error) { console.error('Error fetching document request by ID:', error); res.status(500).json({ error: "Failed to fetch request." }); }
+});
+
+// UPDATE DOCUMENT REQUEST BY ID (PUT)
+app.put('/api/document-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+  const collection = dab.collection('document_requests');
+  const {
+    request_type, requestor_resident_id, requestor_display_name, requestor_address, requestor_contact_number,
+    date_of_request, purpose_of_request,
+    requested_by_resident_id, requested_by_display_name,
+    document_status,
+  } = req.body;
+
+  const updateFields = {};
+  if (request_type !== undefined) updateFields.request_type = String(request_type).trim();
+  if (requestor_resident_id !== undefined) {
+    if (!ObjectId.isValid(requestor_resident_id)) return res.status(400).json({ error: 'Invalid requestor ID for update.' });
+    updateFields.requestor_resident_id = new ObjectId(requestor_resident_id);
+  }
+  if (requestor_display_name !== undefined) updateFields.requestor_display_name = String(requestor_display_name).trim();
+  if (requestor_address !== undefined) updateFields.requestor_address = String(requestor_address).trim();
+  if (requestor_contact_number !== undefined) updateFields.requestor_contact_number = String(requestor_contact_number).trim();
+  if (date_of_request !== undefined) updateFields.date_of_request = new Date(date_of_request);
+  if (purpose_of_request !== undefined) updateFields.purpose_of_request = String(purpose_of_request).trim();
+  if (requested_by_resident_id !== undefined) {
+    updateFields.requested_by_resident_id = requested_by_resident_id && ObjectId.isValid(requested_by_resident_id)
+      ? new ObjectId(requested_by_resident_id) : null;
+  }
+  if (requested_by_display_name !== undefined) updateFields.requested_by_display_name = requested_by_display_name ? String(requested_by_display_name).trim() : null;
+  if (document_status !== undefined) updateFields.document_status = String(document_status).trim();
+
+  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  updateFields.updated_at = new Date();
+
+  try {
+    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Document request not found.' });
+    
+    const updatedRequestResult = await collection.aggregate([ /* ... same lookup as GET by ID ... */ 
+        { $match: { _id: new ObjectId(id) } },
+        { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
+        { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
+        { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
+        { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
+        // Project necessary fields
+    ]).toArray();
+    res.json({ message: 'Document request updated successfully', request: updatedRequestResult[0] || null });
+  } catch (error) { console.error('Error updating request:', error); res.status(500).json({ error: 'Error updating request.' }); }
+});
+
+// DELETE DOCUMENT REQUEST BY ID (DELETE)
+app.delete('/api/document-requests/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+  const collection = dab.collection('document_requests');
+  try {
+    const result = await collection.deleteOne({ _id: new ObjectId(id) });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Request not found.' });
+    res.json({ message: 'Document request deleted successfully' });
+  } catch (error) { console.error('Error deleting request:', error); res.status(500).json({ error: 'Error deleting request.' }); }
+});
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

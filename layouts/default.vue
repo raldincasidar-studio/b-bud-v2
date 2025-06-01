@@ -70,7 +70,9 @@ const items = [
     { to: '/residents', text: 'Residents', icon: 'mdi-account-group' },
     { to: '/households', text: 'Households', icon: 'mdi-home-group' },
     { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', superAdmin: true },
-    { to: '/documents', text: 'Documents', icon: 'mdi-file-document' },
+    { to: '/document-requests', text: 'Document Requests', icon: 'mdi-file-document' },
+    { to: '/borrowed-assets', text: 'Borrowed Assets', icon: 'mdi-archive-arrow-down-outline' },
+    { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
     { to: '/officials', text: 'Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Notifications', icon: 'mdi-bell-ring' },
   ]
