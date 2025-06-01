@@ -81,197 +81,160 @@ app.post('/api/login', async (req, res) => {
 
 
 
+
+// =================== RESIDENTS LOGIN =================== //
+
+// RESIDENT LOGIN (POST)
+app.post('/api/residents/login', async (req, res) => {
+  const { email, password } = req.body;
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+
+  if (!email || !password) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Email and password are required.' });
+  }
+
+  try {
+    // Find resident by email (case-insensitive for email)
+    const resident = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() });
+
+    if (!resident) {
+      return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password.' });
+    }
+
+    // Hash the provided password using MD5 to compare with the stored hash
+    const hashedPasswordAttempt = md5(password);
+
+    if (resident.password_hash !== hashedPasswordAttempt) { // Ensure your stored field is named 'password_hash'
+      return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password.' });
+    }
+
+    // Login successful
+    // IMPORTANT: Do NOT send the password_hash back to the client
+    const { password_hash, ...residentDataToReturn } = resident; // Destructure to remove password_hash
+
+    // Here you would typically generate a session token (e.g., JWT)
+    // For simplicity, I'm just returning resident data.
+    // In a real app, replace this with token generation and set it in a cookie or response header.
+    // Example (conceptual, needs JWT library like jsonwebtoken):
+    // const token = jwt.sign({ id: resident._id, email: resident.email }, 'YOUR_SECRET_KEY', { expiresIn: '1h' });
+    // res.json({ message: 'Login successful', resident: residentDataToReturn, token: token });
+
+    res.json({ message: 'Login successful', resident: residentDataToReturn });
+
+  } catch (error) {
+    console.error("Error during resident login:", error);
+    res.status(500).json({ error: 'Server error', message: 'An error occurred during login.' });
+  }
+});
+
 // ========================= RESIDENTS =================== //
 
-// ADD NEW RESIDENT (POST) - Storing Base64 directly in DB
+// ADD NEW RESIDENT (POST) - UPDATED with Password & MD5 Hashing
 app.post('/api/residents', async (req, res) => {
-  const dab = await db(); // Your database connection
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
 
   const {
     // Personal Info
-    is_household_head,
-    first_name,
-    middle_name,
-    last_name,
-    sex,
-    age,
-    date_of_birth,
-    civil_status,
-    occupation_status,
-    place_of_birth,
-    citizenship,
-    is_pwd,
-
-    // Voter Info
-    is_registered_voter,
-    precinct_number,
-    voter_registration_proof_base64, // Base64 string
-    // voter_registration_proof_name, // Name might still be useful for context, optional to store
-
+    first_name, middle_name, last_name, sex, age, date_of_birth,
+    civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
     // Address Info
-    address_house_number,
-    address_street,
-    address_subdivision_zone,
-    address_city_municipality,
-    years_lived_current_address,
-
+    address_house_number, address_street, address_subdivision_zone,
+    address_city_municipality, years_lived_current_address,
     // Contact Info
-    contact_number,
-    email,
-
+    contact_number, email,
+    // NEW: Password
+    password, // Plain text password from client
+    // Voter Info
+    is_registered_voter, precinct_number,
+    voter_registration_proof_base64, voter_registration_proof_name,
     // Proofs
-    residency_proof_base64, // Base64 string
-    // residency_proof_name,   // Name might still be useful for context, optional to store
-
-    // Household List
-    household_member_ids,
+    residency_proof_base64, residency_proof_name,
+    // Household Info
+    is_household_head, household_member_ids,
   } = req.body;
 
-  // --- Validation (largely the same as before) ---
-  const validationErrors = [];
-
-  const validateRequiredString = (field, value, regex, message) => {
-    if (value === undefined || value === null || String(value).trim() === '') {
-      validationErrors.push({ field, message: `${field} is required.` });
-    } else if (regex && !regex.test(String(value))) {
-      validationErrors.push({ field, message: message || `${field} has an invalid format.` });
-    }
-  };
-
-  const validateOptionalString = (field, value, regex, message) => {
-    if (value !== undefined && value !== null && String(value).trim() !== '' && regex && !regex.test(String(value))) {
-      validationErrors.push({ field, message: message || `${field} has an invalid format.` });
-    }
-  };
-  
-  const validateEnum = (field, value, allowedValues) => {
-    if (value === undefined || value === null || String(value).trim() === '') {
-        validationErrors.push({ field, message: `${field} is required.`});
-    } else if (!allowedValues.includes(String(value))) {
-        validationErrors.push({ field, message: `${field} must be one of: ${allowedValues.join(', ')}.` });
-    }
-  };
-
-  const validateBase64 = (field, value) => {
-    if (value && typeof value === 'string') {
-        const matches = value.match(/^data:(.+?);base64,(.+)$/);
-        if (!matches || matches.length !== 3) {
-            validationErrors.push({ field, message: `${field} is not a valid Base64 data URL.` });
-        }
-    }
-    // If not provided, it's optional, so no error
-  };
-
-  // Personal Info
-  validateRequiredString('first_name', first_name, /^[a-zA-Z\s.'-]+$/, 'First name can only contain letters, spaces, periods, apostrophes, and hyphens.');
-  validateOptionalString('middle_name', middle_name, /^[a-zA-Z\s.'-]*$/, 'Middle name can only contain letters, spaces, periods, apostrophes, and hyphens.');
-  validateRequiredString('last_name', last_name, /^[a-zA-Z\s.'-]+$/, 'Last name can only contain letters, spaces, periods, apostrophes, and hyphens.');
-  validateEnum('sex', sex, ['Male', 'Female', 'Other']);
-  if (age !== null && age !== undefined && (typeof age !== 'number' || age < 0 || !Number.isInteger(age))) {
-    validationErrors.push({ field: 'age', message: 'Age must be a non-negative integer.' });
+  // --- Basic Validation ---
+  if (!first_name || !last_name || !sex || !date_of_birth || !email || !password) {
+    return res.status(400).json({ error: 'Validation failed', message: 'First name, last name, sex, date of birth, email, and password are required.' });
   }
-  validateRequiredString('date_of_birth', date_of_birth, /^\d{4}-\d{2}-\d{2}$/, 'Date of birth must be in YYYY-MM-DD format.');
-  validateEnum('civil_status', civil_status, ['Single', 'Married', 'Divorced', 'Widowed', 'Separated']);
-  validateEnum('occupation_status', occupation_status, ['Employed', 'Unemployed', 'Student', 'Retired', 'Other']);
-  validateRequiredString('place_of_birth', place_of_birth, /^.{2,}$/);
-  validateRequiredString('citizenship', citizenship, /^[a-zA-Z\s]+$/);
+  // Add more specific validations for other fields as needed
 
-  // Address Info
-  validateRequiredString('address_house_number', address_house_number, /^.{1,}$/);
-  validateRequiredString('address_street', address_street, /^.{2,}$/);
-  validateRequiredString('address_subdivision_zone', address_subdivision_zone, /^.{2,}$/);
-  validateRequiredString('address_city_municipality', address_city_municipality, /^[a-zA-Z\s.,-]+$/);
-  if (years_lived_current_address !== null && years_lived_current_address !== undefined && (typeof years_lived_current_address !== 'number' || years_lived_current_address < 0 || !Number.isInteger(years_lived_current_address))) {
-    validationErrors.push({ field: 'years_lived_current_address', message: 'Years lived must be a non-negative integer.' });
+  // Check if email already exists (assuming email should be unique for login)
+  try {
+    const existingResident = await residentsCollection.findOne({ email: email.toLowerCase() });
+    if (existingResident) {
+      return res.status(409).json({ error: 'Conflict', message: 'Email address already in use.' });
+    }
+  } catch (dbError) {
+      console.error("Database error checking existing email:", dbError);
+      return res.status(500).json({ error: "Database error", message: "Could not verify email availability."});
   }
 
-  // Contact Info
-  validateRequiredString('contact_number', contact_number, /^\+?[0-9\s-]{7,15}$/);
-  validateRequiredString('email', email, /^[^\s@]+@[^\s@]+\.[^\s@]+$/, 'Invalid email address format.');
 
-  // Voter Info Specific
-  if (is_registered_voter === true) {
-    validateRequiredString('precinct_number', precinct_number, /^[a-zA-Z0-9\s-]+$/, 'Precinct number is required.');
-    validateBase64('voter_registration_proof_base64', voter_registration_proof_base64);
-  } else if (precinct_number && String(precinct_number).trim() !== '') {
-     validationErrors.push({ field: 'precinct_number', message: 'Precinct number should only be provided if registered voter.' });
-  }
-
-  // Validate Residency Proof Base64
-  validateBase64('residency_proof_base64', residency_proof_base64);
-
-
-  if (validationErrors.length > 0) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      fields: validationErrors.map(err => ({ field: err.field, message: err.message })),
-      message: 'Validation errors: ' + validationErrors.map(e => `${e.field}: ${e.message}`).join('; ')
-    });
-  }
-
-  // --- Prepare document for MongoDB ---
-  // (Ensuring snake_case for DB and correct data types)
-  const residentDocument = {
-    is_household_head: Boolean(is_household_head),
-    first_name: String(first_name).trim(),
-    middle_name: middle_name ? String(middle_name).trim() : null,
-    last_name: String(last_name).trim(),
-    sex: String(sex),
-    age: (age !== null && age !== undefined) ? parseInt(age, 10) : null,
-    date_of_birth: new Date(date_of_birth),
-    civil_status: String(civil_status),
-    occupation_status: String(occupation_status),
-    place_of_birth: String(place_of_birth).trim(),
-    citizenship: String(citizenship).trim(),
-    is_pwd: Boolean(is_pwd),
-
-    is_registered_voter: Boolean(is_registered_voter),
-    precinct_number: (is_registered_voter && precinct_number) ? String(precinct_number).trim() : null,
-    // Store Base64 string directly. The schema suggested 'TEXT or JSON'.
-    // If it's just one Base64 string, a TEXT type (string in Mongo) is fine.
-    // If you intend to store multiple Base64 proofs, this should be an array.
-    voter_registration_proof_data: (is_registered_voter && voter_registration_proof_base64) ? voter_registration_proof_base64 : null,
-
-
-    address_house_number: String(address_house_number).trim(),
-    address_street: String(address_street).trim(),
-    address_subdivision_zone: String(address_subdivision_zone).trim(),
-    address_city_municipality: String(address_city_municipality).trim(),
-    years_lived_current_address: (years_lived_current_address !== null && years_lived_current_address !== undefined) ? parseInt(years_lived_current_address, 10) : null,
-
-    contact_number: String(contact_number).trim(),
-    email: String(email).trim().toLowerCase(),
-
-    residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
-
-    household_member_ids: Array.isArray(household_member_ids) ? household_member_ids : [],
-
-    created_at: new Date(),
-    updated_at: new Date(),
-  };
-
-  // Optional: If you still want to store the original file names for context
-  // if (req.body.voter_registration_proof_name && residentDocument.voter_registration_proof_data) {
-  //   residentDocument.voter_registration_proof_name = req.body.voter_registration_proof_name;
-  // }
-  // if (req.body.residency_proof_name && residentDocument.residency_proof_data) {
-  //   residentDocument.residency_proof_name = req.body.residency_proof_name;
-  // }
+  // Hash the password using MD5
+  const hashedPassword = md5(password);
 
   try {
-    const residentsCollection = dab.collection('residents');
-    const result = await residentsCollection.insertOne(residentDocument);
+    const newResidentDocument = {
+      // Personal Info
+      first_name: String(first_name).trim(),
+      middle_name: middle_name ? String(middle_name).trim() : null,
+      last_name: String(last_name).trim(),
+      sex: String(sex),
+      age: age ? parseInt(age) : null,
+      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+      civil_status: String(civil_status),
+      occupation_status: String(occupation_status),
+      place_of_birth: place_of_birth ? String(place_of_birth).trim() : null,
+      citizenship: citizenship ? String(citizenship).trim() : null,
+      is_pwd: Boolean(is_pwd),
 
-    if (result.insertedId) {
-      res.status(201).json({ message: 'Resident added successfully', residentId: result.insertedId });
-    } else {
-      throw new Error('Failed to insert resident.');
-    }
+      // Address Info
+      address_house_number: address_house_number ? String(address_house_number).trim() : null,
+      address_street: address_street ? String(address_street).trim() : null,
+      address_subdivision_zone: address_subdivision_zone ? String(address_subdivision_zone).trim() : null,
+      address_city_municipality: address_city_municipality ? String(address_city_municipality).trim() : 'Manila City',
+      years_lived_current_address: years_lived_current_address ? parseInt(years_lived_current_address) : null,
+
+      // Contact Info
+      contact_number: contact_number ? String(contact_number).trim() : null,
+      email: String(email).trim().toLowerCase(), // Store email in lowercase for case-insensitive login
+
+      // Store the MD5 hashed password
+      password_hash: hashedPassword, // Or just 'password: hashedPassword' if you prefer
+
+      // Voter Info
+      is_registered_voter: Boolean(is_registered_voter),
+      precinct_number: is_registered_voter && precinct_number ? String(precinct_number).trim() : null,
+      voter_registration_proof_data: is_registered_voter && voter_registration_proof_base64 ? voter_registration_proof_base64 : null,
+      // voter_registration_proof_name: is_registered_voter && voter_registration_proof_name ? voter_registration_proof_name : null, // Store if needed
+
+      // Proofs
+      residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
+      // residency_proof_name: residency_proof_name ? residency_proof_name : null, // Store if needed
+
+      // Household Info
+      is_household_head: Boolean(is_household_head),
+      household_member_ids: (is_household_head && Array.isArray(household_member_ids))
+        ? household_member_ids.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id))
+        : [],
+
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const result = await residentsCollection.insertOne(newResidentDocument);
+    // It's good practice to not send the password hash back in the response
+    const insertedResident = await residentsCollection.findOne(
+        { _id: result.insertedId },
+        { projection: { password_hash: 0 } } // Exclude password_hash from response
+    );
+
+    res.status(201).json({ message: 'Resident added successfully', resident: insertedResident });
   } catch (error) {
-    console.error('Error adding resident to DB:', error);
-    if (error.code === 11000) {
-        return res.status(409).json({ error: 'Conflict', message: 'A resident with this email or other unique identifier already exists.' });
-    }
+    console.error("Error adding new resident:", error);
     res.status(500).json({ error: 'Database error', message: 'Could not add resident.' });
   }
 });
