@@ -6,9 +6,34 @@ const md5 = require("md5");
 const crypto = require("crypto");
 const path = require('path');
 const moment = require('moment');
+const nodemailer = require('nodemailer');
 const { MongoClient, ObjectId } = require("mongodb");
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
+
+// --- SMTP Configuration ---
+const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
+const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
+const SMTP_USER = process.env.SMTP_USER || 'carbonellharold15@gmail.com';
+const SMTP_PASS = process.env.SMTP_PASS || 'ziwp tsie srvd eyzm'; // App Password for Gmail
+
+const transporter = nodemailer.createTransport({
+  host: SMTP_HOST,
+  port: SMTP_PORT,
+  secure: SMTP_PORT === 465, // true for 465, false for other ports
+  auth: {
+    user: SMTP_USER,
+    pass: SMTP_PASS,
+  },
+});
+
+
+const OTP_EXPIRY_MINUTES = 10; // OTP will be valid for 10 minutes
+
+// Function to generate a random 6-digit OTP
+function generateOTP() {
+  return crypto.randomInt(100000, 999999).toString();
+}
 
 
 
@@ -82,6 +107,16 @@ app.post('/api/login', async (req, res) => {
 
 
 
+
+
+
+
+
+
+
+
+
+
 // =================== RESIDENTS LOGIN =================== //
 
 // RESIDENT LOGIN (POST)
@@ -127,6 +162,135 @@ app.post('/api/residents/login', async (req, res) => {
     res.status(500).json({ error: 'Server error', message: 'An error occurred during login.' });
   }
 });
+
+
+// 1. REQUEST OTP FOR FORGOT PASSWORD
+app.post('/api/residents/forgot-password/request-otp', async (req, res) => {
+  const { email } = req.body;
+  if (!email || typeof email !== 'string' || !email.trim().match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
+    return res.status(400).json({ error: 'Invalid email format provided.' });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const resident = await residentsCollection.findOne({ email: normalizedEmail });
+
+    // Security: Always return a generic success message to prevent email enumeration
+    // The actual OTP sending happens only if the resident exists.
+    if (resident) {
+      const otp = generateOTP();
+      const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+
+      // Store OTP and its expiry on the user document
+      // In a production app, consider hashing the OTP or using a separate temporary collection/cache.
+      await residentsCollection.updateOne(
+        { _id: resident._id },
+        { $set: { password_reset_otp: otp, password_reset_otp_expiry: otpExpiry, updated_at: new Date() } }
+      );
+
+      // Send OTP email
+      const mailOptions = {
+        from: `"BBud System" <${SMTP_USER}>`,
+        to: normalizedEmail,
+        subject: 'Your Password Reset OTP Code',
+        html: `
+          <p>Hello ${resident.first_name || 'User'},</p>
+          <p>You requested a password reset. Your One-Time Password (OTP) is:</p>
+          <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
+          <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+          <p>If you did not request this, please ignore this email.</p>
+          <br>
+          <p>Thanks,<br>The BBud Team</p>
+        `,
+      };
+
+      try {
+        await transporter.sendMail(mailOptions);
+        console.log(`OTP email sent to ${normalizedEmail}`);
+      } catch (emailError) {
+        console.error("Error sending OTP email:", emailError);
+        // Even if email fails, don't reveal to user that their email was found.
+        // Log this error for admin attention.
+      }
+    }
+    // Generic success message
+    res.json({ message: `If an account with email ${normalizedEmail} exists, an OTP has been sent. Please check your inbox (and spam folder).` });
+
+  } catch (error) {
+    console.error("Error processing forgot password request:", error);
+    // Generic error message to the client in case of server issues
+    res.status(500).json({ error: 'An error occurred while processing your request.' });
+  }
+});
+
+
+// 2. VERIFY OTP AND RESET PASSWORD
+app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
+  const { email, otp, newPassword } = req.body;
+
+  if (!email || !otp || !newPassword) {
+    return res.status(400).json({ error: 'Email, OTP, and new password are required.' });
+  }
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters long.' });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  const normalizedEmail = email.trim().toLowerCase();
+
+  try {
+    const resident = await residentsCollection.findOne({
+      email: normalizedEmail,
+      password_reset_otp: otp, // Check if OTP matches
+      password_reset_otp_expiry: { $gt: new Date() } // Check if OTP is not expired
+    });
+
+    if (!resident) {
+      return res.status(400).json({ error: 'Invalid or expired OTP. Please request a new one.' });
+    }
+
+    // Hash the new password (using MD5 as per your previous request, but bcrypt is recommended)
+    const hashedPassword = md5(newPassword); // WARNING: MD5 is insecure for passwords
+
+    // Update the password and clear OTP fields
+    await residentsCollection.updateOne(
+      { _id: resident._id },
+      {
+        $set: { password_hash: hashedPassword, updated_at: new Date() },
+        $unset: { password_reset_otp: "", password_reset_otp_expiry: "" } // Clear OTP fields
+      }
+    );
+
+    res.json({ message: 'Password has been reset successfully. You can now log in with your new password.' });
+
+  } catch (error) {
+    console.error("Error verifying OTP and resetting password:", error);
+    res.status(500).json({ error: 'An error occurred while resetting your password.' });
+  }
+});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 // ========================= RESIDENTS =================== //
 
