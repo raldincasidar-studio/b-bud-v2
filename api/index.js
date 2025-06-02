@@ -508,6 +508,110 @@ app.get('/api/residents/:id', async (req, res) => {
   res.json({resident});
 })
 
+// GET /api/residents/:residentId/household-details
+// Fetches a resident's details and their household information (if any)
+
+app.get('/api/residents/:residentId/household-details', async (req, res) => {
+  const { residentId } = req.params;
+  
+  if (!ObjectId.isValid(residentId)) {
+    return res.status(400).json({ error: 'Invalid Resident ID format' });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+  const residentObjectId = new ObjectId(residentId);
+
+  try {
+    // 1. Fetch the primary resident's details
+    const primaryResident = await residentsCollection.findOne({ _id: residentObjectId }, { projection: { password_hash: 0 } });
+
+    if (!primaryResident) {
+      return res.status(404).json({ error: 'Resident not found' });
+    }
+
+    let householdHeadDetails = null;
+    let householdMembersDetails = [];
+    let isMemberOfAnotherHousehold = false;
+
+    if (primaryResident.is_household_head) {
+      // --- CASE 1: The resident IS a household head ---
+      householdHeadDetails = primaryResident; // They are the head
+      if (primaryResident.household_member_ids && primaryResident.household_member_ids.length > 0) {
+        const memberObjectIds = primaryResident.household_member_ids
+            .filter(id => ObjectId.isValid(id))
+            .map(id => new ObjectId(id));
+        
+        if (memberObjectIds.length > 0) {
+            householdMembersDetails = await residentsCollection.find({ _id: { $in: memberObjectIds } })
+                .project({ password_hash: 0, voter_registration_proof_data: 0, residency_proof_data: 0 }) // Exclude sensitive/large fields
+                .toArray();
+        }
+      }
+    } else {
+      // --- CASE 2: The resident is NOT a household head ---
+      // Check if they are a member of another household
+      const householdWhereTheyAreMember = await residentsCollection.findOne(
+        { household_member_ids: residentObjectId }, // Find a head who has this resident as a member
+        { projection: { password_hash: 0 } }
+      );
+
+      if (householdWhereTheyAreMember) {
+        isMemberOfAnotherHousehold = true;
+        householdHeadDetails = householdWhereTheyAreMember; // This is the head of their household
+
+        // Fetch all members of that household (including the primary resident themselves)
+        let allMemberIdsInThisHousehold = [residentObjectId]; // Start with the primary resident
+        if (householdWhereTheyAreMember.household_member_ids && householdWhereTheyAreMember.household_member_ids.length > 0) {
+            // Add other members, ensuring no duplicates and converting to ObjectId
+             householdWhereTheyAreMember.household_member_ids.forEach(id => {
+                if (ObjectId.isValid(id)) {
+                    const memberObjId = new ObjectId(id);
+                    if (!allMemberIdsInThisHousehold.some(existingId => existingId.equals(memberObjId))) {
+                        allMemberIdsInThisHousehold.push(memberObjId);
+                    }
+                }
+            });
+        }
+         // Also add the head of this household to the member list for display consistency if needed, or handle separately
+        // For simplicity, we'll just list members as defined by the head's household_member_ids, plus the primary resident if they are a member.
+        // The head's details are already in householdHeadDetails.
+
+        const memberObjectIdsToFetch = householdWhereTheyAreMember.household_member_ids
+            .filter(id => ObjectId.isValid(id))
+            .map(id => new ObjectId(id));
+        
+        // Add the primary resident ID to this list if not already (should be covered by above)
+        // but ensure the query includes them if they are part of this household
+        const finalMemberIds = Array.from(new Set([...memberObjectIdsToFetch, residentObjectId].map(id => id.toString()))).map(idStr => new ObjectId(idStr));
+
+
+        if (finalMemberIds.length > 0) {
+             householdMembersDetails = await residentsCollection.find({ _id: { $in: finalMemberIds } })
+                .project({ password_hash: 0, voter_registration_proof_data: 0, residency_proof_data: 0 })
+                .toArray();
+        }
+
+      } else {
+        // --- CASE 3: Not a head, and not a member of any other household ---
+        // householdHeadDetails remains null, householdMembersDetails remains empty
+      }
+    }
+
+    res.json({
+      resident: primaryResident,
+      isHouseholdHead: primaryResident.is_household_head,
+      isMemberOfAnotherHousehold: isMemberOfAnotherHousehold,
+      householdHead: householdHeadDetails, // Details of the head (either self or another)
+      householdMembers: householdMembersDetails, // List of member details
+    });
+
+  } catch (error) {
+    console.error("Error fetching resident household details:", error);
+    res.status(500).json({ error: "Failed to fetch household details", message: error.message });
+  }
+});
+
 // DELETE RESIDENT BY ID (DELETE)
 app.delete('/api/residents/:id', async (req, res) => {
   const dab = await db();
