@@ -150,14 +150,14 @@ app.post('/api/residents/login', async (req, res) => {
     const resident = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() });
 
     if (!resident) {
-      return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password.' });
+      return res.status(401).json({ error: 'Invalid email or password.', message: 'Invalid email or password.' });
     }
 
     // Check for account lockout
     if (resident.account_locked_until && new Date(resident.account_locked_until) > new Date()) {
       const timeLeft = Math.ceil((new Date(resident.account_locked_until).getTime() - new Date().getTime()) / (60 * 1000));
       return res.status(403).json({
-        error: 'AccountLocked',
+        error: `Account is locked due to multiple failed attempts. Please try again in approximately ${timeLeft} minute(s).`,
         message: `Account is locked due to multiple failed attempts. Please try again in approximately ${timeLeft} minute(s).`,
         lockedUntil: resident.account_locked_until
       });
@@ -183,14 +183,14 @@ app.post('/api/residents/login', async (req, res) => {
 
       if (lockUntilDate) {
         return res.status(403).json({
-          error: 'AccountLocked',
+          error: `Account locked due to multiple failed attempts. Please try again in ${LOCKOUT_DURATION_MINUTES} minutes.`,
           message: `Account locked due to multiple failed attempts. Please try again in ${LOCKOUT_DURATION_MINUTES} minutes.`,
           lockedUntil: lockUntilDate
         });
       } else {
         const remainingAttempts = MAX_LOGIN_ATTEMPTS - attempts;
         return res.status(401).json({
-            error: 'Unauthorized',
+            error: `Invalid email or password. ${remainingAttempts > 0 ? `${remainingAttempts} attempt(s) remaining before lockout.` : 'Account will be locked on next failed attempt.'}`,
             message: `Invalid email or password. ${remainingAttempts > 0 ? `${remainingAttempts} attempt(s) remaining before lockout.` : 'Account will be locked on next failed attempt.'}`
         });
       }
@@ -199,7 +199,7 @@ app.post('/api/residents/login', async (req, res) => {
     // --- Age Restriction for Login (16+ years old) ---
     const residentAge = calculateAge(resident.date_of_birth);
     if (residentAge < 16) {
-      return res.status(403).json({ error: 'Forbidden', message: 'Access denied. Users must be 16 years old or older to log in.' });
+      return res.status(403).json({ error: 'Access denied. Users must be 16 years old or older to log in.', message: 'Access denied. Users must be 16 years old or older to log in.' });
     }
 
     // --- Check Status (only 'Approved' can login) ---
@@ -208,7 +208,7 @@ app.post('/api/residents/login', async (req, res) => {
         if (resident.status === 'Pending') message = 'Login denied. Your account is pending approval.';
         if (resident.status === 'Declined') message = 'Login denied. Your account has been declined.';
         if (resident.status === 'Deactivated') message = 'Login denied. Your account has been deactivated.';
-        return res.status(403).json({ error: 'Forbidden', message });
+        return res.status(403).json({ error: message, message });
     }
 
     // --- Credentials VALID - Proceed to OTP step ---
