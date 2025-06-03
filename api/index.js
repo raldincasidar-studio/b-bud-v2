@@ -1553,10 +1553,10 @@ app.post('/api/admins', async (req, res) => {
 
   const requiredFields = [
     { field: 'username', value: req.body.username, format: /^[a-zA-Z0-9._%+-]+$/ },
-    { field: 'password', value: req.body.password, format: /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{8,}$/ },
+    { field: 'password', value: req.body.password, format: /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{5,}$/ },
     { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
     { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: req.body.role, format: /^(Admin|Staff|Resident)$/ },
+    { field: 'role', value: req.body.role, format: /^(Superadmin|Admin)$/ },
   ];
 
   const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
@@ -1645,7 +1645,7 @@ app.put('/api/admins/:id', async (req, res) => {
     { field: 'username', value: username, format: /^[a-zA-Z0-9_]+$/ },
     { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
     { field: 'email', value: email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: role, format: /^(Admin|User)$/ },
+    { field: 'role', value: role, format: /^(Admin|Superadmin)$/ },
   ];
 
   if (password) {
