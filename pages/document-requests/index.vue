@@ -128,9 +128,9 @@ const headers = ref([
   { title: 'Request Type', key: 'request_type', sortable: true },
   { title: 'Requestor Name', key: 'requestor_name', sortable: true },
   { title: 'Date of Request', key: 'date_of_request', sortable: true },
-  { title: 'Status', key: 'document_status', sortable: true, align: 'center', width: '220px' },
   { title: 'Purpose', key: 'purpose_of_request', sortable: false, width: '20%' },
   { title: 'Processed By', key: 'processed_by_admin_name', sortable: true },
+  { title: 'Status', key: 'document_status', sortable: true, align: 'center', width: '220px' },
   { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '150px' },
 ]);
 

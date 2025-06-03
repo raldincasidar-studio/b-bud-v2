@@ -103,8 +103,8 @@ const headers = ref([
   { title: 'Complainant', key: 'complainant_name', sortable: true }, // API might need to support sorting by this
   { title: 'Complained Against', key: 'person_complained_against', sortable: true }, // API might need to support sorting by this
   { title: 'Date Filed', key: 'date_of_complaint', sortable: true },
-  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '200px'}, // Wider for select
   { title: 'Description Preview', key: 'notes_description', sortable: false },
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '200px'}, // Wider for select
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 

@@ -111,9 +111,9 @@ const headers = ref([
   { title: 'Borrower Name', key: 'borrower_name', sortable: true }, // API should provide this (e.g., via $lookup)
   { title: 'Item Borrowed', key: 'item_borrowed', sortable: true }, // API should provide this (e.g., via $lookup if item_id is stored)
   { title: 'Date Borrowed', key: 'borrow_datetime', sortable: true },
-  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '180px' },
   { title: 'Borrowed From', key: 'borrowed_from_personnel', sortable: true }, // API should provide this
   { title: 'Date Returned', key: 'date_returned', sortable: true },
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '180px' },
   { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '150px' },
 ]);
 

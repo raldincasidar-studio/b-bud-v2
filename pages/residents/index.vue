@@ -18,8 +18,8 @@ const headers = ref([
   { title: 'Contact No.', key: 'contact_number', sortable: false },
   { title: 'Address', key: 'address', sortable: false, width: '250px' },
   { title: 'Household Head', key: 'is_household_head', sortable: true, align: 'center' },
-  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '180px' }, // Added Status
   { title: 'Date Added', key: 'created_at', sortable: true },
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '180px' }, // Added Status
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 
