@@ -528,13 +528,13 @@ app.post('/api/residents', async (req, res) => {
       }
 
       // Email uniqueness check for HEAD
-      const existingHeadEmail = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() }, { session });
-      if (existingHeadEmail?._id) {
-        // await session.abortTransaction();
-        const err = new Error('Conflict: Head email address already in use.');
-        err.statusCode = 409;
-        throw err;
-      }
+      // const existingHeadEmail = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() }, { session });
+      // if (existingHeadEmail?._id) {
+      //   // await session.abortTransaction();
+      //   const err = new Error('Conflict: Head email address already in use.');
+      //   err.statusCode = 409;
+      //   throw err;
+      // }
       // --- END VALIDATION FOR HEAD ---
 
       // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
