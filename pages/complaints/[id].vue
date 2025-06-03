@@ -1,25 +1,18 @@
 <template>
   <v-container class="my-10">
-    <div v-if="loading" class="text-center pa-10">
-        <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
-        <p class="mt-2">Loading Complaint Details...</p>
-    </div>
-    <div v-else-if="!complaintData._id && !errorLoading">
-        <v-alert type="warning" prominent border="start">Complaint not found.
-            <v-btn color="primary" variant="text" to="/complaints" class="ml-2">Back to List</v-btn>
-        </v-alert>
-    </div>
-    <div v-else-if="errorLoading">
-        <v-alert type="error" prominent border="start">Error loading complaint details.
-             <v-btn color="primary" variant="text" @click="fetchComplaint" class="ml-2">Retry</v-btn>
-        </v-alert>
-    </div>
+    <!-- Loading / Error States (similar to your original) -->
+    <div v-if="loading" class="text-center pa-10"><v-progress-circular indeterminate color="primary" size="64"></v-progress-circular><p class="mt-2">Loading...</p></div>
+    <div v-else-if="!complaintData._id && !errorLoading"><v-alert type="warning" prominent border="start">Not found. <v-btn color="primary" variant="text" to="/complaints" class="ml-2">Back to List</v-btn></v-alert></div>
+    <div v-else-if="errorLoading"><v-alert type="error" prominent border="start">Error loading. <v-btn color="primary" variant="text" @click="fetchComplaint" class="ml-2">Retry</v-btn></v-alert></div>
 
     <div v-else>
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
             <h2 class="text-truncate" :title="`Complaint by ${complaintData.complainant_display_name || 'N/A'}`">
                 Complaint Details
+                <span v-if="complaintData._id" class="text-subtitle-1 text-grey-darken-1 ml-2">
+                    (Ref #: {{ complaintData._id }})
+                </span>
             </h2>
         </v-col>
         <v-col class="text-right">
@@ -30,9 +23,20 @@
         </v-col>
       </v-row>
 
-      <v-card prepend-icon="mdi-comment-text-multiple-outline" :title="editMode ? 'Edit Complaint' : 'View Complaint'">
+      <v-card prepend-icon="mdi-comment-text-multiple-outline" :title="editMode ? 'Edit Complaint Information' : 'View Complaint Information'">
         <v-card-text>
           <v-form ref="form">
+            <!-- Reference Number (View Mode Only) -->
+            <v-row v-if="!editMode && complaintData._id">
+                <v-col cols="12">
+                     <v-text-field
+                        :model-value="complaintData._id"
+                        label="Reference Number"
+                        variant="outlined" density="compact" readonly filled
+                    ></v-text-field>
+                </v-col>
+            </v-row>
+
             <!-- Complainant Details -->
             <v-row>
               <v-col cols="12" md="6">
@@ -141,12 +145,11 @@
       </v-card>
     </div>
 
-    <!-- Delete Confirmation Dialog - THIS WAS MISSING -->
     <v-dialog v-model="confirmDeleteDialog" persistent max-width="400">
       <v-card>
         <v-card-title class="text-h5">Confirm Deletion</v-card-title>
         <v-card-text>
-          Are you sure you want to delete this complaint filed by <strong>{{ complaintData.complainant_display_name || 'N/A' }}</strong> regarding "<strong>{{ complaintData.person_complained_against_name || 'N/A' }}</strong>"? This action cannot be undone.
+          Are you sure you want to delete this complaint (Ref #: <strong>{{ complaintData._id }}</strong>)? This action cannot be undone.
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
@@ -155,54 +158,56 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
-    <!-- End Delete Confirmation Dialog -->
-
   </v-container>
 </template>
 
 <script setup>
 import { ref, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useMyFetch } from '../../composables/useMyFetch'; // Adjust path
+import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
-const { $toast, $swal } = useNuxtApp();
+const { $toast } = useNuxtApp(); // Removed $swal as it wasn't used in the delete logic
 const route = useRoute();
 const router = useRouter();
 const complaintId = route.params.id;
-const form = ref(null); // For v-form validation
+const form = ref(null);
 
-const complaintData = ref({}); // Original data from API for display
-const editableComplaint = ref({ // Data for the form in edit mode
+const complaintData = ref({});
+const editableComplaint = ref({
     complainant_resident_id: null,
     complainant_display_name: '',
     person_complained_against_resident_id: null,
-    person_complained_against_name: ''
+    person_complained_against_name: '',
+    complainant_address: '',
+    contact_number: '',
+    date_of_complaint: '',
+    time_of_complaint: '',
+    status: 'New',
+    notes_description: ''
 });
 const loading = ref(true);
 const errorLoading = ref(false);
 const editMode = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
-const confirmDeleteDialog = ref(false); // This was already here, just needed the template part
+const confirmDeleteDialog = ref(false);
 
-// Complainant search state
 const complainantSearchQuery = ref('');
 const complainantSearchResults = ref([]);
 const isLoadingComplainants = ref(false);
 
-// Person Complained Against search state
 const personComplainedSearchQuery = ref('');
 const personComplainedSearchResults = ref([]);
 const isLoadingPersonComplained = ref(false);
-const selectedPersonComplainedIsResident = ref(false); // Tracks if person_complained_against is a selected resident
+const selectedPersonComplainedIsResident = ref(false);
 
 const statusOptions = ['New','Under Investigation','Resolved','Closed','Dismissed'];
 const rules = {
-    required: value => !!value || 'This field is required.',
+    required: value => !!String(value || '').trim() || 'This field is required.', // Improved required rule
     complainantSelected: value => !!editableComplaint.value.complainant_resident_id || 'A complainant (resident) must be selected.',
     personComplainedRequired: value => !!editableComplaint.value.person_complained_against_name?.trim() || 'Person complained against is required.',
-    contactFormat: value => (/^\+?[0-9\s-]{7,15}$/.test(value) || value === '') || 'Invalid contact number format.',
+    contactFormat: value => (/^\+?[0-9\s-]{7,15}$/.test(value) || !value) || 'Invalid contact number format (allow empty).', // Allow empty
 };
 
 onMounted(async () => { await fetchComplaint(); });
@@ -211,27 +216,20 @@ function formatDateForInput(isoString, type = 'date') {
     if (!isoString) return '';
     try {
         const dateObj = new Date(isoString);
-        if (isNaN(dateObj.getTime())) return isoString; // Invalid date string
+        if (isNaN(dateObj.getTime())) return isoString;
 
+        // For datetime-local, it needs YYYY-MM-DDTHH:mm but input type="date" needs YYYY-MM-DD
+        // and type="time" needs HH:mm
         const year = dateObj.getFullYear();
         const month = (dateObj.getMonth() + 1).toString().padStart(2, '0');
         const day = dateObj.getDate().toString().padStart(2, '0');
-
-        if (type === 'date') {
-            return `${year}-${month}-${day}`;
-        } else if (type === 'time') { // For time input HH:mm
-            const hours = dateObj.getHours().toString().padStart(2, '0');
-            const minutes = dateObj.getMinutes().toString().padStart(2, '0');
-            return `${hours}:${minutes}`;
-        }
-        // For datetime-local, it needs YYYY-MM-DDTHH:mm
         const hours = dateObj.getHours().toString().padStart(2, '0');
         const minutes = dateObj.getMinutes().toString().padStart(2, '0');
-        return `${year}-${month}-${day}T${hours}:${minutes}`;
 
-    } catch (e) {
-        return isoString; // Fallback if parsing fails
-    }
+        if (type === 'date') return `${year}-${month}-${day}`;
+        if (type === 'time') return `${hours}:${minutes}`;
+        return `${year}-${month}-${day}T${hours}:${minutes}`; // For datetime-local (not used here currently)
+    } catch (e) { return isoString; }
 };
 
 async function fetchComplaint(){
@@ -239,10 +237,11 @@ async function fetchComplaint(){
     try {
         const { data, error } = await useMyFetch(`/api/complaints/${complaintId}`);
         if (error.value || !data.value?.complaint) {
-        errorLoading.value = true; complaintData.value = {}; console.error('Fetch error:', error.value);
+            errorLoading.value = true; complaintData.value = {};
+            console.error('Fetch error:', error.value || 'No complaint data');
         } else {
-        complaintData.value = { ...data.value.complaint };
-        resetEditableData();
+            complaintData.value = { ...data.value.complaint };
+            resetEditableData();
         }
     } catch (e) { errorLoading.value = true; console.error("Exception fetching complaint:", e); }
     finally { loading.value = false; }
@@ -250,84 +249,85 @@ async function fetchComplaint(){
 
 function resetEditableData() {
     editableComplaint.value = JSON.parse(JSON.stringify(complaintData.value));
+    // Format dates for their respective input types
     if (editableComplaint.value.date_of_complaint) {
         editableComplaint.value.date_of_complaint = formatDateForInput(editableComplaint.value.date_of_complaint, 'date');
     }
-    // Time is typically stored as HH:MM string, should be fine for type="time"
-    // If date_of_complaint stores full datetime, and time_of_complaint is derived:
-    // if (complaintData.value.date_of_complaint) {
-    //    editableComplaint.value.time_of_complaint = formatDateForInput(complaintData.value.date_of_complaint, 'time');
-    // }
+    if (editableComplaint.value.time_of_complaint) { // Assuming time_of_complaint is stored as HH:MM string or derived
+        // If time_of_complaint is part of a datetime field, extract it:
+        // editableComplaint.value.time_of_complaint = formatDateForInput(complaintData.value.some_datetime_field_for_time, 'time');
+    } else if (complaintData.value.date_of_complaint && !editableComplaint.value.time_of_complaint) {
+        // If time is not a separate field but part of date_of_complaint (which is unusual if you have separate date/time inputs)
+        // editableComplaint.value.time_of_complaint = formatDateForInput(complaintData.value.date_of_complaint, 'time');
+    }
 
 
     complainantSearchQuery.value = editableComplaint.value.complainant_display_name || '';
     personComplainedSearchQuery.value = editableComplaint.value.person_complained_against_name || '';
     selectedPersonComplainedIsResident.value = !!editableComplaint.value.person_complained_against_resident_id;
-    
+
     complainantSearchResults.value = [];
     personComplainedSearchResults.value = [];
 }
 
-function toggleEditMode(enable){editMode.value=enable;if(enable)resetEditableData();}
-function cancelEdit(){toggleEditMode(false);resetEditableData();}
+function toggleEditMode(enable){ editMode.value=enable; if(enable) resetEditableData(); }
+function cancelEdit(){ toggleEditMode(false); resetEditableData(); }
 
-function debounce(fn,delay){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn.apply(this,a),delay);};}
+function debounce(fn,delay){ let t; return(...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),delay); }; }
 
 const searchResidentsAPI = async(q, type)=>{
     const tq=typeof q==='string'?q.trim():'';
     if(tq.length<2){
-        if(type==='complainant')complainantSearchResults.value=[];
-        if(type==='personComplained')personComplainedSearchResults.value=[];
-        if(type==='complainant')isLoadingComplainants.value=false;
-        if(type==='personComplained')isLoadingPersonComplained.value=false;
+        if(type==='complainant') complainantSearchResults.value=[];
+        if(type==='personComplained') personComplainedSearchResults.value=[];
+        if(type==='complainant') isLoadingComplainants.value=false;
+        if(type==='personComplained') isLoadingPersonComplained.value=false;
         return;
     }
-    if(type==='complainant')isLoadingComplainants.value=true;
-    if(type==='personComplained')isLoadingPersonComplained.value=true;
-    if(type==='complainant')complainantSearchResults.value=[]; // Clear before new search
-    if(type==='personComplained')personComplainedSearchResults.value=[]; // Clear before new search
+    if(type==='complainant') isLoadingComplainants.value=true;
+    if(type==='personComplained') isLoadingPersonComplained.value=true;
+    if(type==='complainant') complainantSearchResults.value=[];
+    if(type==='personComplained') personComplainedSearchResults.value=[];
 
     try{
-        const{data,error}=await useMyFetch('/api/residents/search',{query:{q:tq}});
+        const{data,error}=await useMyFetch('/api/residents/search',{query:{q:tq, limit: 10}}); // Added limit
         if(error.value){console.error(`Error searching ${type}:`, error.value)}
         else{
-            if(type==='complainant')complainantSearchResults.value=data.value?.residents||[];
-            if(type==='personComplained')personComplainedSearchResults.value=data.value?.residents||[];
+            const results = data.value?.residents || [];
+            if(type==='complainant') complainantSearchResults.value=results;
+            if(type==='personComplained') personComplainedSearchResults.value=results;
         }
     } catch(e){console.error(`Exception searching ${type}:`, e)}
     finally{
-        if(type==='complainant')isLoadingComplainants.value=false;
-        if(type==='personComplained')isLoadingPersonComplained.value=false;
+        if(type==='complainant') isLoadingComplainants.value=false;
+        if(type==='personComplained') isLoadingPersonComplained.value=false;
     }
 };
 
-// Complainant Search
 const debouncedComplainantSearch=debounce((q)=>searchResidentsAPI(q,'complainant'),500);
 watch(complainantSearchQuery,(nq,oq)=>{
-    if(nq === editableComplaint.value.complainant_display_name && editableComplaint.value.complainant_resident_id){
-        // If user deletes the selected name and starts typing again, allow search
-        if(nq !== oq && oq === editableComplaint.value.complainant_display_name) {
-            // Allow search to proceed if user actively changes the pre-filled selected name
-        } else {
-            complainantSearchResults.value = []; // Hide list if query matches current selected name
-            return;
+    if(editMode.value) { // Only search when in edit mode
+        if(nq === editableComplaint.value.complainant_display_name && editableComplaint.value.complainant_resident_id){
+            if(nq !== oq && oq === editableComplaint.value.complainant_display_name) {} else { complainantSearchResults.value = []; return; }
         }
+        if(!nq||typeof nq!=='string'||nq.trim().length<2){complainantSearchResults.value=[];return;}
+        debouncedComplainantSearch(nq);
+    } else {
+        complainantSearchResults.value = [];
     }
-    if(!nq||typeof nq!=='string'||nq.trim().length<2){complainantSearchResults.value=[];return;}
-    debouncedComplainantSearch(nq);
 });
 
 const selectComplainant=(res)=>{
     editableComplaint.value.complainant_resident_id=res._id;
     const n=`${res.first_name||''} ${res.middle_name||''} ${res.last_name||''}`.trim();
     editableComplaint.value.complainant_display_name=n;
-    complainantSearchQuery.value=n;
+    complainantSearchQuery.value=n; // Update search query to reflect selection
     editableComplaint.value.complainant_address=`${res.address_house_number||''} ${res.address_street||''}, ${res.address_subdivision_zone||''}, ${res.address_city_municipality||''}`.replace(/ ,/g,',').replace(/^,|,$/g,'').trim();
     editableComplaint.value.contact_number=res.contact_number||'';
     complainantSearchResults.value=[];
 };
 const clearComplainantSelection=()=>{
-    complainantSearchQuery.value='';
+    complainantSearchQuery.value=''; // Clear the input field
     editableComplaint.value.complainant_resident_id=null;
     editableComplaint.value.complainant_display_name='';
     editableComplaint.value.complainant_address='';
@@ -335,33 +335,36 @@ const clearComplainantSelection=()=>{
     complainantSearchResults.value=[];
 };
 
-// Person Complained Against Search
 const debouncedPersonComplainedSearch=debounce((q)=>searchResidentsAPI(q,'personComplained'),500);
 watch(personComplainedSearchQuery,(nq, oq)=>{
-    if (nq !== editableComplaint.value.person_complained_against_name && editableComplaint.value.person_complained_against_resident_id) {
-        editableComplaint.value.person_complained_against_resident_id = null;
-        selectedPersonComplainedIsResident.value = false;
-    }
-    // Update the name field directly from input. ID is set only on selection.
-    editableComplaint.value.person_complained_against_name = nq;
+    if(editMode.value) { // Only search when in edit mode
+        // If text changes and it's different from a previously selected resident's name,
+        // it means the user is typing a new name or searching again.
+        if (nq !== editableComplaint.value.person_complained_against_name && selectedPersonComplainedIsResident.value) {
+            editableComplaint.value.person_complained_against_resident_id = null;
+            selectedPersonComplainedIsResident.value = false;
+        }
+        editableComplaint.value.person_complained_against_name = nq; // Always update the name from input
 
-    if (nq === editableComplaint.value.person_complained_against_name && selectedPersonComplainedIsResident.value) {
-        if (nq !== oq) {} else { personComplainedSearchResults.value = []; return; }
+        if (selectedPersonComplainedIsResident.value && nq === editableComplaint.value.person_complained_against_name) {
+             if(nq !== oq) {} else { personComplainedSearchResults.value = []; return; }
+        }
+        if(!nq||typeof nq!=='string'||nq.trim().length<2){personComplainedSearchResults.value=[];return;}
+        debouncedPersonComplainedSearch(nq);
+    } else {
+        personComplainedSearchResults.value = [];
     }
-
-    if(!nq||typeof nq!=='string'||nq.trim().length<2){personComplainedSearchResults.value=[];return;}
-    debouncedPersonComplainedSearch(nq);
 });
 const selectPersonComplained=(res)=>{
     editableComplaint.value.person_complained_against_resident_id=res._id;
     const n=`${res.first_name||''} ${res.middle_name||''} ${res.last_name||''}`.trim();
     editableComplaint.value.person_complained_against_name=n;
-    personComplainedSearchQuery.value=n;
+    personComplainedSearchQuery.value=n; // Update search query to reflect selection
     selectedPersonComplainedIsResident.value=true;
     personComplainedSearchResults.value=[];
 };
 const clearPersonComplainedSelection=()=>{
-    personComplainedSearchQuery.value='';
+    personComplainedSearchQuery.value=''; // Clear the input field
     editableComplaint.value.person_complained_against_resident_id=null;
     editableComplaint.value.person_complained_against_name='';
     selectedPersonComplainedIsResident.value=false;
@@ -373,35 +376,33 @@ async function saveChanges() {
   if (!valid) { $toast.fire({ title: 'Please correct the form errors.', icon: 'error' }); return; }
   if (!editableComplaint.value.complainant_resident_id) { $toast.fire({ title: 'A complainant (resident) must be selected.', icon: 'warning' }); return; }
   if (!editableComplaint.value.person_complained_against_name?.trim()) { $toast.fire({ title: 'Person complained against name is required.', icon: 'warning'}); return; }
-  
+
   saving.value = true;
   try {
     const payload = { ...editableComplaint.value };
-    if(payload.date_of_complaint) payload.date_of_complaint = new Date(payload.date_of_complaint).toISOString();
-    
-    // Ensure person_complained_against_resident_id is null if not a selected resident
-    if (!selectedPersonComplainedIsResident.value) { // Or check against editableComplaint.value.person_complained_against_resident_id directly if it's reliably nulled
+    // Combine date and time for the API if your API expects a single datetime for date_of_complaint
+    // For now, assuming API handles separate date and time, or date_of_complaint is just date part
+    if(payload.date_of_complaint) payload.date_of_complaint = new Date(payload.date_of_complaint).toISOString().split('T')[0]; // Send only date part
+
+    if (!selectedPersonComplainedIsResident.value) {
         payload.person_complained_against_resident_id = null;
     }
-    // The name (payload.person_complained_against_name) is already set from the text field (personComplainedSearchQuery via watch)
+    // person_complained_against_name is already correctly set in editableComplaint from the text input
 
     const { data, error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'PUT', body: payload });
-    if (error.value || data.value?.error) { $toast.fire({ title: data.value?.error || 'Failed to update complaint.', icon: 'error' });
+    if (error.value || data.value?.error) { $toast.fire({ title: data.value?.message || data.value?.error || 'Failed to update complaint.', icon: 'error' });
     } else {
       $toast.fire({ title: 'Complaint updated successfully!', icon: 'success' });
-      complaintData.value = { ...data.value.complaint }; // API should return the full updated object
-      resetEditableData(); 
-      toggleEditMode(false);
+      complaintData.value = { ...data.value.complaint };
+      toggleEditMode(false); // This calls resetEditableData
     }
   } catch (e) { console.error("Exception saving complaint:", e); $toast.fire({ title: 'An error occurred while saving.', icon: 'error' }); }
   finally { saving.value = false; }
 }
 
 async function deleteComplaint(){
-  // const { isConfirmed } = await $swal({ title: `Delete Complaint?`, text: 'This action cannot be reversed!', showCancelButton: true, confirmButtonText: 'Yes, delete it!', cancelButtonText: 'Cancel' });
-  // if (!isConfirmed) return;
   deleting.value = true;
-  try { 
+  try {
     const { error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'DELETE' });
     if (error.value) { $toast.fire({ title: 'Failed to delete complaint.', icon: 'error' }); }
     else { $toast.fire({ title: 'Complaint deleted successfully!', icon: 'success' }); router.push('/complaints'); }
@@ -409,7 +410,6 @@ async function deleteComplaint(){
   finally { deleting.value = false; confirmDeleteDialog.value = false; }
 }
 
-// Added a shared formatDate for display purposes, not for input formatting
 const formatDate = (dateString, includeTime = false) => {
   if (!dateString) return 'N/A';
   try {
@@ -419,38 +419,37 @@ const formatDate = (dateString, includeTime = false) => {
       options.minute = '2-digit';
     }
     return new Date(dateString).toLocaleDateString(undefined, options);
-  } catch (e) {
-    return dateString;
-  }
+  } catch (e) { return dateString; }
 };
 
 </script>
 
 <style scoped>
 .search-results-container {
-  position: relative; 
+  position: relative;
 }
 .search-results-list {
-  max-height: 150px;
+  max-height: 150px; /* Or adjust as needed */
   overflow-y: auto;
   border: 1px solid #e0e0e0;
   background-color: white;
-  z-index: 100;
+  z-index: 1000; /* Ensure it's above other elements */
   position: absolute;
-  width: 100%; /* Make it full width of its column or parent */
-  /* Adjust left/right or margin-top as needed if parent col has padding */
-  /* Example if parent col has pa-2 (8px padding on each side for Vuetify 3)
-  left: 8px;
-  right: 8px; 
-  width: calc(100% - 16px); 
-  */
-  margin-top: -1px; /* To slightly overlap the text field */
+  width: 100%; /* Make it full width of its parent container/column */
+  margin-top: -1px; /* Slightly overlap the text field */
+  border-radius: 0 0 4px 4px; /* Optional: round bottom corners */
 }
-.v-label {
-    opacity:var(--v-high-emphasis-opacity);
+.v-label { /* Style for custom label tags */
+    opacity:var(--v-high-emphasis-opacity); /* From Vuetify's default label style */
     font-size:0.875rem;
     color:rgba(var(--v-theme-on-surface),var(--v-high-emphasis-opacity));
     display:block;
     margin-bottom:4px;
+}
+.text-truncate {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
 }
 </style>

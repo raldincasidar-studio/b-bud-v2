@@ -1,8 +1,8 @@
 <template>
   <v-container class="my-12">
-    <h1 class="text-h3 font-weight-bold mb-2">Dashboard</h1>
+    <h1 class="text-h3 font-weight-bold mb-2">Dashboard Overview</h1>
     <h3 class="text-subtitle-1 text-grey-darken-1 mb-8">
-      Welcome {{ userData?.name || 'Admin' }}! Here's an overview of your community.
+      Welcome {{ userData?.name || 'Admin' }}! Current community and transaction status.
     </h3>
 
     <div v-if="loading" class="text-center pa-10">
@@ -16,79 +16,63 @@
     </div>
 
     <div v-else>
-      <!-- Main Metric Cards -->
+      <!-- Main Metric Cards - REVISED -->
       <v-row>
-        <v-col
-          v-for="metric in mainMetrics"
-          :key="metric.title"
-          cols="12"
-          sm="6"
-          md="4"
-          lg="3"
-        >
-          <v-card :color="metric.color" theme="dark" class="fill-height">
-            <v-card-text class="d-flex flex-column" style="height: 160px;">
-              <v-row no-gutters class="flex-grow-1">
-                <v-col cols="3" class="d-flex align-start justify-center pt-3">
-                  <v-icon size="40">{{ metric.icon }}</v-icon>
-                </v-col>
-                <v-col cols="9" class="text-right pa-3">
-                  <div class="text-overline font-weight-bold" style="font-size: 0.85rem !important;">{{ metric.title }}</div>
-                  <div class="text-h3 font-weight-bold">{{ metric.value }}</div>
-                </v-col>
-              </v-row>
-              <div class="text-caption mt-auto align-self-start pl-3 pb-2">{{ metric.subtext }}</div>
+        <v-col v-for="metric in mainMetrics" :key="metric.title" cols="12" sm="6" md="4">
+          <!-- lg="2" for 6 cards in a row on large screens, adjust as needed -->
+          <v-card :color="metric.color" theme="dark" class="fill-height metric-card">
+            <v-card-text class="d-flex flex-column justify-space-between" style="min-height: 150px;">
+              <div>
+                <v-icon size="36" class="mb-2">{{ metric.icon }}</v-icon>
+                <div class="text-overline font-weight-bold metric-title">{{ metric.title }}</div>
+              </div>
+              <div class="text-h3 font-weight-bold align-self-end">{{ metric.value }}</div>
             </v-card-text>
           </v-card>
         </v-col>
       </v-row>
 
-      <!-- Age Brackets Card -->
-      <v-row class="mt-8">
+      <!-- Transaction Alerts Section - NEW -->
+      <v-row class="mt-10">
         <v-col cols="12">
-          <v-card>
-            <v-card-title class="d-flex align-center">
-              <v-icon left class="mr-2">mdi-account-details-outline</v-icon>
-              Age Distribution
-            </v-card-title>
-            <v-divider></v-divider>
-            <v-list lines="one" density="compact">
-              <v-list-item
-                v-for="bracket in ageBrackets"
-                :key="bracket.bracket"
-              >
-                <v-list-item-title class="font-weight-medium">{{ bracket.bracket }} Years</v-list-item-title>
-                <template v-slot:append>
-                  <v-chip color="blue-grey" label size="small">{{ bracket.count }}</v-chip>
-                </template>
+          <h2 class="text-h5 font-weight-medium mb-4">Transaction Alerts</h2>
+        </v-col>
+        <v-col v-for="alertItem in transactionAlerts" :key="alertItem.title" cols="12" md="4">
+          <v-card class="fill-height alert-card" :to="alertItem.linkTo" hover>
+            <v-list-item :prepend-icon="alertItem.icon" :base-color="alertItem.color">
+              <v-list-item-title class="text-h6 font-weight-medium">{{ alertItem.title }}</v-list-item-title>
+              <v-list-item-subtitle>{{ alertItem.subtext }}</v-list-item-subtitle>
+               <template v-slot:append>
+                <v-chip :color="alertItem.color" label size="large" class="font-weight-bold">
+                  {{ alertItem.count }}
+                </v-chip>
+              </template>
+            </v-list-item>
+            <!-- Optional: Display a few recent items if API provides them -->
+            
+            <v-list lines="one" density="compact" v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
+              <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.linkTo}/${item._id}`">
+                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed }}</v-list-item-title>
+                <v-list-item-subtitle class="text-truncate">{{ item.requestor_name || item.complainant_display_name || item.borrower_name }}</v-list-item-subtitle>
+                 <template v-slot:append>
+                   <v-icon size="small">mdi-chevron-right</v-icon>
+                 </template>
               </v-list-item>
-               <v-list-item v-if="!ageBrackets || ageBrackets.length === 0">
-                  <v-list-item-title class="text-grey">No age data available.</v-list-item-title>
+              <v-divider v-if="alertItem.count > 3"></v-divider>
+              <v-list-item :to="alertItem.linkTo" class="text-center text-caption" v-if="alertItem.count > 0">
+                View All {{ alertItem.title.toLowerCase() }}...
               </v-list-item>
             </v-list>
+            <v-card-text v-else-if="alertItem.count === 0" class="text-center text-grey">
+                No {{ alertItem.title.toLowerCase() }}.
+            </v-card-text>
+           
           </v-card>
         </v-col>
       </v-row>
 
-      <!-- Existing Navigation Links (Optional - can be kept or removed) -->
-      <v-row class="mt-10">
-          <v-col cols="12">
-              <h2 class="text-h5 font-weight-medium mb-4">Quick Navigation</h2>
-          </v-col>
-          <v-col cols="12" sm="6" md="4" lg="4" v-for="item in navItems" :key="item.to">
-            <v-card :to="item.to" rounded="lg" elevation="2" class="text-left py-4 px-4 h-100" hover>
-              <v-card-text class="h-100 d-flex flex-column justify-space-between">
-                <div>
-                    <v-avatar :color="item.color || 'primary'" variant="tonal" size="50" class="mb-3">
-                    <v-icon :icon="item.icon" size="28"></v-icon>
-                    </v-avatar>
-                    <h3 class="text-h6 font-weight-medium text-black">{{ item.text }}</h3>
-                </div>
-                <v-card-subtitle class="mt-1 pa-0">{{ item.description }}</v-card-subtitle>
-              </v-card-text>
-            </v-card>
-          </v-col>
-        </v-row>
+      <!-- Age Brackets Card - REMOVED -->
+      <!-- Quick Navigation Links - REMOVED as per request, replaced by Transaction Alerts -->
 
     </div>
   </v-container>
@@ -96,96 +80,119 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue';
-import { useCookie } from '#app'; // Or your method for getting user data
-import { useMyFetch } from '../composables/useMyFetch'; // Adjust path
+import { useCookie } from '#app'; // For user data
+import { useMyFetch } from '../composables/useMyFetch'; // Adjust path as needed
+import { useNuxtApp } from '#app';
 
-const userData = useCookie('userData');
+const { $toast } = useNuxtApp();
+const userData = useCookie('userData'); // Assuming 'name' property exists
 const loading = ref(true);
 const error = ref(false);
 
-// Refs for dashboard data
-const totalPopulation = ref(0);
-const totalHouseholds = ref(0);
-const totalRegisteredVoters = ref(0);
-const ageBrackets = ref([]); // Array of objects: { bracket: string, count: number }
-
-// const { $myFetch } = useMyFetch(); // If your composable exposes it this way
+// Refs for dashboard data from API
+const apiData = ref({
+  totalPopulation: 0,
+  totalHouseholds: 0,
+  totalRegisteredVoters: 0,
+  totalSeniorCitizens: 0,
+  totalPWDs: 0,
+  totalLaborForce: 0,
+  totalUnemployed: 0,
+  totalOutOfSchoolYouth: 0,
+  pendingDocumentRequestsCount: 0,
+  newComplaintsCount: 0,
+  borrowedAssetsNotReturnedCount: 0,
+  recentPendingDocumentRequests: [], // If fetching recent items
+  recentNewComplaints: [],
+  recentBorrowedAssets: [],
+});
 
 onMounted(async () => {
   loading.value = true;
   error.value = false;
   try {
-    const { data: dashboardData, error: fetchError } = await useMyFetch('/api/dashboard'); // Or useMyFetch directly
+    const { data: dashboardData, error: fetchError } = await useMyFetch('/api/dashboard');
 
     if (fetchError.value || !dashboardData.value) {
       console.error('Failed to fetch dashboard metrics:', fetchError.value);
       error.value = true;
+      $toast.fire({ title: 'Could not load dashboard data.', icon: 'error'});
     } else {
-      totalPopulation.value = dashboardData.value.totalPopulation || 0;
-      totalHouseholds.value = dashboardData.value.totalHouseholds || 0;
-      totalRegisteredVoters.value = dashboardData.value.totalRegisteredVoters || 0;
-      ageBrackets.value = dashboardData.value.ageBrackets || [];
+      apiData.value = { ...apiData.value, ...dashboardData.value }; // Merge fetched data into apiData
     }
   } catch (e) {
     console.error('Exception fetching dashboard metrics:', e);
     error.value = true;
+    $toast.fire({ title: 'An error occurred loading dashboard.', icon: 'error'});
   } finally {
     loading.value = false;
   }
 });
 
 const mainMetrics = computed(() => [
+  { title: 'POPULATION', value: apiData.value.totalPopulation, icon: 'mdi-account-group-outline', color: 'blue-darken-2' },
+  { title: 'HOUSEHOLDS', value: apiData.value.totalHouseholds, icon: 'mdi-home-city-outline', color: 'deep-purple-darken-1' },
+  { title: 'VOTERS', value: apiData.value.totalRegisteredVoters, icon: 'mdi-account-check-outline', color: 'light-blue-darken-3' },
+  { title: 'SENIORS', value: apiData.value.totalSeniorCitizens, icon: 'mdi-human-cane', color: 'teal-darken-1' },
+  { title: 'PWDs', value: apiData.value.totalPWDs, icon: 'mdi-wheelchair-accessibility', color: 'indigo-darken-1' },
+  // More granular occupation status can be added here or in a separate section
+  { title: 'LABOR FORCE', value: apiData.value.totalLaborForce, icon: 'mdi-briefcase-outline', color: 'green-darken-2' },
+  { title: 'UNEMPLOYED', value: apiData.value.totalUnemployed, icon: 'mdi-account-off-outline', color: 'amber-darken-2' },
+  { title: 'OUT OF SCHOOL YOUTH', value: apiData.value.totalOutOfSchoolYouth, icon: 'mdi-school-outline', subicon: 'mdi-cancel', color: 'orange-darken-2' },
+]);
+
+const transactionAlerts = computed(() => [
   {
-    title: 'POPULATION',
-    value: totalPopulation.value,
-    icon: 'mdi-account-group-outline',
-    color: 'blue-darken-2',
-    subtext: 'Total Population',
+    title: 'Pending Document Requests',
+    count: apiData.value.pendingDocumentRequestsCount,
+    icon: 'mdi-file-document-edit-outline',
+    color: 'warning', // Vuetify color name
+    subtext: 'Awaiting processing or approval.',
+    linkTo: '/document-requests?status=Pending', // Example link to filtered list
+    // recentItems: apiData.value.recentPendingDocumentRequests
   },
   {
-    title: 'HOUSEHOLDS',
-    value: totalHouseholds.value,
-    icon: 'mdi-home-city-outline',
-    color: 'deep-purple-darken-1',
-    subtext: 'Total Households',
+    title: 'New Complaints Filed',
+    count: apiData.value.newComplaintsCount,
+    icon: 'mdi-comment-alert-outline',
+    color: 'error',
+    subtext: 'Require investigation or action.',
+    linkTo: '/complaints?status=New',
+    // recentItems: apiData.value.recentNewComplaints
   },
   {
-    title: 'FAMILIES', // Same as households in this context
-    value: totalHouseholds.value,
-    icon: 'mdi-human-male-female-child',
-    color: 'green-darken-1',
-    subtext: 'Total Families',
-  },
-  {
-    title: 'VOTERS',
-    value: totalRegisteredVoters.value,
-    icon: 'mdi-account-check-outline',
-    color: 'orange-darken-2',
-    subtext: 'Registered Voters',
+    title: 'Assets Currently Borrowed',
+    count: apiData.value.borrowedAssetsNotReturnedCount,
+    icon: 'mdi-archive-arrow-up-outline',
+    color: 'info',
+    subtext: 'Items that are out and not yet returned.',
+    linkTo: '/borrowed-assets?status=Borrowed,Overdue', // Link to items borrowed or overdue
+    recentItems: apiData.value.recentBorrowedAssets
   },
 ]);
 
-// Existing navigation items
-const navItems = [
-    { to: '/residents', text: 'Residents', icon: 'mdi-account-group', description: 'Manage all resident records.', color: 'primary' },
-    { to: '/households', text: 'Households List', icon: 'mdi-home-group', description: 'View household summaries.', color: 'teal' },
-    { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', description: 'Manage administrator accounts.', color: 'indigo' },
-    { to: '/documents', text: 'Documents', icon: 'mdi-file-document', description: 'Handle official documents.', color: 'blue-grey' },
-    { to: '/officials', text: 'Officials', icon: 'mdi-bank', description: 'Barangay officials information.', color: 'brown' },
-    { to: '/notifications', text: 'Notifications', icon: 'mdi-bell-ring', description: 'Send and manage alerts.', color: 'amber' },
-  ];
 </script>
 
 <style scoped>
-/* Add any specific styles if needed */
-.v-card {
+.metric-card {
   transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
 }
-.v-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.12) !important;
+.metric-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
 }
-.text-overline { /* Adjust for Vuetify 3 if needed */
-    letter-spacing: 0.075em !important; /* Make it more like an overline */
+.metric-title {
+    font-size: 0.8rem !important; /* Make overline smaller */
+    line-height: 1.2;
+    margin-bottom: 4px;
+}
+.alert-card {
+    transition: box-shadow 0.2s ease-in-out;
+}
+.alert-card:hover {
+    box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important;
+}
+.v-list-item-subtitle {
+    white-space: normal; /* Allow subtitle to wrap if needed */
 }
 </style>

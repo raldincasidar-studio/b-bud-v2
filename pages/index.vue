@@ -16,8 +16,8 @@ c<template>
                         
                         <v-btn @click="login()" :loading="isLoading" :disabled="isLoading" block class="mt-2" color="primary" size="large">Login</v-btn>
                         <p class="my-5 d-flex justify-space-between">
-                            <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Forgot Password?</a>
-                            <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Contact Developer</a>
+                            <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Can't Log in? Contact Technical Admin</a>
+                            <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!"></a>
                         </p>
                     </v-card-text>
                 </v-card>

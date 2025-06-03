@@ -17,6 +17,10 @@ const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
 const SMTP_USER = process.env.SMTP_USER || 'carbonellharold15@gmail.com';
 const SMTP_PASS = process.env.SMTP_PASS || 'ziwp tsie srvd eyzm'; // App Password for Gmail
 
+const OTP_EXPIRY_MINUTES_LOGIN = 5; // OTP expiry for login
+const MAX_LOGIN_ATTEMPTS = 5;
+const LOCKOUT_DURATION_MINUTES = 15;
+
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
   port: SMTP_PORT,
@@ -35,13 +39,13 @@ function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
 }
 
-
+let CLIENT_DB;
 
 async function db() {
-  const client = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  CLIENT_DB = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
   try {
-    await client.connect();
-    return client.db('bbud-backend');
+    await CLIENT_DB.connect();
+    return CLIENT_DB.db('bbud-backend');
   } catch (error) {
     console.error("Failed to connect to MongoDB", error);
     throw error;
@@ -114,52 +118,226 @@ app.post('/api/login', async (req, res) => {
 
 
 
-
+// =================== HELPER FUNCTIONS =================== //
+const calculateAge = (dob) => {
+  if (!dob) return 0;
+  const birthDate = new Date(dob);
+  const today = new Date();
+  if (isNaN(birthDate.getTime())) return 0; // Invalid date
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const m = today.getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
+  }
+  return age >= 0 ? age : 0; // Return 0 if negative (e.g. future date)
+};
 
 
 // =================== RESIDENTS LOGIN =================== //
 
-// RESIDENT LOGIN (POST)
+
+// =================== RESIDENT LOGIN - STEP 1 (Email/Password & OTP Send) =================== //
 app.post('/api/residents/login', async (req, res) => {
   const { email, password } = req.body;
-  const dab = await db();
-  const residentsCollection = dab.collection('residents');
 
   if (!email || !password) {
     return res.status(400).json({ error: 'Validation failed', message: 'Email and password are required.' });
   }
 
   try {
-    // Find resident by email (case-insensitive for email)
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
     const resident = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() });
 
     if (!resident) {
       return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password.' });
     }
 
-    // Hash the provided password using MD5 to compare with the stored hash
-    const hashedPasswordAttempt = md5(password);
-
-    if (resident.password_hash !== hashedPasswordAttempt) { // Ensure your stored field is named 'password_hash'
-      return res.status(401).json({ error: 'Unauthorized', message: 'Invalid email or password.' });
+    // Check for account lockout
+    if (resident.account_locked_until && new Date(resident.account_locked_until) > new Date()) {
+      const timeLeft = Math.ceil((new Date(resident.account_locked_until).getTime() - new Date().getTime()) / (60 * 1000));
+      return res.status(403).json({
+        error: 'AccountLocked',
+        message: `Account is locked due to multiple failed attempts. Please try again in approximately ${timeLeft} minute(s).`,
+        lockedUntil: resident.account_locked_until
+      });
     }
 
-    // Login successful
-    // IMPORTANT: Do NOT send the password_hash back to the client
-    const { password_hash, ...residentDataToReturn } = resident; // Destructure to remove password_hash
+    // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
+    const hashedPasswordAttempt = md5(password);
+    const isPasswordMatch = (resident.password_hash === hashedPasswordAttempt);
+    // // For bcrypt:
+    // const isPasswordMatch = await bcrypt.compare(password, resident.password_hash);
 
-    // Here you would typically generate a session token (e.g., JWT)
-    // For simplicity, I'm just returning resident data.
-    // In a real app, replace this with token generation and set it in a cookie or response header.
-    // Example (conceptual, needs JWT library like jsonwebtoken):
-    // const token = jwt.sign({ id: resident._id, email: resident.email }, 'YOUR_SECRET_KEY', { expiresIn: '1h' });
-    // res.json({ message: 'Login successful', resident: residentDataToReturn, token: token });
+    if (!isPasswordMatch) {
+      let attempts = (resident.login_attempts || 0) + 1;
+      let lockUntilDate = null;
+      const updateFields = { login_attempts: attempts, updated_at: new Date() };
 
-    res.json({ message: 'Login successful', resident: residentDataToReturn });
+      if (attempts >= MAX_LOGIN_ATTEMPTS) {
+        lockUntilDate = new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000);
+        updateFields.account_locked_until = lockUntilDate;
+        updateFields.login_attempts = 0; // Reset attempts after locking
+      }
+      await residentsCollection.updateOne({ _id: resident._id }, { $set: updateFields });
+
+      if (lockUntilDate) {
+        return res.status(403).json({
+          error: 'AccountLocked',
+          message: `Account locked due to multiple failed attempts. Please try again in ${LOCKOUT_DURATION_MINUTES} minutes.`,
+          lockedUntil: lockUntilDate
+        });
+      } else {
+        const remainingAttempts = MAX_LOGIN_ATTEMPTS - attempts;
+        return res.status(401).json({
+            error: 'Unauthorized',
+            message: `Invalid email or password. ${remainingAttempts > 0 ? `${remainingAttempts} attempt(s) remaining before lockout.` : 'Account will be locked on next failed attempt.'}`
+        });
+      }
+    }
+
+    // --- Age Restriction for Login (16+ years old) ---
+    const residentAge = calculateAge(resident.date_of_birth);
+    if (residentAge < 16) {
+      return res.status(403).json({ error: 'Forbidden', message: 'Access denied. Users must be 16 years old or older to log in.' });
+    }
+
+    // --- Check Status (only 'Approved' can login) ---
+    if (resident.status !== 'Approved') {
+        let message = 'Login denied. Your account is not active.';
+        if (resident.status === 'Pending') message = 'Login denied. Your account is pending approval.';
+        if (resident.status === 'Declined') message = 'Login denied. Your account has been declined.';
+        if (resident.status === 'Deactivated') message = 'Login denied. Your account has been deactivated.';
+        return res.status(403).json({ error: 'Forbidden', message });
+    }
+
+    // --- Credentials VALID - Proceed to OTP step ---
+    const otp = generateOTP();
+    const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES_LOGIN * 60 * 1000);
+
+    // IMPORTANT: In a production environment, HASH the OTP before storing it.
+    // const hashedOtp = await bcrypt.hash(otp, saltRounds);
+    await residentsCollection.updateOne(
+      { _id: resident._id },
+      { $set: {
+          login_otp: otp, // Store plain OTP here for simplicity; HASH IT IN PRODUCTION (e.g., login_otp_hash: hashedOtp)
+          login_otp_expiry: otpExpiry,
+          login_attempts: 0, // Reset login attempts as password was correct
+          account_locked_until: null, // Clear any previous lock
+          updated_at: new Date()
+        }
+      }
+    );
+
+    // Send OTP email
+    const mailOptions = {
+      from: `"BBud System" <${SMTP_USER}>`,
+      to: resident.email,
+      subject: 'Your BBud Login Verification Code',
+      html: `
+        <p>Hello ${resident.first_name || 'User'},</p>
+        <p>To complete your login, please use the following One-Time Password (OTP):</p>
+        <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
+        <p>This OTP is valid for ${OTP_EXPIRY_MINUTES_LOGIN} minutes.</p>
+        <p>If you did not attempt to log in, please secure your account or contact support immediately.</p>
+        <br><p>Thanks,<br>The BBud Team</p>`,
+    };
+
+    try {
+      await transporter.sendMail(mailOptions);
+      console.log(`Login OTP email sent to ${resident.email} (OTP: ${otp})`); // Log OTP for testing, REMOVE FOR PRODUCTION
+      return res.status(200).json({
+        message: `An OTP has been sent to your email address (${resident.email}). Please enter it to complete your login.`,
+        otpRequired: true,
+        // Do NOT send resident data yet
+      });
+    } catch (emailError) {
+      console.error("Fatal Error: Could not send login OTP email:", emailError);
+      // If OTP email cannot be sent, the user cannot log in with this flow.
+      // This is a critical failure. You might want to log this prominently.
+      await residentsCollection.updateOne( // Clear OTP if email failed, so they can try login again later
+        { _id: resident._id },
+        { $unset: { login_otp: "", login_otp_expiry: "" }}
+      );
+      return res.status(500).json({
+        error: 'EmailSendingError',
+        message: 'We encountered an issue sending the verification code to your email. Please try logging in again shortly. If the problem persists, contact support.'
+      });
+    }
 
   } catch (error) {
-    console.error("Error during resident login:", error);
-    res.status(500).json({ error: 'Server error', message: 'An error occurred during login.' });
+    console.error("Critical error during resident login process:", error);
+    res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred during login.' });
+  }
+});
+
+
+// =================== RESIDENT LOGIN - STEP 2 (Verify OTP) =================== //
+app.post('/api/residents/login/verify-otp', async (req, res) => {
+  const { email, otp } = req.body;
+
+  if (!email || !otp) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Email and OTP are required.' });
+  }
+  if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+      return res.status(400).json({ error: 'Validation failed', message: 'OTP must be a 6-digit number.' });
+  }
+
+
+  try {
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+
+    // Find resident by email, OTP, and ensure OTP is not expired
+    // IMPORTANT: If OTP is hashed in DB, query for email first, then compare hashed OTP.
+    const resident = await residentsCollection.findOne({
+      email: String(email).trim().toLowerCase(),
+      login_otp: otp, // If OTP is hashed: Remove this line. Fetch by email, then use bcrypt.compare(otp, resident.login_otp_hash)
+      login_otp_expiry: { $gt: new Date() }
+    });
+
+    if (!resident) {
+      // Optionally, you could implement OTP attempt tracking here as well for the specific email
+      // For now, a generic failure message is fine.
+      return res.status(400).json({ error: 'InvalidOTP', message: 'Invalid or expired OTP. Please try logging in again to get a new OTP.' });
+    }
+
+    // --- If OTP was hashed, you would compare it here ---
+    // const isOtpMatch = await bcrypt.compare(otp, resident.login_otp_hash);
+    // if (!isOtpMatch) {
+    //   return res.status(400).json({ error: 'InvalidOTP', message: 'Invalid or expired OTP. Please try again.' });
+    // }
+
+    // OTP Validated successfully, complete login.
+    // Clear OTP fields from the database to prevent reuse.
+    await residentsCollection.updateOne(
+      { _id: resident._id },
+      {
+        $unset: { login_otp: "", login_otp_expiry: "" },
+        $set: {
+          login_attempts: 0, // Also reset main login attempts on full successful login
+          account_locked_until: null,
+          updated_at: new Date()
+        }
+      }
+    );
+
+    // Prepare resident data to return (excluding sensitive fields)
+    const { password_hash, login_attempts, account_locked_until, login_otp, login_otp_expiry, ...residentDataToReturn } = resident;
+
+    // IMPORTANT: Generate a session token (e.g., JWT) here and send it back to the client.
+    // For this example, we're just sending resident data.
+    // const token = jwt.sign({ id: resident._id, email: resident.email }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    res.json({
+        message: 'Login successful!',
+        resident: residentDataToReturn,
+        // token: token, // Send the token to the client
+    });
+
+  } catch (error) {
+    console.error("Error during login OTP verification:", error);
+    res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred during OTP verification.' });
   }
 });
 
@@ -293,113 +471,256 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
 
 
 // ========================= RESIDENTS =================== //
-
-// ADD NEW RESIDENT (POST) - UPDATED with Password & MD5 Hashing
+// ADD NEW RESIDENT (POST) - UPDATED with Household Member Creation (TRANSACTIONAL)
 app.post('/api/residents', async (req, res) => {
+  // const client = await db(true); // Assuming db(true) can give you the raw client for sessions
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-
-  const {
-    // Personal Info
-    first_name, middle_name, last_name, sex, age, date_of_birth,
-    civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
-    // Address Info
-    address_house_number, address_street, address_subdivision_zone,
-    address_city_municipality, years_lived_current_address,
-    // Contact Info
-    contact_number, email,
-    // NEW: Password
-    password, // Plain text password from client
-    // Voter Info
-    is_registered_voter, precinct_number,
-    voter_registration_proof_base64, voter_registration_proof_name,
-    // Proofs
-    residency_proof_base64, residency_proof_name,
-    // Household Info
-    is_household_head, household_member_ids,
-  } = req.body;
-
-  // --- Basic Validation ---
-  if (!first_name || !last_name || !sex || !date_of_birth || !email || !password) {
-    return res.status(400).json({ error: 'Validation failed', message: 'First name, last name, sex, date of birth, email, and password are required.' });
-  }
-  // Add more specific validations for other fields as needed
-
-  // Check if email already exists (assuming email should be unique for login)
-  try {
-    const existingResident = await residentsCollection.findOne({ email: email.toLowerCase() });
-    if (existingResident) {
-      return res.status(409).json({ error: 'Conflict', message: 'Email address already in use.' });
-    }
-  } catch (dbError) {
-      console.error("Database error checking existing email:", dbError);
-      return res.status(500).json({ error: "Database error", message: "Could not verify email availability."});
-  }
-
-
-  // Hash the password using MD5
-  const hashedPassword = md5(password);
+  const session = CLIENT_DB.startSession(); // Start a session
 
   try {
-    const newResidentDocument = {
-      // Personal Info
-      first_name: String(first_name).trim(),
-      middle_name: middle_name ? String(middle_name).trim() : null,
-      last_name: String(last_name).trim(),
-      sex: String(sex),
-      age: age ? parseInt(age) : null,
-      date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-      civil_status: String(civil_status),
-      occupation_status: String(occupation_status),
-      place_of_birth: place_of_birth ? String(place_of_birth).trim() : null,
-      citizenship: citizenship ? String(citizenship).trim() : null,
-      is_pwd: Boolean(is_pwd),
+    // Start the transaction
+    await session.withTransaction(async () => {
+      const {
+        // ... (all your existing head's fields from req.body)
+        first_name, middle_name, last_name, sex, date_of_birth,
+        civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
+        address_house_number, address_street, address_subdivision_zone,
+        address_city_municipality, years_lived_current_address,
+        contact_number, email, password,
+        is_registered_voter, precinct_number, voter_registration_proof_base64,
+        residency_proof_base64,
+        is_household_head,
+        // household_member_ids, // Not used for new head with new members
+        household_members_to_create, // Array of member objects from mobile
+      } = req.body;
 
-      // Address Info
-      address_house_number: address_house_number ? String(address_house_number).trim() : null,
-      address_street: address_street ? String(address_street).trim() : null,
-      address_subdivision_zone: address_subdivision_zone ? String(address_subdivision_zone).trim() : null,
-      address_city_municipality: address_city_municipality ? String(address_city_municipality).trim() : 'Manila City',
-      years_lived_current_address: years_lived_current_address ? parseInt(years_lived_current_address) : null,
+      // --- VALIDATION FOR HEAD ---
+      if (!first_name || !last_name || !sex || !date_of_birth || !email || !password) {
+        // Abort transaction and throw error
+        // await session.abortTransaction();
+        // It's better to throw an error that can be caught outside and set status code
+        const err = new Error('Validation failed for head: First name, last name, sex, date of birth, email, and password are required.');
+        err.statusCode = 400;
+        throw err;
+      }
+      if (String(password).length < 6) {
+        // await session.abortTransaction();
+        const err = new Error('Validation failed for head: Password must be at least 6 characters long.');
+        err.statusCode = 400;
+        throw err;
+      }
+      const headAge = calculateAge(date_of_birth);
+      // if (headAge < 16) { /* ... abort and throw ... */ }
 
-      // Contact Info
-      contact_number: contact_number ? String(contact_number).trim() : null,
-      email: String(email).trim().toLowerCase(), // Store email in lowercase for case-insensitive login
+      // Voter ID / Precinct Validation for HEAD
+      let finalPrecinctNumberHead = null;
+      let finalVoterProofDataBase64Head = null;
+      if (Boolean(is_registered_voter)) {
+        if (!precinct_number && !voter_registration_proof_base64) {
+          // await session.abortTransaction();
+          const err = new Error("Validation failed for head: If registered voter, provide Voter's ID Number or upload Voter's ID.");
+          err.statusCode = 400;
+          throw err;
+        }
+        finalPrecinctNumberHead = precinct_number ? String(precinct_number).trim() : null;
+        finalVoterProofDataBase64Head = voter_registration_proof_base64 ? voter_registration_proof_base64 : null;
+      }
 
-      // Store the MD5 hashed password
-      password_hash: hashedPassword, // Or just 'password: hashedPassword' if you prefer
+      // Email uniqueness check for HEAD
+      const existingHeadEmail = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() }, { session });
+      if (existingHeadEmail) {
+        // await session.abortTransaction();
+        const err = new Error('Conflict: Head email address already in use.');
+        err.statusCode = 409;
+        throw err;
+      }
+      // --- END VALIDATION FOR HEAD ---
 
-      // Voter Info
-      is_registered_voter: Boolean(is_registered_voter),
-      precinct_number: is_registered_voter && precinct_number ? String(precinct_number).trim() : null,
-      voter_registration_proof_data: is_registered_voter && voter_registration_proof_base64 ? voter_registration_proof_base64 : null,
-      // voter_registration_proof_name: is_registered_voter && voter_registration_proof_name ? voter_registration_proof_name : null, // Store if needed
+      // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
+      const headHashedPassword = md5(password);
+      // const headHashedPassword = await bcrypt.hash(password, saltRounds); // For bcrypt
 
-      // Proofs
-      residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
-      // residency_proof_name: residency_proof_name ? residency_proof_name : null, // Store if needed
+      const headResidentDocument = {
+        first_name: String(first_name).trim(), middle_name: middle_name ? String(middle_name).trim() : null, last_name: String(last_name).trim(),
+        sex: String(sex), age: headAge, date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
+        civil_status: civil_status ? String(civil_status) : null,
+        occupation_status: occupation_status ? String(occupation_status) : null,
+        place_of_birth: place_of_birth ? String(place_of_birth).trim() : null,
+        citizenship: citizenship ? String(citizenship).trim() : null, is_pwd: Boolean(is_pwd),
+        address_house_number: address_house_number ? String(address_house_number).trim() : null,
+        address_street: address_street ? String(address_street).trim() : null,
+        address_subdivision_zone: address_subdivision_zone ? String(address_subdivision_zone).trim() : null,
+        address_city_municipality: address_city_municipality ? String(address_city_municipality).trim() : 'Manila City',
+        years_lived_current_address: years_lived_current_address ? parseInt(years_lived_current_address) : null,
+        contact_number: contact_number ? String(contact_number).trim() : null,
+        email: String(email).trim().toLowerCase(), password_hash: headHashedPassword,
+        is_registered_voter: Boolean(is_registered_voter),
+        precinct_number: finalPrecinctNumberHead,
+        voter_registration_proof_data: finalVoterProofDataBase64Head,
+        residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
+        is_household_head: Boolean(is_household_head), // Should be true if household_members_to_create is present
+        household_member_ids: [], // Will be populated if members are created
+        status: 'Pending', // Default status
+        created_at: new Date(), updated_at: new Date(),
+      };
 
-      // Household Info
-      is_household_head: Boolean(is_household_head),
-      household_member_ids: (is_household_head && Array.isArray(household_member_ids))
-        ? household_member_ids.filter(id => ObjectId.isValid(id)).map(id => new ObjectId(id))
-        : [],
+      const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
+      const insertedHeadId = headInsertResult.insertedId;
 
-      created_at: new Date(),
-      updated_at: new Date(),
-    };
+      const createdMemberIds = [];
 
-    const result = await residentsCollection.insertOne(newResidentDocument);
-    // It's good practice to not send the password hash back in the response
-    const insertedResident = await residentsCollection.findOne(
-        { _id: result.insertedId },
-        { projection: { password_hash: 0 } } // Exclude password_hash from response
+      // --- Process household_members_to_create ---
+      if (Boolean(is_household_head) && household_members_to_create && Array.isArray(household_members_to_create) && household_members_to_create.length > 0) {
+        for (const memberData of household_members_to_create) {
+          // VALIDATE EACH MEMBER
+          if (!memberData.first_name || !memberData.last_name || !memberData.sex || !memberData.date_of_birth || !memberData.email || !memberData.password) {
+            // await session.abortTransaction();
+            const err = new Error(`Validation failed for member ${memberData.first_name || '(unknown)'}: Missing required fields.`);
+            err.statusCode = 400;
+            throw err;
+          }
+          if (String(memberData.password).length < 6) {
+            //  await session.abortTransaction();
+            const err = new Error(`Validation failed for member ${memberData.first_name}: Password too short.`);
+            err.statusCode = 400;
+            throw err;
+          }
+          const memberAge = calculateAge(memberData.date_of_birth);
+          // Optional: Age check for members, e.g., if (memberAge < 0) { abort and throw }
+
+          // Email uniqueness check for MEMBER (against DB and other members in this transaction including head)
+          const memberEmailNormalized = String(memberData.email).trim().toLowerCase();
+          if (memberEmailNormalized === headResidentDocument.email) { // Check against head's email
+            // await session.abortTransaction();
+            const err = new Error(`Conflict: Member email ${memberEmailNormalized} is the same as the head's email.`);
+            err.statusCode = 409;
+            throw err;
+          }
+          const existingMemberEmailInDb = await residentsCollection.findOne({ email: memberEmailNormalized }, { session });
+          if (existingMemberEmailInDb) {
+            // await session.abortTransaction();
+            const err = new Error(`Conflict: Member email ${memberEmailNormalized} already in use.`);
+            err.statusCode = 409;
+            throw err;
+          }
+          // Check against other members being created in this batch
+          if (household_members_to_create.filter(m => String(m.email).trim().toLowerCase() === memberEmailNormalized).length > 1) {
+            // await session.abortTransaction();
+            const err = new Error(`Conflict: Duplicate member email ${memberEmailNormalized} within this registration request.`);
+            err.statusCode = 409;
+            throw err;
+          }
+
+
+          // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
+          const memberHashedPassword = md5(memberData.password);
+          // const memberHashedPassword = await bcrypt.hash(memberData.password, saltRounds); // For bcrypt
+
+          const newMemberDoc = {
+            first_name: String(memberData.first_name).trim(),
+            middle_name: memberData.middle_name ? String(memberData.middle_name).trim() : null,
+            last_name: String(memberData.last_name).trim(),
+            sex: String(memberData.sex),
+            age: memberAge,
+            date_of_birth: memberData.date_of_birth ? new Date(memberData.date_of_birth) : null,
+            email: memberEmailNormalized,
+            password_hash: memberHashedPassword,
+            // Inherit address from head
+            address_house_number: headResidentDocument.address_house_number,
+            address_street: headResidentDocument.address_street,
+            address_subdivision_zone: headResidentDocument.address_subdivision_zone,
+            address_city_municipality: headResidentDocument.address_city_municipality,
+            // Other member-specific fields from memberData (if provided)
+            civil_status: memberData.civil_status ? String(memberData.civil_status) : null,
+            occupation_status: memberData.occupation_status ? String(memberData.occupation_status) : null,
+            is_pwd: memberData.hasOwnProperty('is_pwd') ? Boolean(memberData.is_pwd) : false,
+            contact_number: memberData.contact_number ? String(memberData.contact_number).trim() : null,
+            // Members are not household heads by default here
+            is_household_head: false,
+            household_member_ids: [], // Members don't have their own members in this context
+            status: 'Pending', // Or derive from head's status or app default
+            created_at: new Date(),
+            updated_at: new Date(),
+            // Fields that might not apply to members or should default to null
+            years_lived_current_address: null,
+            place_of_birth: null, // Or collect in modal
+            citizenship: null,    // Or collect in modal
+            is_registered_voter: false,
+            precinct_number: null,
+            voter_registration_proof_data: null,
+            residency_proof_data: null,
+          };
+
+          const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+          createdMemberIds.push(memberInsertResult.insertedId);
+        }
+
+        // Update the head with the newly created member IDs
+        if (createdMemberIds.length > 0) {
+          await residentsCollection.updateOne(
+            { _id: insertedHeadId },
+            { $set: { household_member_ids: createdMemberIds, updated_at: new Date() } },
+            { session }
+          );
+        }
+      }
+      // If not a head or no members to create, the auto-assign logic (if applicable) would run after transaction.
+      // For this specific "register head WITH members" flow, the auto-assign isn't the primary path for THESE members.
+      // But if a non-head registers, that logic is still relevant.
+
+      // Store the ID to fetch outside the transaction for the response
+      req.insertedHeadId = insertedHeadId;
+
+    }); // End of session.withTransaction
+
+    // If transaction was successful, req.insertedHeadId will be set
+    const finalInsertedResident = await residentsCollection.findOne(
+      { _id: req.insertedHeadId },
+      { projection: { password_hash: 0, login_attempts: 0, account_locked_until: 0 } }
     );
 
-    res.status(201).json({ message: 'Resident added successfully', resident: insertedResident });
+    // Auto-assign logic for non-heads (if head was NOT created with members directly)
+    if (finalInsertedResident && !finalInsertedResident.is_household_head &&
+        (!household_members_to_create || household_members_to_create.length === 0) && // Only if not part of batch create
+        finalInsertedResident.address_house_number && finalInsertedResident.address_street &&
+        finalInsertedResident.address_subdivision_zone && finalInsertedResident.address_city_municipality) {
+      // This logic runs OUTSIDE the main transaction for simplicity here,
+      // or could be part of a larger transactional unit if critical.
+      const potentialHead = await residentsCollection.findOne({
+        is_household_head: true,
+        address_house_number: finalInsertedResident.address_house_number,
+        address_street: finalInsertedResident.address_street,
+        address_subdivision_zone: finalInsertedResident.address_subdivision_zone,
+        address_city_municipality: finalInsertedResident.address_city_municipality,
+        _id: { $ne: req.insertedHeadId }
+      });
+      if (potentialHead) {
+        await residentsCollection.updateOne(
+          { _id: potentialHead._id },
+          { $addToSet: { household_member_ids: req.insertedHeadId }, $set: { updated_at: new Date() } }
+        );
+      }
+    }
+
+    res.status(201).json({ message: 'Resident and household registered successfully', resident: finalInsertedResident });
+
   } catch (error) {
-    console.error("Error adding new resident:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not add resident.' });
+    console.error("Error during resident and household registration:", error);
+    // If error has statusCode, it was thrown by our validation inside transaction
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message.startsWith('Validation failed') ? 'Validation Error' : 'Conflict', message: error.message });
+    }
+    // Handle other errors (e.g., database connection, unexpected issues)
+    if (error.code === 11000) { // Duplicate key error from MongoDB, possibly for email if a check was missed
+        return res.status(409).json({ error: 'Conflict', message: 'An email address submitted is already in use.' });
+    }
+    res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+  } finally {
+    // End the session
+    await session.endSession();
+    // Close client if db(true) created a new one for this request
+    // await client.close(); // Depends on your db() implementation
   }
 });
 
@@ -414,72 +735,23 @@ app.get('/api/residents', async (req, res) => {
   const residentsCollection = dab.collection('residents');
 
   let query = {};
-  if (search) {
-    const searchRegex = new RegExp(search, 'i'); // Case-insensitive search
-    query = {
-      $or: [
-        { first_name: { $regex: searchRegex } },
-        { middle_name: { $regex: searchRegex } },
-        { last_name: { $regex: searchRegex } },
-        { email: { $regex: searchRegex } }, // Updated field name
-        { contact_number: { $regex: searchRegex } }, // Updated field name
-        { address_house_number: { $regex: searchRegex } }, // Updated field name
-        { address_street: { $regex: searchRegex } }, // Updated field name
-        { address_subdivision_zone: { $regex: searchRegex } }, // Updated field name
-        { address_city_municipality: { $regex: searchRegex } }, // New searchable address field
-        { citizenship: { $regex: searchRegex } }, // New searchable field
-        { place_of_birth: { $regex: searchRegex } }, // New searchable field
-        { precinct_number: { $regex: searchRegex } }, // New searchable field
-      ],
-    };
-  }
+  if (search) { /* ... your existing search query ... */ }
 
-  // Define the projection to select fields to return
-  // Exclude large Base64 fields by default to keep payload size manageable for listings
-  // Only include them if specifically requested or for a GET /api/residents/:id endpoint
   const projection = {
-    // Personal Info
-    first_name: 1,
-    middle_name: 1,
-    last_name: 1,
-    sex: 1,
-    age: 1,
-    date_of_birth: 1, // Consider formatting this for display if needed client-side
-    civil_status: 1,
-    occupation_status: 1,
-    // place_of_birth: 1, // Can be long, consider for detail view
-    // citizenship: 1,
-    is_pwd: 1,
-    is_household_head: 1,
-
-    // Voter Info
-    is_registered_voter: 1,
-    precinct_number: 1,
-    // voter_registration_proof_data: 0, // Exclude by default from list view
-
-    // Address Info
-    address_house_number: 1,
-    address_street: 1,
-    address_subdivision_zone: 1,
-    address_city_municipality: 1,
-    years_lived_current_address: 1,
-    // residency_proof_data: 0, // Exclude by default from list view
-
-    // Contact Info
-    contact_number: 1,
-    email: 1,
-
-    // Household List (consider if needed for list view, could be many IDs)
-    // household_member_ids: 1,
-
-    created_at: 1, // Useful for sorting or display
-    updated_at: 1,
-    _id: 1, // Always include _id
-    // 'action' field seems custom, if it's from your old schema and you still need it,
-    // you might need to re-evaluate how it's populated or if it's still relevant.
-    // For now, I'm removing it as it's not in the new schema directly.
-    // If you still want a default "action" field if it's null:
-    // action: { $ifNull: [ "$action", "" ] } // This would require 'action' to exist or be set elsewhere.
+    // ... (your existing projection) ...
+    first_name: 1, last_name: 1, middle_name: 1, email: 1, sex: 1,
+    contact_number: 1, address_house_number: 1, address_street: 1,
+    address_subdivision_zone: 1, address_city_municipality: 1,
+    is_household_head: 1, created_at: 1,
+    status: 1, // ADDED status
+    date_of_birth: 1, // To allow age calculation on frontend if needed, or just for info
+    _id: 1,
+    // EXCLUDE sensitive/large fields:
+    // password_hash: 0, (already excluded if not explicitly projected)
+    // voter_registration_proof_data: 0,
+    // residency_proof_data: 0,
+    // login_attempts: 0,
+    // account_locked_until: 0,
   };
 
   try {
@@ -488,22 +760,19 @@ app.get('/api/residents', async (req, res) => {
       .project(projection)
       .skip(skip)
       .limit(itemsPerPage)
-      .sort({ created_at: -1 }) // Optional: sort by creation date descending
+      .sort({ created_at: -1 })
       .toArray();
 
     const totalResidents = await residentsCollection.countDocuments(query);
 
     res.json({
       residents: residents,
-      total: totalResidents, // Renamed for clarity, or use totalResidents
+      total: totalResidents,
       page: page,
       itemsPerPage: itemsPerPage,
       totalPages: Math.ceil(totalResidents / itemsPerPage),
     });
-  } catch (error) {
-    console.error("Error fetching residents:", error);
-    res.status(500).json({ error: "Failed to fetch residents", message: error.message });
-  }
+  } catch (error) { /* ... */ }
 });
 
 // GET RESIDENTS BY SEARCH QUERY (GET /api/residents/search?q=searchTerm)
@@ -547,15 +816,22 @@ app.get('/api/residents/search', async (req, res) => {
 
     const residents = await residentsCollection
       .find(query)
-      .project({ // Select fields you want to return for the search results
+      .project({ // Select all fields for the search results
         _id: 1,
         first_name: 1,
         last_name: 1,
         middle_name: 1,
         email: 1, // Useful for display or contact
         sex: 1,   // Often useful for context in search results
-        // Add any other concise fields relevant for search result display
-        // Avoid large fields like Base64 image data here
+        contact_number: 1,
+        address_house_number: 1,
+        address_street: 1,
+        address_subdivision_zone: 1,
+        address_city_municipality: 1,
+        is_household_head: 1,
+        created_at: 1,
+        status: 1, // ADDED status
+        date_of_birth: 1, // To allow age calculation on frontend if needed, or just for info
       })
       .limit(limitResults) // Limit the number of results
       .sort({ last_name: 1, first_name: 1 }) // Optional: sort results
@@ -668,9 +944,24 @@ app.get('/api/residents/eligible-for-household-search', async (req, res) => {
 app.get('/api/residents/:id', async (req, res) => {
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-  const resident = await residentsCollection.findOne({ _id: new ObjectId(req.params.id) });
-  res.json({resident});
-})
+  try {
+    const resident = await residentsCollection.findOne(
+      { _id: new ObjectId(req.params.id) },
+      // Ensure sensitive data is not returned unless necessary for a specific admin view
+      { projection: { password_hash: 0, login_attempts: 0, account_locked_until: 0 } }
+    );
+    if (!resident) {
+      return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    }
+    res.json({resident});
+  } catch (error) {
+    console.error("Error fetching resident by ID:", error);
+    if (error.name === 'BSONTypeError') {
+        return res.status(400).json({ error: 'Invalid ID format' });
+    }
+    res.status(500).json({ error: 'Server error', message: 'Could not fetch resident.' });
+  }
+});
 
 // GET /api/residents/:residentId/household-details
 // Fetches a resident's details and their household information (if any)
@@ -787,106 +1078,150 @@ app.delete('/api/residents/:id', async (req, res) => {
 // UPDATE RESIDENT BY ID (PUT)
 app.put('/api/residents/:id', async (req, res) => {
   const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
-  // Destructure all expected fields from req.body
-  const {
-    is_household_head, first_name, middle_name, last_name, sex, age, date_of_birth,
-    civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
-    is_registered_voter, precinct_number, 
-    // Base64 fields - these might be absent if not updated
-    voter_registration_proof_data, 
-    residency_proof_data,
-    address_house_number, address_street, address_subdivision_zone, address_city_municipality,
-    years_lived_current_address, contact_number, email, 
-    household_member_ids
-  } = req.body;
+  const updatePayload = req.body;
+  const updateFields = {};
 
-  // --- Perform Validation (CRUCIAL!) ---
-  // (Your existing validation logic here for fields that are always present or required for an update)
-  // Example:
-  // if (first_name !== undefined && (typeof first_name !== 'string' || first_name.trim() === '')) {
-  //   return res.status(400).json({ error: 'Validation failed', message: 'First name, if provided, cannot be empty.' });
-  // }
-  // ... more validation ...
+  // Fetch the current resident state for comparisons and fallbacks
+  const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+  if (!currentResident) {
+    return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+  }
 
-  const updateFields = {}; // Object to build $set operator
+  // General fields (excluding files and complex conditional logic for now)
+  const simpleFields = [
+    'first_name', 'middle_name', 'last_name', 'sex', 'civil_status',
+    'occupation_status', 'place_of_birth', 'citizenship',
+    'address_house_number', 'address_street', 'address_subdivision_zone',
+    'address_city_municipality', 'contact_number'
+  ];
+  const booleanFields = ['is_pwd', 'is_household_head']; // is_registered_voter handled separately
+  const numericFields = ['years_lived_current_address'];
 
-  // Helper to add field to updateFields if it's defined in req.body
-  const addIfDefined = (key, value, transform = v => v) => {
-    if (value !== undefined) {
-      updateFields[key] = transform(value);
+  simpleFields.forEach(field => {
+    if (updatePayload.hasOwnProperty(field)) {
+      updateFields[field] = updatePayload[field] !== null ? String(updatePayload[field]).trim() : null;
     }
-  };
-
-  // Add non-file fields to the update object
-  addIfDefined('is_household_head', is_household_head, Boolean);
-  addIfDefined('first_name', first_name, v => String(v).trim());
-  addIfDefined('middle_name', middle_name, v => v ? String(v).trim() : null); // Allow null for optional fields
-  addIfDefined('last_name', last_name, v => String(v).trim());
-  addIfDefined('sex', sex, String);
-  addIfDefined('age', age, v => (v !== null && v !== undefined) ? parseInt(v, 10) : null);
-  addIfDefined('date_of_birth', date_of_birth, v => v ? new Date(v) : null);
-  addIfDefined('civil_status', civil_status, String);
-  addIfDefined('occupation_status', occupation_status, String);
-  addIfDefined('place_of_birth', place_of_birth, v => String(v).trim());
-  addIfDefined('citizenship', citizenship, v => String(v).trim());
-  addIfDefined('is_pwd', is_pwd, Boolean);
-  
-  addIfDefined('is_registered_voter', is_registered_voter, Boolean);
-  // Only update precinct_number if is_registered_voter is true or if precinct_number is explicitly set to null
-  if (req.body.is_registered_voter === true) {
-    addIfDefined('precinct_number', precinct_number, v => v ? String(v).trim() : null);
-  } else if (req.body.is_registered_voter === false) { // If voter status is changed to false
-    updateFields['precinct_number'] = null;
-    // Also clear voter proof if changing to not a voter
-    if (req.body.voter_registration_proof_data === undefined) { // If client isn't sending a new one, explicitly clear it
-        updateFields['voter_registration_proof_data'] = null;
+  });
+  booleanFields.forEach(field => {
+    if (updatePayload.hasOwnProperty(field)) {
+      updateFields[field] = Boolean(updatePayload[field]);
     }
-  } else if (req.body.precinct_number !== undefined) { // If voter status isn't changing but precinct is sent
-    addIfDefined('precinct_number', precinct_number, v => v ? String(v).trim() : null);
-  }
-
-
-  addIfDefined('address_house_number', address_house_number, v => String(v).trim());
-  addIfDefined('address_street', address_street, v => String(v).trim());
-  addIfDefined('address_subdivision_zone', address_subdivision_zone, v => String(v).trim());
-  addIfDefined('address_city_municipality', address_city_municipality, v => String(v).trim());
-  addIfDefined('years_lived_current_address', years_lived_current_address, v => (v !== null && v !== undefined) ? parseInt(v, 10) : null);
-  
-  addIfDefined('contact_number', contact_number, v => String(v).trim());
-  addIfDefined('email', email, v => String(v).trim().toLowerCase());
-  
-  addIfDefined('household_member_ids', household_member_ids, v => Array.isArray(v) ? v : []);
-
-  // --- Handle Base64 File Fields Conditionally ---
-  // Only update if new data is provided (can be a new Base64 string or explicitly null to clear)
-  if (req.body.hasOwnProperty('voter_registration_proof_data')) {
-    // If is_registered_voter is true and data is provided, or if data is explicitly null
-    if ((req.body.is_registered_voter === true && voter_registration_proof_data !== undefined) || voter_registration_proof_data === null) {
-        updateFields['voter_registration_proof_data'] = voter_registration_proof_data; // This will be null if client sent null
-    } else if (req.body.is_registered_voter === false) { // If becoming not a voter, ensure it's nulled
-        updateFields['voter_registration_proof_data'] = null;
+  });
+  numericFields.forEach(field => {
+     if (updatePayload.hasOwnProperty(field)) {
+        updateFields[field] = (updatePayload[field] !== null && updatePayload[field] !== '') ? parseInt(updatePayload[field]) : null;
     }
-    // If is_registered_voter is true but voter_registration_proof_data is undefined, we don't touch it.
+  });
+
+  // Date of Birth and Age
+  if (updatePayload.hasOwnProperty('date_of_birth')) {
+    updateFields.date_of_birth = updatePayload.date_of_birth ? new Date(updatePayload.date_of_birth) : null;
+    updateFields.age = calculateAge(updateFields.date_of_birth);
   }
 
-  if (req.body.hasOwnProperty('residency_proof_data')) {
-    updateFields['residency_proof_data'] = residency_proof_data; // This will be null if client sent null
+  // Email (with uniqueness check)
+  if (updatePayload.hasOwnProperty('email')) {
+    const newEmail = String(updatePayload.email).trim().toLowerCase();
+    if (currentResident.email !== newEmail) {
+        const existingEmailUser = await residentsCollection.findOne({ email: newEmail, _id: { $ne: new ObjectId(id) } });
+        if (existingEmailUser) {
+            return res.status(409).json({ error: 'Conflict', message: 'Email address already in use by another resident.' });
+        }
+    }
+    updateFields.email = newEmail;
   }
 
-  // Always update the 'updated_at' timestamp
-  updateFields['updated_at'] = new Date();
-
-  if (Object.keys(updateFields).length === 1 && updateFields.hasOwnProperty('updated_at')) {
-    // Only updated_at would be changed, meaning no actual data change from client
-    // You might choose to not even hit the DB or return a specific "no changes" message
-     const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
-     if (!currentResident) return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
-     return res.json({ message: 'No changes detected.', resident: currentResident });
+  // --- Voter Information ---
+  let finalIsRegisteredVoter = currentResident.is_registered_voter;
+  if (updatePayload.hasOwnProperty('is_registered_voter')) {
+    finalIsRegisteredVoter = Boolean(updatePayload.is_registered_voter);
+    updateFields.is_registered_voter = finalIsRegisteredVoter;
   }
 
+  let finalPrecinctNumber = currentResident.precinct_number;
+  if (updatePayload.hasOwnProperty('precinct_number')) {
+    finalPrecinctNumber = updatePayload.precinct_number ? String(updatePayload.precinct_number).trim() : null;
+    updateFields.precinct_number = finalPrecinctNumber;
+  }
+
+  let finalVoterProofData = currentResident.voter_registration_proof_data;
+  // Frontend [id].vue sends 'voter_registration_proof_data' key in payload if changed
+  if (updatePayload.hasOwnProperty('voter_registration_proof_data')) {
+    finalVoterProofData = updatePayload.voter_registration_proof_data; // This will be new Base64 or null
+    updateFields.voter_registration_proof_data = finalVoterProofData;
+  }
+
+  if (finalIsRegisteredVoter) {
+    if (!finalPrecinctNumber && !finalVoterProofData) {
+      return res.status(400).json({ error: 'Validation failed', message: "If registered voter, ensure either Voter's ID Number or Voter's ID upload is present." });
+    }
+  } else {
+    // If explicitly set to not a voter, or becomes not a voter
+    updateFields.precinct_number = null;
+    updateFields.voter_registration_proof_data = null;
+  }
+
+  // --- Residency Proof ---
+  // Frontend [id].vue sends 'residency_proof_data' key in payload if changed
+  if (updatePayload.hasOwnProperty('residency_proof_data')) {
+    updateFields.residency_proof_data = updatePayload.residency_proof_data; // New Base64 or null
+  }
+
+  // --- Household Info ---
+  if (updatePayload.hasOwnProperty('is_household_head')) {
+    // updateFields.is_household_head is already set by booleanFields loop
+    if (updateFields.is_household_head === false) {
+      updateFields.household_member_ids = []; // Clear members if no longer head
+    } else if (updatePayload.hasOwnProperty('household_member_ids')) {
+      // If becoming head AND new member list is provided
+      updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
+        ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
+        : [];
+    }
+    // If is_household_head is true but household_member_ids is NOT in payload, existing members are kept (unless explicitly cleared by sending empty array)
+  } else if (updatePayload.hasOwnProperty('household_member_ids')) {
+    // is_household_head not in payload, so use current status
+    if (currentResident.is_household_head) {
+        updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
+            ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
+            : [];
+    } else {
+        // Not a head, and not becoming one, so members should be empty if sent
+         updateFields.household_member_ids = [];
+    }
+  }
+
+
+  // --- Status Update ---
+  if (updatePayload.hasOwnProperty('status')) {
+    const allowedStatusValues = ['Approved', 'Declined', 'Deactivated', 'Pending'];
+    if (!allowedStatusValues.includes(updatePayload.status)) {
+      return res.status(400).json({ error: 'Validation failed', message: `Invalid status value. Allowed: ${allowedStatusValues.join(', ')}` });
+    }
+    updateFields.status = updatePayload.status;
+  }
+
+  // --- Password Change ---
+  if (updatePayload.newPassword) {
+    if (typeof updatePayload.newPassword !== 'string' || updatePayload.newPassword.length < 6) {
+        return res.status(400).json({ error: 'Validation failed', message: 'New password must be at least 6 characters long.' });
+    }
+    // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
+    updateFields.password_hash = md5(updatePayload.newPassword);
+  }
+
+  if (Object.keys(updateFields).length === 0) {
+    // No actual data fields were sent for update, just return current
+    return res.status(200).json({ message: 'No changes detected.', resident: currentResident });
+  }
+
+  updateFields.updated_at = new Date();
 
   try {
     const result = await residentsCollection.updateOne(
@@ -894,24 +1229,96 @@ app.put('/api/residents/:id', async (req, res) => {
       { $set: updateFields }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    // matchedCount should be 1 if ID is valid, already checked by currentResident fetch
+    // if (result.matchedCount === 0) {
+    //   return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    // }
+
+    if (result.modifiedCount === 0 && result.upsertedCount === 0 && Object.keys(updateFields).length > 1) { // length > 1 because updated_at is always there
+        // This can happen if all submitted values are the same as existing ones
+        // console.log("No effective modification, values might be the same.");
     }
 
-    // Fetch and return the updated document to ensure client has the latest state
-    const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+    const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0, login_attempts: 0, account_locked_until: 0 }});
     res.json({ message: 'Resident updated successfully', resident: updatedResident });
 
   } catch (error) {
     console.error('Error updating resident:', error);
-    if (error.code === 11000) { // Duplicate key
+    // Code 11000 is for duplicate key error (e.g. email)
+    if (error.code === 11000) {
         return res.status(409).json({ error: 'Conflict', message: 'Update violates a unique constraint (e.g., email already exists).' });
     }
     res.status(500).json({ error: 'Database error', message: 'Could not update resident.' });
   }
 });
 
+// NEW Endpoint: PATCH /api/residents/:id/status (Quick Status Update)
+app.patch('/api/residents/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
 
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+  if (!status) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Status is required.' });
+  }
+
+  const allowedStatusValues = ['Approved', 'Declined', 'Deactivated', 'Pending'];
+  if (!allowedStatusValues.includes(status)) {
+    return res.status(400).json({ error: 'Validation failed', message: `Invalid status value. Allowed: ${allowedStatusValues.join(', ')}` });
+  }
+
+  const dab = await db();
+  const residentsCollection = dab.collection('residents');
+
+  try {
+    const result = await residentsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: status, updated_at: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    }
+    if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
+        // Fetch current status to confirm it's indeed the same
+        const currentResident = await residentsCollection.findOne({_id: new ObjectId(id)}, {projection: {status: 1}});
+        if(currentResident && currentResident.status === status) {
+            return res.json({ message: `Resident status is already ${status}.`, statusChanged: false });
+        }
+    }
+
+
+    const name = `Resident status updated to ${status}`; // Notification name
+    const content = `Resident status updated to ${status}.`; // Notification content
+    const by = 'System Administrator'; // Notification creator (Admin/System)
+    const type = 'Notification'; // Notification type
+    const target_audience = 'SpecificResidents'; // Notification target audience
+    const recipient_ids = [id]; // Notification recipient IDs
+    const date = new Date();
+
+    try {
+      const dab = await db();
+      const createdNotification = await createNotification(dab, {
+          name, content, by, type, target_audience, recipient_ids, date // Pass all to helper
+      });
+
+      if (!createdNotification) {
+          // createNotification returns null on internal failure or if no recipients for specific targeting
+          return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
+      }
+    } catch (error) {
+        console.error('Error creating notification:', error);
+        return res.status(500).json({ error: 'Server error', message: 'Could not create notification.' });
+    }
+
+    res.json({ message: `Resident status updated to ${status} successfully.`, statusChanged: true });
+  } catch (error) {
+    console.error("Error updating resident status:", error);
+    res.status(500).json({ error: 'Server error', message: 'Could not update resident status.' });
+  }
+});
 
 
 
@@ -1358,34 +1765,149 @@ app.put('/api/officials/:id', async (req, res) => {
 
 
 
+// =================== NOTIFICATION HELPER =========================== //
+
+/**
+ * Creates and saves a new notification.
+ * @param {Db} dbInstance - The MongoDB Db instance.
+ * @param {object} notificationData - Data for the new notification.
+ * @param {string} notificationData.name - Title of the notification.
+ * @param {string} notificationData.content - Body of the notification.
+ * @param {string} notificationData.by - Creator (Admin/System).
+ * @param {string} notificationData.type - Type: 'Announcement', 'Alert', 'Notification'.
+ * @param {string} [notificationData.target_audience='SpecificResidents'] - 'All', 'SpecificResidents'.
+ * @param {string[]} [notificationData.recipient_ids=[]] - Array of resident ObjectId strings.
+ * @param {Date|string} [notificationData.date=new Date()] - Effective date of notification.
+ * @returns {Promise<object|null>} The created notification document or null on failure.
+ */
+async function createNotification(dbInstance, notificationData) {
+  const notificationsCollection = dbInstance.collection('notifications');
+  const residentsCollection = dbInstance.collection('residents');
+
+  const {
+    name,
+    content,
+    by,
+    type,
+    target_audience = 'SpecificResidents',
+    recipient_ids = [],
+    date = new Date(), // Default to now if not provided
+  } = notificationData;
+
+  // Basic validation for core fields
+  if (!name || !content || !by || !type) {
+    console.error("Notification creation failed in helper: Missing required fields (name, content, by, type). Data:", notificationData);
+    return null;
+  }
+  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+    console.error("Notification creation failed in helper: Invalid type. Data:", notificationData);
+    return null;
+  }
+
+  let finalRecipientObjects = [];
+
+  if (target_audience === 'All') {
+    try {
+      // Fetch all 'Approved' resident IDs. Adjust query if different criteria are needed for "All".
+      const allTargetResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
+      finalRecipientObjects = allTargetResidents.map(r => ({
+        resident_id: r._id,
+        status: 'pending', // Initial delivery/read status
+        read_at: null,
+      }));
+    } catch (e) {
+      console.error("Error fetching all residents for 'All' audience notification:", e);
+      return null; // Stop if we can't get recipients for 'All'
+    }
+  } else if (target_audience === 'SpecificResidents' && Array.isArray(recipient_ids) && recipient_ids.length > 0) {
+    finalRecipientObjects = recipient_ids
+      .filter(id => ObjectId.isValid(id)) // Ensure valid IDs
+      .map(idStr => ({
+        resident_id: new ObjectId(idStr),
+        status: 'pending',
+        read_at: null,
+      }));
+  } else if (Array.isArray(recipient_ids) && recipient_ids.length > 0) { // Fallback if target_audience not 'All' but IDs are provided
+     finalRecipientObjects = recipient_ids
+      .filter(id => ObjectId.isValid(id))
+      .map(idStr => ({
+        resident_id: new ObjectId(idStr),
+        status: 'pending',
+        read_at: null,
+      }));
+  }
+
+  // Important: Do not create a notification if it has no one to go to (unless 'All' resulted in 0, which is an edge case for an empty system)
+  if (finalRecipientObjects.length === 0 && target_audience !== 'All') {
+    console.warn("Attempted to create notification with no valid specific recipients and target_audience was not 'All'. Data:", notificationData);
+    return null;
+  }
+
+
+  const newNotificationDoc = {
+    name: String(name).trim(),
+    content: String(content).trim(),
+    date: new Date(date), // Ensure it's a Date object
+    by: String(by).trim(),
+    type: String(type).trim(),
+    recipients: finalRecipientObjects,
+    target_audience: target_audience,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
+
+  try {
+    const result = await notificationsCollection.insertOne(newNotificationDoc);
+    console.log(`Notification "${name}" (ID: ${result.insertedId}) created for ${finalRecipientObjects.length} recipient(s).`);
+    // Return the full document with the generated _id
+    return { _id: result.insertedId, ...newNotificationDoc };
+  } catch (error) {
+    console.error("Error inserting notification document in helper:", error);
+    return null;
+  }
+}
+
+
 // =================== NOTIFICATION MODULE CRUD =========================== //
 
-// GET ALL NOTIFICATIONS (with search and pagination)
+// GET ALL NOTIFICATIONS (Admin view - with search, pagination, and type filter)
 app.get('/api/notifications', async (req, res) => {
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const typeFilter = req.query.type || '';
   const skip = (page - 1) * itemsPerPage;
 
-  const dab = await db();
-  const notificationsCollection = dab.collection('notifications');
-
-  let query = {};
-  if (search) {
-    const searchRegex = new RegExp(search, 'i');
-    query = {
-      $or: [
-        { name: { $regex: searchRegex } },
-        { content: { $regex: searchRegex } },
-        { by: { $regex: searchRegex } },
-      ],
-    };
-  }
-
   try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
+
+    let query = {};
+    const andConditions = [];
+
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      andConditions.push({
+        $or: [
+          { name: { $regex: searchRegex } },
+          { content: { $regex: searchRegex } },
+          { by: { $regex: searchRegex } },
+          { type: { $regex: searchRegex } }, // Also search by type
+        ],
+      });
+    }
+
+    if (typeFilter && ['Announcement', 'Alert', 'Notification'].includes(typeFilter)) {
+      andConditions.push({ type: typeFilter });
+    }
+
+    if (andConditions.length > 0) {
+      query = { $and: andConditions };
+    }
+
     const notifications = await notificationsCollection
       .find(query)
-      .sort({ date: -1 }) // Sort by date descending (newest first)
+      .sort({ date: -1 }) // Sort by effective date descending
       .skip(skip)
       .limit(itemsPerPage)
       .toArray();
@@ -1405,44 +1927,160 @@ app.get('/api/notifications', async (req, res) => {
   }
 });
 
-// ADD NEW NOTIFICATION (POST)
+// GET NOTIFICATIONS FOR A SPECIFIC RESIDENT (Resident's view)
+app.get('/api/residents/:residentId/notifications', async (req, res) => {
+    const { residentId } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+    // Example filter: const readStatusFilter = req.query.status; // e.g., "read", "unread"
+
+    if (!ObjectId.isValid(residentId)) {
+        return res.status(400).json({ error: "Invalid resident ID format." });
+    }
+    const residentObjectId = new ObjectId(residentId);
+
+    try {
+        const dab = await db();
+        const notificationsCollection = dab.collection('notifications');
+
+        const matchConditions = { "recipients.resident_id": residentObjectId };
+        // if (readStatusFilter === 'read') {
+        //     matchConditions["recipients.status"] = 'read';
+        // } else if (readStatusFilter === 'unread') {
+        //     matchConditions["recipients.status"] = { $ne: 'read' };
+        // }
+
+
+        const notificationsPipeline = [
+            { $match: matchConditions }, // Filter notifications for the specific resident
+            { $sort: { date: -1 } }, // Sort by notification effective date
+            { $skip: skip },
+            { $limit: itemsPerPage },
+            { // Unwind the recipients array to process each recipient subdocument
+                $unwind: "$recipients"
+            },
+            { // Match again to filter only the specific resident's subdocument from the unwound array
+                $match: { "recipients.resident_id": residentObjectId }
+            },
+            { // Project the desired fields, including the specific recipient's status
+                $project: {
+                    _id: 1, name: 1, content: 1, date: 1, by: 1, type: 1,
+                    created_at: 1, target_audience: 1, // Keep target_audience if useful for client
+                    read_status: "$recipients.status", // Resident's specific read status
+                    read_at: "$recipients.read_at"     // Resident's specific read timestamp
+                }
+            }
+        ];
+
+        const notifications = await notificationsCollection.aggregate(notificationsPipeline).toArray();
+        
+        // For total count, we only need to match the resident ID in the array
+        const totalNotifications = await notificationsCollection.countDocuments({ "recipients.resident_id": residentObjectId });
+
+
+        res.json({
+            notifications: notifications,
+            total: totalNotifications,
+            page: page,
+            itemsPerPage: itemsPerPage,
+            totalPages: Math.ceil(totalNotifications / itemsPerPage),
+        });
+
+    } catch (error) {
+        console.error("Error fetching resident notifications:", error);
+        res.status(500).json({ error: "Failed to fetch notifications for resident.", message: error.message });
+    }
+});
+
+
+// MARK NOTIFICATION(S) AS READ/UNREAD FOR A RESIDENT
+// Can mark single or multiple notifications as read
+app.patch('/api/residents/:residentId/notifications/mark-read', async (req, res) => {
+    const { residentId } = req.params;
+    const { notification_ids, read = true } = req.body; // `read` defaults to true, can send false to mark unread
+
+    if (!ObjectId.isValid(residentId)) {
+        return res.status(400).json({ error: "Invalid resident ID format." });
+    }
+    if (!Array.isArray(notification_ids) || notification_ids.some(id => !ObjectId.isValid(id))) {
+        return res.status(400).json({ error: "Invalid notification_ids format. Expected an array of valid ObjectIds." });
+    }
+
+    const residentObjectId = new ObjectId(residentId);
+    const notificationObjectIds = notification_ids.map(id => new ObjectId(id));
+    const newStatus = read ? "read" : "pending"; // Or "unread" if you prefer
+    const readAtTimestamp = read ? new Date() : null;
+
+    try {
+        const dab = await db();
+        const notificationsCollection = dab.collection('notifications');
+
+        const result = await notificationsCollection.updateMany(
+            { _id: { $in: notificationObjectIds }, "recipients.resident_id": residentObjectId },
+            {
+                $set: {
+                    "recipients.$.status": newStatus,
+                    "recipients.$.read_at": readAtTimestamp,
+                    "updated_at": new Date() // Update the main notification doc's timestamp
+                }
+            }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ error: "No matching notifications found for this resident." });
+        }
+        
+        res.json({ message: `Successfully updated read status for ${result.modifiedCount} of ${result.matchedCount} matched notifications.`, modifiedCount: result.modifiedCount });
+    } catch (error) {
+        console.error("Error marking notifications as read/unread:", error);
+        res.status(500).json({ error: "Failed to update notification read status.", message: error.message });
+    }
+});
+
+
+// ADD NEW NOTIFICATION (POST) - Uses the helper
 app.post('/api/notifications', async (req, res) => {
-  const { name, content, date, by } = req.body;
-  const dab = await db();
-  const notificationsCollection = dab.collection('notifications');
+  const {
+    name, content, date, by, // Existing fields
+    type,                           // NEW: 'Announcement', 'Alert', 'Notification'
+    target_audience = 'SpecificResidents', // NEW: 'All', 'SpecificResidents', defaults if not provided
+    recipient_ids = []              // NEW: Array of resident ObjectId strings
+  } = req.body;
 
   // Basic Validation
-  if (!name || !content || !date || !by) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Name, content, date, and by (admin name) are required.' });
+  if (!name || !content || !by || !type) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Name, content, by (creator), and type are required.' });
   }
-  if (typeof name !== 'string' || typeof content !== 'string' || typeof by !== 'string') {
-    return res.status(400).json({ error: 'Validation failed', message: 'Name, content, and by must be strings.' });
+  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
   }
-  // Validate date format (optional, but good)
-  const parsedDate = new Date(date);
-  if (isNaN(parsedDate.getTime())) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format for notification date.' });
+  if (!['All', 'SpecificResidents'].includes(target_audience)) {
+    return res.status(400).json({ error: 'Validation failed', message: "Invalid target_audience. Must be 'All' or 'SpecificResidents'." });
+  }
+  if (target_audience === 'SpecificResidents' && (!Array.isArray(recipient_ids) || recipient_ids.some(id => !ObjectId.isValid(id)))) {
+    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids must be an array of valid ObjectIds.' });
+  }
+   if (target_audience === 'SpecificResidents' && recipient_ids.length === 0) {
+    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids array cannot be empty.' });
   }
 
 
   try {
-    const newNotification = {
-      name: String(name).trim(),
-      content: String(content).trim(),
-      date: parsedDate, // Store as Date object
-      by: String(by).trim(),
-      created_at: new Date(),
-      updated_at: new Date(),
-    };
+    const dab = await db();
+    const createdNotification = await createNotification(dab, {
+        name, content, by, type, target_audience, recipient_ids, date // Pass all to helper
+    });
 
-    const result = await notificationsCollection.insertOne(newNotification);
-    // Send back the inserted document, as it will have the _id and created/updated_at
-    const insertedNotification = await notificationsCollection.findOne({ _id: result.insertedId });
+    if (!createdNotification) {
+        // createNotification returns null on internal failure or if no recipients for specific targeting
+        return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
+    }
 
-
-    res.status(201).json({ message: 'Notification added successfully', notification: insertedNotification });
+    res.status(201).json({ message: 'Notification added successfully', notification: createdNotification });
   } catch (error) {
-    console.error("Error adding notification:", error);
+    // This catch is for unexpected errors not handled by createNotification itself (e.g., db connection issue)
+    console.error("Error in POST /api/notifications endpoint:", error);
     res.status(500).json({ error: 'Database error', message: 'Could not add notification.' });
   }
 });
@@ -1451,15 +2089,19 @@ app.post('/api/notifications', async (req, res) => {
 // GET NOTIFICATION BY ID (GET)
 app.get('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
-  const dab = await db();
-  const notificationsCollection = dab.collection('notifications');
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
 
   try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
+    // When fetching a single notification (e.g., for an admin to view/edit),
+    // we typically return the full recipients list.
+    // If this is for a resident viewing a specific notification, use the resident-specific endpoint.
     const notification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+
     if (!notification) {
       return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
     }
@@ -1473,49 +2115,89 @@ app.get('/api/notifications/:id', async (req, res) => {
 // UPDATE NOTIFICATION BY ID (PUT)
 app.put('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
-  const { name, content, date, by } = req.body;
-  const dab = await db();
-  const notificationsCollection = dab.collection('notifications');
+  const {
+    name, content, date, by,
+    type, target_audience, recipient_ids // Allow updating these as well
+  } = req.body;
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
 
-  // Basic Validation for update
-  if (name !== undefined && (typeof name !== 'string' || name.trim() === '')) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Name, if provided, cannot be empty.' });
+  const dab = await db();
+  const notificationsCollection = dab.collection('notifications');
+  const residentsCollection = dab.collection('residents'); // Needed if target_audience changes to 'All'
+
+  const updateFields = {};
+
+  // Standard field updates
+  if (name !== undefined) {
+    if (typeof name !== 'string' || name.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Name cannot be empty.' });
+    updateFields.name = String(name).trim();
   }
-  if (content !== undefined && (typeof content !== 'string' || content.trim() === '')) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Content, if provided, cannot be empty.' });
+  if (content !== undefined) {
+    if (typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Content cannot be empty.' });
+    updateFields.content = String(content).trim();
   }
-  if (by !== undefined && (typeof by !== 'string' || by.trim() === '')) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Author (by), if provided, cannot be empty.' });
-  }
-  let parsedDate;
   if (date !== undefined) {
-    parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) {
-        return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format for notification date, if provided.' });
-    }
+    const parsedDate = new Date(date);
+    if (isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format.' });
+    updateFields.date = parsedDate;
+  }
+  if (by !== undefined) {
+     if (typeof by !== 'string' || by.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Author (by) cannot be empty.' });
+    updateFields.by = String(by).trim();
+  }
+  if (type !== undefined) {
+    if (!['Announcement', 'Alert', 'Notification'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
+    updateFields.type = type;
   }
 
+  // Handle recipients update - If target_audience or recipient_ids are in the payload, rebuild recipients array.
+  // This is a simplification. A more complex update might involve adding/removing specific recipients.
+  let needsRecipientRebuild = false;
+  if (target_audience !== undefined) {
+      if (!['All', 'SpecificResidents'].includes(target_audience)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
+      updateFields.target_audience = target_audience;
+      needsRecipientRebuild = true;
+  }
+  if (recipient_ids !== undefined) { // Even if empty array, it means intent to change
+      if (!Array.isArray(recipient_ids) || recipient_ids.some(rid => !ObjectId.isValid(rid))) {
+          return res.status(400).json({ error: 'Validation failed', message: 'recipient_ids must be an array of valid ObjectIds.' });
+      }
+      // If target_audience is not changing to 'SpecificResidents' but recipient_ids are sent,
+      // we might assume it's for 'SpecificResidents' or ignore if target is 'All'.
+      // Forcing target_audience to 'SpecificResidents' if recipient_ids are provided and target_audience is not 'All'.
+      if (updateFields.target_audience !== 'All' && recipient_ids.length > 0) {
+          updateFields.target_audience = 'SpecificResidents';
+      }
+      needsRecipientRebuild = true;
+  }
+
+  if (needsRecipientRebuild) {
+    let finalRecipientObjects = [];
+    const effectiveTargetAudience = updateFields.target_audience || (await notificationsCollection.findOne({_id: new ObjectId(id)}, {projection: {target_audience:1}})).target_audience;
+    const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : [];
+
+
+    if (effectiveTargetAudience === 'All') {
+      const allApprovedResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
+      finalRecipientObjects = allApprovedResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
+    } else if (effectiveTargetAudience === 'SpecificResidents' && effectiveRecipientIds.length > 0) {
+      finalRecipientObjects = effectiveRecipientIds.map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
+    }
+    // If specific and empty, recipients will be an empty array
+    updateFields.recipients = finalRecipientObjects;
+  }
+
+
+  if (Object.keys(updateFields).length === 0) {
+    const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+    return res.json({ message: 'No changes provided to update.', notification: currentNotification });
+  }
+  updateFields.updated_at = new Date();
 
   try {
-    const updateFields = {};
-    if (name !== undefined) updateFields.name = String(name).trim();
-    if (content !== undefined) updateFields.content = String(content).trim();
-    if (parsedDate) updateFields.date = parsedDate;
-    if (by !== undefined) updateFields.by = String(by).trim();
-
-    if (Object.keys(updateFields).length === 0) {
-      // If no fields to update are provided, you might return a specific message or the current doc
-      const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
-      if (!currentNotification) return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
-      return res.json({ message: 'No changes provided.', notification: currentNotification });
-    }
-
-    updateFields.updated_at = new Date(); // Always update this
-
     const result = await notificationsCollection.updateOne(
       { _id: new ObjectId(id) },
       { $set: updateFields }
@@ -1537,15 +2219,16 @@ app.put('/api/notifications/:id', async (req, res) => {
 // DELETE NOTIFICATION BY ID (DELETE)
 app.delete('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
-  const dab = await db();
-  const notificationsCollection = dab.collection('notifications');
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
 
   try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
     const result = await notificationsCollection.deleteOne({ _id: new ObjectId(id) });
+
     if (result.deletedCount === 0) {
       return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
     }
@@ -1555,6 +2238,14 @@ app.delete('/api/notifications/:id', async (req, res) => {
     res.status(500).json({ error: 'Database error', message: 'Could not delete notification.' });
   }
 });
+
+
+
+
+
+
+
+
 
 
 
@@ -1717,6 +2408,106 @@ app.get('/api/borrowed-assets', async (req, res) => {
   }
 });
 
+// GET BORROWED ASSET TRANSACTIONS FOR A SPECIFIC RESIDENT
+app.get('/api/borrowed-assets/by-resident/:residentId', async (req, res) => {
+  const { residentId } = req.params;
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  if (!ObjectId.isValid(residentId)) {
+    return res.status(400).json({ error: 'Invalid Resident ID format' });
+  }
+  const residentObjectId = new ObjectId(residentId);
+
+  try {
+    const dab = await db();
+    const collection = dab.collection('borrowed_assets'); // Make sure this is your collection name
+
+    const mainMatchStage = { borrower_resident_id: residentObjectId };
+
+    let searchMatchSubStage = {};
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      searchMatchSubStage = {
+        $or: [
+          { item_borrowed: { $regex: searchRegex } }, // Assuming item_borrowed is a string name
+          // If item_borrowed is an ObjectId linking to an 'assets' collection, you'd lookup assets first
+          // then search on "asset_details.name"
+          { status: { $regex: searchRegex } },
+          { borrowed_from_personnel: { $regex: searchRegex } }, // Name of personnel
+          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } } // Search by Ref #
+        ],
+      };
+    }
+
+    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
+
+    const aggregationPipeline = [
+      { $match: combinedMatchStage },
+      // Optional: Lookup item details if item_borrowed stores an item_id
+      // {
+      //   $lookup: {
+      //     from: 'inventory_items', // or your items collection name
+      //     localField: 'item_id', // Assuming you store item_id
+      //     foreignField: '_id',
+      //     as: 'item_details_array'
+      //   }
+      // },
+      // { $addFields: { item_details: { $arrayElemAt: ['$item_details_array', 0] } } },
+      // // Optional: Lookup personnel details if borrowed_from_personnel stores an ID
+      // {
+      //   $lookup: {
+      //     from: 'residents', // or 'admins'/'officials'
+      //     localField: 'borrowed_from_personnel_id',
+      //     foreignField: '_id',
+      //     as: 'personnel_details_array'
+      //   }
+      // },
+      // { $addFields: { personnel_details: { $arrayElemAt: ['$personnel_details_array', 0] } } },
+      {
+        $project: {
+          _id: 1,
+          borrow_datetime: 1,
+          item_borrowed: 1, // Direct name, or "$item_details.name" if looked up
+          status: 1,
+          borrowed_from_personnel: 1, // Direct name, or construct from "$personnel_details"
+          date_returned: 1,
+          return_condition: 1,
+          notes: 1,
+          created_at: 1,
+          updated_at: 1,
+          // borrower_name is known (it's the current user)
+        }
+      },
+      { $sort: { borrow_datetime: -1, created_at: -1 } },
+      { $skip: skip },
+      { $limit: itemsPerPage }
+    ];
+
+    const transactions = await collection.aggregate(aggregationPipeline).toArray();
+
+    const countPipeline = [
+        { $match: combinedMatchStage },
+        // Add lookups here if searchMatchSubStage depends on looked-up fields for accurate count
+        { $count: 'total' }
+    ];
+    const countResult = await collection.aggregate(countPipeline).toArray();
+    const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({
+      transactions,
+      total: totalTransactions,
+      page,
+      itemsPerPage,
+      totalPages: Math.ceil(totalTransactions / itemsPerPage)
+    });
+  } catch (error) {
+    console.error(`Error fetching borrowed assets for resident ${residentId}:`, error);
+    res.status(500).json({ error: "Failed to fetch borrowed asset transactions for this resident." });
+  }
+});
 
 // GET BORROWED ASSET TRANSACTION BY ID (GET) - WITH BORROWER NAME LOOKUP
 app.get('/api/borrowed-assets/:id', async (req, res) => {
@@ -1827,6 +2618,97 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
   } catch (error) {
     console.error('Error updating transaction:', error);
     res.status(500).json({ error: 'Error updating transaction: ' + error.message });
+  }
+});
+
+app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status: newStatus } = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid Borrowed Asset Transaction ID format' });
+  }
+
+  // Define your allowed statuses for borrowed assets
+  const ALLOWED_BORROW_STATUSES = ['Borrowed', 'Returned', 'Overdue', 'Lost', 'Damaged']; // Added more common statuses
+  if (!newStatus || !ALLOWED_BORROW_STATUSES.includes(newStatus)) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      message: `Status is required and must be one of: ${ALLOWED_BORROW_STATUSES.join(', ')}`
+    });
+  }
+
+  try {
+    const dab = await db();
+    const borrowedAssetsCollection = dab.collection('borrowed_assets'); // Ensure collection name matches
+    const residentsCollection = dab.collection('residents');
+
+    const currentTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
+    if (!currentTransaction) {
+      return res.status(404).json({ error: 'Not found', message: 'Borrowed asset transaction not found.' });
+    }
+
+    if (currentTransaction.status === newStatus) {
+      return res.json({ message: `Transaction status is already '${newStatus}'.`, statusChanged: false, updatedTransaction: currentTransaction });
+    }
+
+    const updateFields = { status: newStatus, updated_at: new Date() };
+
+    // If status is changing to 'Returned', automatically set date_returned
+    if (newStatus === 'Returned' && !currentTransaction.date_returned) {
+      updateFields.date_returned = new Date();
+    }
+    // If changing away from 'Returned', you might want to nullify date_returned (depends on your business logic)
+    // else if (currentTransaction.status === 'Returned' && newStatus !== 'Returned') {
+    //   updateFields.date_returned = null;
+    // }
+
+
+    const result = await borrowedAssetsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields }
+    );
+
+    if (result.modifiedCount === 0) {
+      // This case might be hit if only updated_at would change but status didn't effectively change
+       return res.json({ message: `Transaction status was already effectively '${newStatus}'. No substantive fields changed.`, statusChanged: false, updatedTransaction: currentTransaction });
+    }
+
+    const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
+
+    // --- Send Notification to the Borrower ---
+    if (updatedTransaction && updatedTransaction.borrower_resident_id) {
+      const borrower = await residentsCollection.findOne({ _id: new ObjectId(updatedTransaction.borrower_resident_id) });
+      if (borrower) {
+        let notificationContent = `Dear ${borrower.first_name || 'Resident'}, the status of your borrowed item "${updatedTransaction.item_borrowed}" (Ref: ${updatedTransaction._id.toString().slice(-6)}) has been updated to: ${newStatus}.`;
+        if (newStatus === "Overdue") {
+            notificationContent += " Please return it as soon as possible.";
+        } else if (newStatus === "Returned") {
+            notificationContent += " Thank you for returning the item.";
+        }
+        // Assuming you have your createNotification function available
+        await createNotification(dab, {
+          name: `Borrowed Item Update: ${updatedTransaction.item_borrowed}`,
+          content: notificationContent,
+          by: "System Administration",
+          type: (newStatus === "Overdue" || newStatus === "Lost" || newStatus === "Damaged") ? "Alert" : "Notification",
+          target_audience: 'SpecificResidents',
+          recipient_ids: [borrower._id.toString()],
+        });
+      } else {
+        console.warn(`Could not find borrower (ID: ${updatedTransaction.borrower_resident_id}) for notification of borrowed asset ${updatedTransaction._id}`);
+      }
+    }
+
+    res.json({
+      message: `Borrowed asset status updated to '${newStatus}' successfully.`,
+      statusChanged: true,
+      updatedTransaction: updatedTransaction
+    });
+
+  } catch (error) {
+    console.error("Error updating borrowed asset status:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not update status.' });
   }
 });
 
@@ -2005,6 +2887,120 @@ app.get('/api/complaints', async (req, res) => {
   }
 });
 
+// GET COMPLAINTS FOR A SPECIFIC RESIDENT
+app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
+  const { residentId } = req.params;
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  if (!ObjectId.isValid(residentId)) {
+    return res.status(400).json({ error: 'Invalid Resident ID format' });
+  }
+  const residentObjectId = new ObjectId(residentId);
+
+  try {
+    const dab = await db();
+    const collection = dab.collection('complaints');
+
+    const mainMatchStage = { complainant_resident_id: residentObjectId };
+
+    let searchMatchSubStage = {};
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      searchMatchSubStage = {
+        $or: [
+          { person_complained_against_name: { $regex: searchRegex } },
+          { "person_complained_details.first_name": { $regex: searchRegex } }, // If looking up person complained
+          { "person_complained_details.last_name": { $regex: searchRegex } },
+          { status: { $regex: searchRegex } },
+          { notes_description: { $regex: searchRegex } },
+          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } } // Search by Ref #
+        ],
+      };
+    }
+
+    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
+
+    const aggregationPipeline = [
+      { $match: combinedMatchStage },
+      // Lookup person complained against (details might be useful for the complainant)
+      {
+        $lookup: {
+          from: 'residents',
+          localField: 'person_complained_against_resident_id', // Assuming this field exists
+          foreignField: '_id',
+          as: 'person_complained_details_array'
+        }
+      },
+      { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
+      {
+        $project: {
+          _id: 1,
+          // complainant_name is known (it's the current user), but API can return it for consistency
+          complainant_display_name: 1, // The stored display name at time of complaint
+          person_complained_against_name: { // Show looked-up name if available, else stored name
+            $ifNull: [
+              { $concat: [
+                  "$person_complained_details.first_name", " ",
+                  { $ifNull: ["$person_complained_details.middle_name", ""] },
+                  { $cond: { if: { $eq: [{ $ifNull: ["$person_complained_details.middle_name", ""] }, ""] }, then: "", else: " " } },
+                  "$person_complained_details.last_name"
+              ]},
+              "$person_complained_against_name"
+            ]
+          },
+          date_of_complaint: 1,
+          time_of_complaint: 1, // Added this field
+          status: 1,
+          notes_description: 1,
+          created_at: 1,
+          updated_at: 1,
+          // Include other relevant fields for the complainant to see
+        }
+      },
+      { $sort: { date_of_complaint: -1, created_at: -1 } },
+      { $skip: skip },
+      { $limit: itemsPerPage }
+    ];
+
+    const complaints = await collection.aggregate(aggregationPipeline).toArray();
+
+    const countPipeline = [
+        { $match: combinedMatchStage },
+        // If search includes person_complained_details, lookup is needed for accurate count
+        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
+        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
+        { $match: search ? searchMatchSubStage : {} }, // Apply sub-search again after potential lookup
+        { $count: 'total' }
+    ];
+    // More precise count by applying full combined match directly
+    const preciseCountPipeline = [
+        { $match: mainMatchStage }, // Start with the resident
+        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
+        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
+        // If searchMatchSubStage references fields from person_complained_details, apply it after lookup
+        { $match: search ? searchMatchSubStage : {} },
+        { $count: 'total' }
+    ];
+
+    const countResult = await collection.aggregate(preciseCountPipeline).toArray();
+    const totalComplaints = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({
+      complaints,
+      total: totalComplaints,
+      page,
+      itemsPerPage,
+      totalPages: Math.ceil(totalComplaints / itemsPerPage)
+    });
+  } catch (error) {
+    console.error(`Error fetching complaints for resident ${residentId}:`, error);
+    res.status(500).json({ error: "Failed to fetch complaints for this resident." });
+  }
+});
+
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
@@ -2093,6 +3089,59 @@ app.put('/api/complaints/:id', async (req, res) => {
     ]).toArray();
     res.json({ message: 'Complaint updated successfully', complaint: updatedComplaintResult[0] || null });
   } catch (error) { console.error('Error updating complaint:', error); res.status(500).json({ error: 'Error updating complaint.' }); }
+});
+
+app.patch('/api/complaints/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status } = req.body;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid Complaint ID format' });
+  }
+
+  // Define your allowed statuses
+  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+  if (!status || !ALLOWED_STATUSES.includes(status)) {
+    return res.status(400).json({ error: 'Validation failed', message: `Status is required and must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+  }
+
+  try {
+    const dab = await db();
+    const complaintsCollection = dab.collection('complaints');
+
+    const result = await complaintsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { status: status, updated_at: new Date() } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Not found', message: 'Complaint not found.' });
+    }
+
+    if (result.modifiedCount === 0) {
+      // This means the status was already set to the new value
+      return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
+    }
+
+    // Optionally, send a notification to the complainant about the status change
+    const updatedComplaint = await complaintsCollection.findOne({ _id: new ObjectId(id) });
+    if (updatedComplaint && updatedComplaint.complainant_resident_id) {
+      await createNotification(dab, {
+        name: `Complaint Status Update: Ref #${updatedComplaint._id.toString().slice(-6)}`,
+        content: `Dear ${updatedComplaint.complainant_display_name}, the status of your complaint regarding "${updatedComplaint.person_complained_against_name}" has been updated to: ${status}.`,
+        by: "System Administration", // Or the admin who made the change
+        type: "Notification",
+        target_audience: 'SpecificResidents',
+        recipient_ids: [updatedComplaint.complainant_resident_id.toString()],
+      });
+    }
+
+    res.json({ message: `Complaint status updated to '${status}' successfully.`, statusChanged: true });
+
+  } catch (error) {
+    console.error("Error updating complaint status:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not update complaint status.' });
+  }
 });
 
 // DELETE COMPLAINT REQUEST BY ID (DELETE)
@@ -2271,6 +3320,112 @@ app.get('/api/document-requests', async (req, res) => {
   }
 });
 
+// GET DOCUMENT REQUESTS FOR A SPECIFIC RESIDENT
+app.get('/api/document-requests/by-resident/:residentId', async (req, res) => {
+  const { residentId } = req.params;
+  const search = req.query.search || ''; // Optional: allow searching within their requests
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const skip = (page - 1) * itemsPerPage;
+
+  if (!ObjectId.isValid(residentId)) {
+    return res.status(400).json({ error: 'Invalid Resident ID format' });
+  }
+  const residentObjectId = new ObjectId(residentId);
+
+  try {
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+
+    // --- Main Match Stage: Filter by residentId ---
+    const mainMatchStage = { requestor_resident_id: residentObjectId };
+
+    let searchMatchSubStage = {};
+    if (search) {
+      const searchRegex = new RegExp(search, 'i');
+      searchMatchSubStage = { // Search within this resident's requests
+        $or: [
+          { request_type: { $regex: searchRegex } },
+          { purpose_of_request: { $regex: searchRegex } },
+          { document_status: { $regex: searchRegex } },
+          // Add _id search if you want them to search by reference number
+          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } }
+        ],
+      };
+    }
+
+    // Combine main match with search match
+    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
+
+    const aggregationPipeline = [
+      { $match: combinedMatchStage }, // Filter by resident ID and then by search term
+      // No need to lookup requestor_details if we are already filtering by requestor_resident_id,
+      // unless you still want to include their name explicitly in the output for some reason.
+      // For this user-specific view, requestor_name might be less relevant or can be fetched on client.
+      // However, requested_by_details (admin/official) is still useful.
+      {
+        $lookup: {
+          from: 'residents', // Or 'admins', 'officials'
+          localField: 'requested_by_resident_id',
+          foreignField: '_id',
+          as: 'requested_by_details_array'
+        }
+      },
+      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } } },
+      {
+        $project: {
+          _id: 1,
+          request_type: 1,
+          // requestor_name can be omitted or added if needed, client already knows who the requestor is
+          date_of_request: 1,
+          purpose_of_request: 1,
+          document_status: 1,
+          requested_by_name: { // Name of the admin/official who processed it
+            $ifNull: [
+              { $concat: [
+                  "$requested_by_details.first_name", " ",
+                  { $ifNull: ["$requested_by_details.middle_name", ""] },
+                  { $cond: { if: { $eq: [{ $ifNull: ["$requested_by_details.middle_name", ""] }, ""] }, then: "", else: " " } },
+                  "$requested_by_details.last_name"
+              ]},
+              "$requested_by_display_name", // Fallback to stored display name
+              "N/A" // Further fallback if no details and no display name
+            ]
+          },
+          created_at: 1,
+          updated_at: 1, // Include updated_at for sorting or display
+          // You can add other fields like 'remarks_for_user' if you have them
+        }
+      },
+      { $sort: { date_of_request: -1, created_at: -1 } }, // Sort user's requests
+      { $skip: skip },
+      { $limit: itemsPerPage }
+    ];
+
+    const requests = await collection.aggregate(aggregationPipeline).toArray();
+
+    // Count total documents for this resident matching the search
+    const countPipeline = [
+        { $match: combinedMatchStage },
+        // No need for lookups just for counting if they are not part of combinedMatchStage's search criteria
+        { $count: 'total' }
+    ];
+    const countResult = await collection.aggregate(countPipeline).toArray();
+    const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
+
+    res.json({
+      requests,
+      total: totalRequests,
+      page,
+      itemsPerPage,
+      totalPages: Math.ceil(totalRequests / itemsPerPage)
+    });
+  } catch (error) {
+    console.error(`Error fetching document requests for resident ${residentId}:`, error);
+    res.status(500).json({ error: "Failed to fetch document requests for this resident." });
+  }
+});
+
 // GET DOCUMENT REQUEST BY ID (GET)
 app.get('/api/document-requests/:id', async (req, res) => {
   const { id } = req.params;
@@ -2350,6 +3505,91 @@ app.put('/api/document-requests/:id', async (req, res) => {
   } catch (error) { console.error('Error updating request:', error); res.status(500).json({ error: 'Error updating request.' }); }
 });
 
+// UPDATE DOCUMENT REQUEST STATUS
+app.patch('/api/document-requests/:id/status', async (req, res) => {
+  const { id } = req.params;
+  const { status: newStatus } = req.body; // Expecting { status: "NewStatusValue" }
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid Document Request ID format' });
+  }
+
+  // Define your allowed document request statuses
+  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Denied"];
+  if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
+    return res.status(400).json({
+      error: 'Validation failed',
+      message: `Status is required and must be one of: ${ALLOWED_DOC_STATUSES.join(', ')}`
+    });
+  }
+
+  try {
+    const dab = await db(); // Your DB instance
+    const documentRequestsCollection = dab.collection('document_requests');
+    const residentsCollection = dab.collection('residents'); // For fetching requestor details
+
+    // Fetch the current request to get old status and requestor details
+    const currentRequest = await documentRequestsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!currentRequest) {
+      return res.status(404).json({ error: 'Not found', message: 'Document Request not found.' });
+    }
+
+    if (currentRequest.document_status === newStatus) {
+      return res.json({ message: `Document Request status is already '${newStatus}'.`, statusChanged: false, updatedRequest: currentRequest });
+    }
+
+    const result = await documentRequestsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: { document_status: newStatus, updated_at: new Date() } }
+    );
+
+    if (result.matchedCount === 0) { // Should be caught by findOne above, but good for safety
+      return res.status(404).json({ error: 'Not found', message: 'Document Request not found during update.' });
+    }
+    if (result.modifiedCount === 0) {
+        // This case should ideally be caught by the status check above
+        return res.json({ message: `Document Request status was already '${newStatus}'. No change made.`, statusChanged: false, updatedRequest: currentRequest });
+    }
+
+    const updatedRequest = await documentRequestsCollection.findOne({ _id: new ObjectId(id) }); // Fetch the updated document
+
+    // --- Send Notification to the Requestor ---
+    if (updatedRequest && updatedRequest.requestor_resident_id) {
+      const requestor = await residentsCollection.findOne({ _id: new ObjectId(updatedRequest.requestor_resident_id) });
+      if (requestor) {
+        let notificationContent = `Dear ${requestor.first_name || 'Resident'}, the status of your document request for "${updatedRequest.request_type}" (Ref: ${updatedRequest._id.toString().slice(-6)}) has been updated to: ${newStatus}.`;
+        if (newStatus === "Ready for Pickup") {
+            notificationContent += " You can now pick up your document at the barangay hall.";
+        } else if (newStatus === "Denied") {
+            notificationContent += " Please contact the barangay office for more details regarding the denial.";
+        }
+        // Assuming you have your createNotification function available
+        await createNotification(dab, {
+          name: `Document Request Update: ${updatedRequest.request_type}`,
+          content: notificationContent,
+          by: "System Administration", // Or the admin user who made the change if trackable
+          type: "Notification", // Or "Alert" if it's urgent
+          target_audience: 'SpecificResidents',
+          recipient_ids: [requestor._id.toString()], // Target only the affected resident
+        });
+      } else {
+        console.warn(`Could not find requestor (ID: ${updatedRequest.requestor_resident_id}) to send notification for document request ${updatedRequest._id}`);
+      }
+    }
+
+    res.json({
+      message: `Document Request status updated to '${newStatus}' successfully. Notification sent.`,
+      statusChanged: true,
+      updatedRequest: updatedRequest // Send back the updated document
+    });
+
+  } catch (error) {
+    console.error("Error updating document request status:", error);
+    res.status(500).json({ error: 'Database error', message: 'Could not update document request status.' });
+  }
+});
+
 // DELETE DOCUMENT REQUEST BY ID (DELETE)
 app.delete('/api/document-requests/:id', async (req, res) => {
   const { id } = req.params;
@@ -2385,90 +3625,67 @@ app.delete('/api/document-requests/:id', async (req, res) => {
 // Ensure you have 'app' (Express app instance) and 'db' (DB connection function)
 // and ObjectId from mongodb if needed for other parts, though not directly here.
 
+// GET /api/dashboard - REVISED
 app.get('/api/dashboard', async (req, res) => {
-  const dab = await db();
-  const residentsCollection = dab.collection('residents');
-
   try {
-    // 1. Number of population
+    const dab = await db(); // Your DB instance
+    const residentsCollection = dab.collection('residents');
+    const documentRequestsCollection = dab.collection('document_requests');
+    const complaintsCollection = dab.collection('complaints');
+    const borrowedAssetsCollection = dab.collection('borrowed_assets'); // Ensure this collection name is correct
+
+    // --- Core Metrics ---
     const totalPopulation = await residentsCollection.countDocuments({});
-
-    // 2. Number of households (household heads)
-    // 3. Number of families (same as households for this context)
     const totalHouseholds = await residentsCollection.countDocuments({ is_household_head: true });
-
-    // 4. Number of registered voters
     const totalRegisteredVoters = await residentsCollection.countDocuments({ is_registered_voter: true });
 
-    // 5. Age brackets
-    // For age calculation, we'll approximate for simplicity in aggregation.
-    // More precise age calculation can be done but adds complexity.
-    // $dateFromString is available from MongoDB 4.0. Ensure date_of_birth is stored as ISODate for best results.
-    // If date_of_birth is already a Date object in MongoDB, the $project stage for age is simpler.
-    
-    const ageBracketsAggregation = await residentsCollection.aggregate([
-      {
-        $match: { date_of_birth: { $exists: true, $ne: null } } // Ensure date_of_birth exists
-      },
-      {
-        $project: {
-          age: {
-            $floor: { // Calculate age in years
-              $divide: [
-                { $subtract: [new Date(), "$date_of_birth"] }, // Difference in milliseconds
-                365.25 * 24 * 60 * 60 * 1000 // Milliseconds in an average year
-              ]
-            }
-          }
-        }
-      },
-      {
-        $bucket: {
-          groupBy: "$age",
-          boundaries: [0, 6, 13, 18, 36, 51, 66], // Lower bounds for 0-5, 6-12, 13-17, 18-35, 36-50, 51-65
-          default: "66+", // For ages 66 and above
-          output: {
-            count: { $sum: 1 }
-          }
-        }
-      },
-      {
-        $project: { // Remap _id (bucket lower bound) to descriptive bracket names
-            _id: 0, // Exclude the original _id from $bucket
-            bracket: {
-                $switch: {
-                    branches: [
-                        { case: { $eq: ["$_id", 0] }, then: "0-5" },
-                        { case: { $eq: ["$_id", 6] }, then: "6-12" },
-                        { case: { $eq: ["$_id", 13] }, then: "13-17" },
-                        { case: { $eq: ["$_id", 18] }, then: "18-35" },
-                        { case: { $eq: ["$_id", 36] }, then: "36-50" },
-                        { case: { $eq: ["$_id", 51] }, then: "51-65" },
-                        { case: { $eq: ["$_id", "66+"] }, then: "66+" },
-                    ],
-                    default: "Unknown"
-                }
-            },
-            count: 1
-        }
-      },
-      { $sort: { count: -1 } } // Optional: sort brackets by count or define a specific order later
-    ]).toArray();
+    // --- New Demographic Counts ---
+    const totalSeniorCitizens = await residentsCollection.countDocuments({
+      date_of_birth: { $lte: new Date(new Date().setFullYear(new Date().getFullYear() - 60)) } // Age 60+
+    });
+    const totalPWDs = await residentsCollection.countDocuments({ is_pwd: true });
 
-    // Ensure all brackets are present in the result, even if count is 0
-    const allBracketNames = ["0-5", "6-12", "13-17", "18-35", "36-50", "51-65", "66+"];
-    const ageBracketsMap = new Map(ageBracketsAggregation.map(item => [item.bracket, item.count]));
-    const completeAgeBrackets = allBracketNames.map(name => ({
-        bracket: name,
-        count: ageBracketsMap.get(name) || 0
-    }));
+    // Occupation Status Counts (ensure 'occupation_status' field has these exact string values)
+    const totalLaborForce = await residentsCollection.countDocuments({ occupation_status: 'Labor force' });
+    const totalUnemployed = await residentsCollection.countDocuments({ occupation_status: 'Unemployed' });
+    const totalOutOfSchoolYouth = await residentsCollection.countDocuments({ occupation_status: 'Out of School Youth' });
+    // You might also want a count for 'Student' if that's different from OSY in your definition.
+
+    // --- Transaction Alerts Data (Counts of Pending Items) ---
+    const pendingDocumentRequestsCount = await documentRequestsCollection.countDocuments({
+      document_status: 'Pending' // Assuming 'Pending' is the initial status
+    });
+    const newComplaintsCount = await complaintsCollection.countDocuments({
+      status: 'New' // Assuming 'New' is the initial status for complaints
+    });
+    const borrowedAssetsNotReturnedCount = await borrowedAssetsCollection.countDocuments({
+      status: { $in: ['Borrowed', 'Overdue'] } // Items currently out
+    });
+    // You could also fetch a few recent pending items for display if needed
+    const recentPendingDocumentRequests = await documentRequestsCollection.find({ document_status: 'Pending' }).sort({ date_of_request: -1 }).limit(3).toArray();
+    const recentNewComplaints = await complaintsCollection.find({ status: 'New' }).sort({ date_of_complaint: -1 }).limit(3).toArray();
+    const recentBorrowedAssets = await borrowedAssetsCollection.find({ status: { $in: ['Borrowed', 'Overdue'] } }).sort({ borrow_datetime: -1 }).limit(3).toArray();
 
 
     res.json({
+      // Core Metrics
       totalPopulation,
-      totalHouseholds, // Also used for families
+      totalHouseholds,
       totalRegisteredVoters,
-      ageBrackets: completeAgeBrackets,
+      // New Demographic Counts
+      totalSeniorCitizens,
+      totalPWDs,
+      totalLaborForce,
+      totalUnemployed,
+      totalOutOfSchoolYouth,
+      // Transaction Alert Counts
+      pendingDocumentRequestsCount,
+      newComplaintsCount,
+      borrowedAssetsNotReturnedCount,
+      // Optionally, arrays of recent items for display:
+      recentPendingDocumentRequests,
+      recentNewComplaints,
+      recentBorrowedAssets,
     });
 
   } catch (error) {
