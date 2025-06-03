@@ -731,23 +731,58 @@ app.get('/api/residents', async (req, res) => {
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
 
-  const dab = await db();
+  const dab = await db(); // Assuming db() is your database connection function
   const residentsCollection = dab.collection('residents');
 
   let query = {};
-  if (search) { /* ... your existing search query ... */ }
+  if (search) {
+    const searchRegex = new RegExp(search.trim(), 'i'); // Case-insensitive search, trim whitespace
+    query = {
+      $or: [
+        { first_name: { $regex: searchRegex } },
+        { middle_name: { $regex: searchRegex } },
+        { last_name: { $regex: searchRegex } },
+        { email: { $regex: searchRegex } },
+        { contact_number: { $regex: searchRegex } },
+        { address_house_number: { $regex: searchRegex } },
+        { address_street: { $regex: searchRegex } },
+        { address_subdivision_zone: { $regex: searchRegex } },
+        { address_city_municipality: { $regex: searchRegex } },
+        { citizenship: { $regex: searchRegex } }, // Added from your original schema
+        { place_of_birth: { $regex: searchRegex } }, // Added from your original schema
+        { precinct_number: { $regex: searchRegex } }, // Added from your original schema
+        { status: { $regex: searchRegex } } // Search by status as well
+      ],
+    };
+  }
 
   const projection = {
-    // ... (your existing projection) ...
-    first_name: 1, last_name: 1, middle_name: 1, email: 1, sex: 1,
-    contact_number: 1, address_house_number: 1, address_street: 1,
-    address_subdivision_zone: 1, address_city_municipality: 1,
-    is_household_head: 1, created_at: 1,
+    first_name: 1,
+    middle_name: 1,
+    last_name: 1,
+    sex: 1,
+    // age: 1, // Age is derived from date_of_birth or stored, can be included if needed
+    date_of_birth: 1,
+    // civil_status: 1,
+    // occupation_status: 1,
+    // is_pwd: 1,
+    is_household_head: 1,
+    // is_registered_voter: 1,
+    // precinct_number: 1, // Voter ID Number
+    address_house_number: 1,
+    address_street: 1,
+    address_subdivision_zone: 1,
+    address_city_municipality: 1,
+    // years_lived_current_address: 1,
+    contact_number: 1,
+    email: 1,
     status: 1, // ADDED status
-    date_of_birth: 1, // To allow age calculation on frontend if needed, or just for info
+    created_at: 1,
+    // updated_at: 1,
     _id: 1,
-    // EXCLUDE sensitive/large fields:
-    // password_hash: 0, (already excluded if not explicitly projected)
+
+    // Explicitly exclude fields you NEVER want in a list view for performance/security
+    // password_hash: 0, (already excluded if not in projection, but good practice to be explicit)
     // voter_registration_proof_data: 0,
     // residency_proof_data: 0,
     // login_attempts: 0,
@@ -760,7 +795,7 @@ app.get('/api/residents', async (req, res) => {
       .project(projection)
       .skip(skip)
       .limit(itemsPerPage)
-      .sort({ created_at: -1 })
+      .sort({ created_at: -1 }) // Default sort: newest first
       .toArray();
 
     const totalResidents = await residentsCollection.countDocuments(query);
@@ -772,7 +807,10 @@ app.get('/api/residents', async (req, res) => {
       itemsPerPage: itemsPerPage,
       totalPages: Math.ceil(totalResidents / itemsPerPage),
     });
-  } catch (error) { /* ... */ }
+  } catch (error) {
+    console.error("Error fetching residents:", error);
+    res.status(500).json({ error: "Failed to fetch residents", message: error.message });
+  }
 });
 
 // GET RESIDENTS BY SEARCH QUERY (GET /api/residents/search?q=searchTerm)
