@@ -682,7 +682,7 @@ app.post('/api/residents', async (req, res) => {
 
     // Auto-assign logic for non-heads (if head was NOT created with members directly)
     if (finalInsertedResident && !finalInsertedResident.is_household_head &&
-        (!household_members_to_create || household_members_to_create.length === 0) && // Only if not part of batch create
+        (!req.household_members_to_create || req.household_members_to_create.length === 0) && // Only if not part of batch create
         finalInsertedResident.address_house_number && finalInsertedResident.address_street &&
         finalInsertedResident.address_subdivision_zone && finalInsertedResident.address_city_municipality) {
       // This logic runs OUTSIDE the main transaction for simplicity here,
