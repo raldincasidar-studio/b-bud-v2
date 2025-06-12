@@ -175,11 +175,12 @@ const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) reset
 const cancelEdit = () => { resetForm(); toggleEditMode(false); };
 const resetForm = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); };
 
+const baseURL = process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001'
 const generateDocument = () => {
   // Use the API endpoint directly to generate the PDF in a new tab
   // This is simpler than creating a dedicated frontend printable page
   const apiUrl = useRuntimeConfig().public.apiBase; // Get base API URL from Nuxt config
-  window.open(`${apiUrl}/api/document-requests/${requestId}/generate`, '_blank');
+  window.open(`${baseURL}/api/document-requests/${requestId}/generate`, '_blank');
 };
 
 async function saveChanges() {
