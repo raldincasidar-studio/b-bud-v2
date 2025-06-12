@@ -46,7 +46,7 @@
           <v-divider class="my-4"></v-divider>
           <h3>Targeting</h3>
 
-          <v-row>
+          <v-row class="my-4">
             <v-col cols="12" md="6">
               <v-select
                 v-model="notification.target_audience"

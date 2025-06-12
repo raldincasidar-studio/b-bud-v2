@@ -97,6 +97,22 @@
               </v-row>
             </div>
           </div>
+
+
+          <!-- NEW: Timestamps Section -->
+          <div v-if="!editMode">
+            <v-divider class="my-6"></v-divider>
+            <v-row>
+              <v-col cols="12" sm="6">
+                <p class="text-caption text-grey">Date Requested:</p>
+                <p class="font-weight-medium">{{ formatTimestamp(form.created_at) }}</p>
+              </v-col>
+              <v-col cols="12" sm="6">
+                <p class="text-caption text-grey">Last Updated:</p>
+                <p class="font-weight-medium">{{ formatTimestamp(form.updated_at) }}</p>
+              </v-col>
+            </v-row>
+          </div>
         </v-card-text>
       </v-card>
     </div>
@@ -224,4 +240,12 @@ const getStatusColor = (status) => ({
     "Pending": 'orange-darken-1', "Processing": 'blue-darken-1', "Ready for Pickup": 'teal-darken-1',
     "Released": 'green-darken-1', "Denied": 'red-darken-2'
   }[status] || 'grey');
+
+const formatTimestamp = (dateString) => {
+  if (!dateString) return 'N/A';
+  try {
+    const options = { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+    return new Date(dateString).toLocaleString('en-US', options);
+  } catch (e) { return dateString; }
+};
 </script>

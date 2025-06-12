@@ -108,7 +108,7 @@
               <thead><tr><th>Name</th><th>Relationship</th><th v-if="editMode">Actions</th></tr></thead>
               <tbody>
                 <tr v-for="(member, index) in form.household_members_details" :key="member._id">
-                  <td>{{ member.first_name }} {{ member.last_name }}</td><td>{{ member.relationship_to_head || 'Not specified' }}</td>
+                  <td><v-chip link color="primary" prepend-icon="mdi-account" :to="`/residents/${member._id}`">{{ member.first_name }} {{ member.last_name }}</v-chip></td><td>{{ member.relationship_to_head || 'Not specified' }}</td>
                   <td v-if="editMode"><v-btn icon="mdi-delete-outline" variant="text" color="error" size="small" @click="removeMember(index)"></v-btn></td>
                 </tr>
                 <tr v-if="!form.household_members_details || form.household_members_details.length === 0"><td colspan="3" class="text-center text-grey py-3">No members in this household.</td></tr>
