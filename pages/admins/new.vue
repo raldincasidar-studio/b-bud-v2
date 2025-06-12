@@ -86,7 +86,7 @@
              <!-- UPDATED ROLE SELECT -->
             <v-select
               v-model="form.role"
-              :items="['Admin', 'Technical Admin']"
+              :items="['Admin']"
               label="Role"
               variant="outlined"
               :error-messages="v$.role.$errors.map(e => e.$message)"

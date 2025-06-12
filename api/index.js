@@ -1567,6 +1567,14 @@ app.put('/api/admins/:id', async (req, res) => {
     { field: 'role', value: role, format: /^(Admin|Superadmin)$/ },
   ];
 
+  // Check for validation
+  if (req.body.role === 'Technical Admin') {
+      const existingTechAdmin = await adminsCollection.findOne({ role: 'Technical Admin' });
+      if (existingTechAdmin) {
+          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
+      }
+  }
+
   if (password) {
     requiredFields.push({ field: 'password', value: password, format: /^[a-zA-Z0-9_]+$/ });
   }
