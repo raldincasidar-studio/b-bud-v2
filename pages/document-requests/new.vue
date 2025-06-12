@@ -1,174 +1,197 @@
 <template>
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-6">
-      <v-col><h2>New Document Request</h2></v-col>
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">New Document Request</h2>
+        <p class="text-grey-darken-1">Select a document type and fill in the required details.</p>
+      </v-col>
       <v-col class="text-right">
-        <v-btn color="primary" @click="saveRequest" prepend-icon="mdi-content-save" variant="tonal" :loading="saving" size="large">
+        <v-btn color="primary" @click="saveRequest" prepend-icon="mdi-content-save" :loading="saving" size="large">
           Submit Request
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card prepend-icon="mdi-file-document-plus-outline" title="Request Details">
-      <v-card-text>
-        <v-form ref="form">
-          <v-row>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="request.request_type" label="Request Type (e.g., Barangay Clearance)" :rules="[rules.required]" variant="outlined" density="compact" required></v-text-field>
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-text-field v-model="request.date_of_request" label="Date of Request" type="date" :rules="[rules.required]" variant="outlined" density="compact" required></v-text-field>
-            </v-col>
-          </v-row>
+    <v-card class="mt-4" flat border>
+      <v-card-text class="py-6">
+        <!-- Step 1: General Information -->
+        <h3 class="text-h6 mb-4">Requestor Information</h3>
+        <v-row>
+          <v-col cols="12" md="6">
+            <label class="v-label mb-1">Requestor (Resident) <span class="text-red">*</span></label>
+            <v-autocomplete
+              v-model="form.requestor_resident_id"
+              v-model:search="requestorSearchQuery"
+              label="Search for a resident..." variant="outlined" :items="requestorSearchResults"
+              item-title="name" item-value="_id" :loading="isLoadingRequestors"
+              :error-messages="v$.requestor_resident_id.$errors.map(e => e.$message)"
+              @blur="v$.requestor_resident_id.$touch" @update:model-value="onRequestorSelect" no-filter
+            >
+              <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
+            </v-autocomplete>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label mb-1">Purpose of Request <span class="text-red">*</span></label>
+            <v-text-field
+              v-model="form.purpose" variant="outlined"
+              :error-messages="v$.purpose.$errors.map(e => e.$message)"
+              @blur="v$.purpose.$touch"
+            ></v-text-field>
+          </v-col>
+        </v-row>
 
-          <v-divider class="my-4"></v-divider>
-          <h3 class="text-subtitle-1 mb-2">Requestor Information</h3>
-          <v-row>
-            <v-col cols="12" md="6">
-              <label class="v-label mb-1">Full Name of Requestor <span class="text-red">*</span></label>
-              <v-text-field
-                v-model="requestorSearchQuery"
-                label="Search Requestor (Resident)..."
-                prepend-inner-icon="mdi-account-search-outline"
-                variant="outlined" density="compact"
-                clearable @click:clear="clearRequestorSelection"
-                :loading="isLoadingRequestors"
-                :rules="[rules.requestorSelected]"
-                :hint="selectedRequestorName ? `Selected: ${selectedRequestorName}` : 'Type to search resident'"
-                persistent-hint
-              ></v-text-field>
-              <v-list v-if="requestorSearchResults.length > 0 && requestorSearchQuery" density="compact" class="elevation-2 search-results-list">
-                <v-list-item
-                  v-for="resident in requestorSearchResults" :key="resident._id" @click="selectRequestor(resident)"
-                  :title="`${resident.first_name} ${resident.middle_name || ''} ${resident.last_name}`"
-                ><v-list-item-subtitle>{{ resident.email || 'No email' }}</v-list-item-subtitle></v-list-item>
-              </v-list>
-            </v-col>
-             <v-col cols="12" md="6">
-                <v-text-field v-model="request.requestor_address" label="Requestor Address" :rules="[rules.required]" variant="outlined" density="compact" required placeholder="Auto-fills or enter manually"></v-text-field>
-            </v-col>
-          </v-row>
-          <v-row>
-             <v-col cols="12" md="6">
-                <v-text-field v-model="request.requestor_contact_number" label="Requestor Contact Number" :rules="[rules.required, rules.contactFormat]" variant="outlined" density="compact" required placeholder="Auto-fills or enter manually" type="tel"></v-text-field>
-            </v-col>
-          </v-row>
+        <v-divider class="my-6"></v-divider>
 
-          <v-divider class="my-4"></v-divider>
-          <h3 class="text-subtitle-1 mb-2">Request Processing Information</h3>
-           <v-row>
-            <v-col cols="12">
-              <v-textarea v-model="request.purpose_of_request" label="Purpose of Request" :rules="[rules.required]" variant="outlined" rows="3" auto-grow required></v-textarea>
-            </v-col>
-          </v-row>
-          <v-row>
-            <v-col cols="12" md="6">
-              <label class="v-label mb-1">Requested By (Personnel - Optional)</label>
-               <v-text-field
-                v-model="processedBySearchQuery"
-                label="Search Personnel (Resident/Admin)..."
-                prepend-inner-icon="mdi-account-search-outline"
-                variant="outlined" density="compact"
-                clearable @click:clear="clearProcessedBySelection"
-                :loading="isLoadingProcessedBy"
-                :hint="selectedProcessedByName ? `Selected: ${selectedProcessedByName}` : 'Search or leave blank'"
-                persistent-hint
-              ></v-text-field>
-              <v-list v-if="processedBySearchResults.length > 0 && processedBySearchQuery" density="compact" class="elevation-2 search-results-list">
-                <v-list-item
-                  v-for="resident in processedBySearchResults" :key="resident._id" @click="selectProcessedBy(resident)"
-                  :title="`${resident.first_name} ${resident.middle_name || ''} ${resident.last_name}`"
-                ><v-list-item-subtitle>{{ resident.email || 'No email' }}</v-list-item-subtitle></v-list-item>
-              </v-list>
-            </v-col>
-            <v-col cols="12" md="6">
-              <v-select v-model="request.document_status" label="Initial Document Status" :items="statusOptions" :rules="[rules.required]" variant="outlined" density="compact" required></v-select>
-            </v-col>
-          </v-row>
-        </v-form>
+        <!-- Step 2: Select Document Type -->
+        <h3 class="text-h6 mb-4">Document Details</h3>
+        <v-row>
+          <v-col cols="12">
+            <label class="v-label mb-1">Type of Document to Request <span class="text-red">*</span></label>
+            <v-select
+              v-model="form.request_type" variant="outlined"
+              :items="documentTypes" label="Select a document"
+              :error-messages="v$.request_type.$errors.map(e => e.$message)"
+              @blur="v$.request_type.$touch"
+            ></v-select>
+          </v-col>
+        </v-row>
+
+        <!-- Step 3: DYNAMIC FORM FIELDS based on selection -->
+        <div v-if="form.request_type">
+          <v-divider class="my-6"></v-divider>
+          <h3 class="text-h6 mb-4">{{ form.request_type }} - Required Information</h3>
+          
+          <!-- Certificate of Cohabitation Fields -->
+          <div v-if="form.request_type === 'Certificate of Cohabitation'">
+            <v-row>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.male_partner_name" label="Full Name of Male Partner" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.male_partner_birthdate" label="Birthdate of Male Partner" type="date" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.female_partner_name" label="Full Name of Female Partner" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.female_partner_birthdate" label="Birthdate of Female Partner" type="date" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.year_started_cohabiting" label="Year Started Living Together" type="number" variant="outlined"></v-text-field></v-col>
+            </v-row>
+          </div>
+
+          <!-- Barangay Clearance Fields -->
+          <div v-if="form.request_type === 'Barangay Clearance'">
+            <v-row>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.type_of_work" label="Type of Work (e.g., sidewalk repair)" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.other_work" label="Other Work (e.g., drainage tapping)" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.number_of_storeys" label="Number of Storeys" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.purpose_of_clearance" label="Purpose of this Clearance" variant="outlined"></v-text-field></v-col>
+            </v-row>
+          </div>
+
+          <!-- Barangay Business Clearance Fields -->
+          <div v-if="form.request_type === 'Barangay Business Clearance'">
+             <v-row>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.nature_of_business" label="Nature of Business" variant="outlined"></v-text-field></v-col>
+            </v-row>
+          </div>
+
+          <!-- First Time Jobseekers Fields -->
+          <div v-if="form.request_type === 'Barangay Certification (First Time Jobseeker)'">
+            <v-row>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.years_lived" label="Number of Years at Address" type="number" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.months_lived" label="Number of Months at Address" type="number" variant="outlined"></v-text-field></v-col>
+            </v-row>
+          </div>
+          
+          <!-- Certificate of Good Moral has no extra fields, so no section is needed -->
+
+        </div>
       </v-card-text>
     </v-card>
   </v-container>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { reactive, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
+import { useVuelidate } from '@vuelidate/core';
+import { required, helpers } from '@vuelidate/validators';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 const router = useRouter();
-const form = ref(null);
 
-const request = ref({
-  request_type: '',
-  requestor_address: '',
-  requestor_contact_number: '',
-  date_of_request: new Date().toISOString().split('T')[0],
-  purpose_of_request: '',
-  document_status: 'Pending',
+// Master list of available documents
+const documentTypes = [
+  'Certificate of Cohabitation',
+  'Certificate of Good Moral',
+  'Barangay Clearance',
+  'Barangay Business Clearance',
+  'Barangay Certification (First Time Jobseeker)',
+];
+
+const form = reactive({
+  requestor_resident_id: null,
+  purpose: '',
+  request_type: null,
+  details: {} // This object will hold the dynamic fields
 });
 const saving = ref(false);
 
-// Requestor search state
-const requestorSearchQuery = ref(''); const requestorSearchResults = ref([]); const isLoadingRequestors = ref(false);
-const selectedRequestorId = ref(null); const selectedRequestorName = ref('');
+const requestorSearchQuery = ref('');
+const requestorSearchResults = ref([]);
+const isLoadingRequestors = ref(false);
 
-// Requested By (Personnel) search state
-const processedBySearchQuery = ref(''); const processedBySearchResults = ref([]); const isLoadingProcessedBy = ref(false);
-const selectedProcessedById = ref(null); const selectedProcessedByName = ref('');
-
-const statusOptions = ['Pending', 'Processing', 'Ready for Pickup', 'Released', 'Denied', 'Cancelled'];
+// --- Vuelidate Rules ---
 const rules = {
-  required: value => !!value || 'This field is required.',
-  requestorSelected: value => !!selectedRequestorId.value || 'A requestor (resident) must be selected.',
-  contactFormat: value => (/^\+?[0-9\s-]{7,15}$/.test(value) || value === '') || 'Invalid contact number.',
+    requestor_resident_id: { required: helpers.withMessage('A requestor must be selected.', required) },
+    purpose: { required },
+    request_type: { required },
+};
+const v$ = useVuelidate(rules, form);
+
+// --- Search and Selection Logic ---
+const debounce = (fn,delay) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),delay); }; };
+const searchResidentsAPI = debounce(async (query) => {
+    if (!query || query.trim().length < 2) { requestorSearchResults.value = []; return; }
+    isLoadingRequestors.value = true;
+    try {
+        const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
+        if(error.value) throw new Error('Error searching residents.');
+        requestorSearchResults.value = data.value?.residents.map(r => ({
+            _id: r._id,
+            name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+            email: r.email
+        })) || [];
+    } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); }
+    finally { isLoadingRequestors.value = false; }
+}, 500);
+
+watch(requestorSearchQuery, (nq) => { searchResidentsAPI(nq); });
+
+const onRequestorSelect = (selectedId) => {
+    // This event is sufficient. The v-model handles setting the ID.
+    // Additional logic could be added here if needed, e.g., fetching full resident details.
 };
 
-function debounce(fn,delay){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn.apply(this,a),delay);};}
-const searchResidentsAPI = async (q, type) => {
-  const tq=typeof q==='string'?q.trim():''; if(tq.length<2){if(type==='requestor')requestorSearchResults.value=[];if(type==='processedBy')processedBySearchResults.value=[];return;}
-  if(type==='requestor')isLoadingRequestors.value=true;if(type==='processedBy')isLoadingProcessedBy.value=true;
-  try{const{data,error}=await useMyFetch('/api/residents/search',{query:{q:tq}});
-  if(error.value){console.error(error.value)}else{if(type==='requestor')requestorSearchResults.value=data.value?.residents||[];if(type==='processedBy')processedBySearchResults.value=data.value?.residents||[];}}
-  catch(e){console.error(e)}finally{if(type==='requestor')isLoadingRequestors.value=false;if(type==='processedBy')isLoadingProcessedBy.value=false;}};
-
-// Requestor Search
-const debouncedRequestorSearch=debounce((q)=>searchResidentsAPI(q,'requestor'),500);
-watch(requestorSearchQuery,(nq)=>{if(nq===selectedRequestorName.value&&selectedRequestorId.value)return;if(!nq||nq.trim()===''){requestorSearchResults.value=[];clearRequestorSelection(false);}else{debouncedRequestorSearch(nq);}});
-const selectRequestor=(res)=>{selectedRequestorId.value=res._id;const n=`${res.first_name||''} ${res.middle_name||''} ${res.last_name||''}`.trim();selectedRequestorName.value=n;requestorSearchQuery.value=n;request.value.requestor_address=`${res.address_house_number||''} ${res.address_street||''}, ${res.address_subdivision_zone||''}, ${res.address_city_municipality||''}`.replace(/ ,/g,',').replace(/^,|,$/g,'').trim();request.value.requestor_contact_number=res.contact_number||'';requestorSearchResults.value=[];};
-const clearRequestorSelection=(clearInput=true)=>{if(clearInput)requestorSearchQuery.value='';selectedRequestorId.value=null;selectedRequestorName.value='';request.value.requestor_address='';request.value.requestor_contact_number='';requestorSearchResults.value=[];};
-
-// Requested By (Personnel) Search
-const debouncedProcessedBySearch=debounce((q)=>searchResidentsAPI(q,'processedBy'),500);
-watch(processedBySearchQuery,(nq)=>{if(nq===selectedProcessedByName.value&&selectedProcessedById.value)return;if(!nq||nq.trim()===''){processedBySearchResults.value=[];clearProcessedBySelection(false);}else{debouncedProcessedBySearch(nq);}});
-const selectProcessedBy=(res)=>{selectedProcessedById.value=res._id;const n=`${res.first_name||''} ${res.middle_name||''} ${res.last_name||''}`.trim();selectedProcessedByName.value=n;processedBySearchQuery.value=n;processedBySearchResults.value=[];};
-const clearProcessedBySelection=(clearInput=true)=>{if(clearInput)processedBySearchQuery.value='';selectedProcessedById.value=null;selectedProcessedByName.value='';processedBySearchResults.value=[];};
-
+// --- Save Logic ---
 async function saveRequest() {
-  const { valid } = await form.value.validate();
-  if (!valid) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
-  if (!selectedRequestorId.value) { $toast.fire({ title: 'Please select a requestor.', icon: 'warning' }); return; }
+  const isFormCorrect = await v$.value.$validate();
+  if (!isFormCorrect) { $toast.fire({ title: 'Please complete all required fields.', icon: 'error' }); return; }
+  
   saving.value = true;
   try {
     const payload = {
-      ...request.value,
-      requestor_resident_id: selectedRequestorId.value,
-      requestor_display_name: selectedRequestorName.value,
-      requested_by_resident_id: selectedProcessedById.value, // Will be null if not selected
-      requested_by_display_name: selectedProcessedById.value ? selectedProcessedByName.value : (processedBySearchQuery.value.trim() || null), // Use typed name if no ID
-      date_of_request: new Date(request.value.date_of_request).toISOString(),
+        requestor_resident_id: form.requestor_resident_id,
+        purpose: form.purpose,
+        request_type: form.request_type,
+        details: form.details,
+        // The backend will set initial status to 'Pending'
     };
-    const { data, error } = await useMyFetch('/api/document-requests', { method: 'POST', body: payload });
-    if (error.value || data.value?.error) { $toast.fire({ title: data.value?.error || 'Failed to submit request', icon: 'error' });
-    } else { $toast.fire({ title: 'Document request submitted successfully!', icon: 'success' }); router.push('/document-requests'); }
-  } catch (e) { console.error(e); $toast.fire({ title: 'An error occurred.', icon: 'error' }); }
-  finally { saving.value = false; }
+    const { error } = await useMyFetch('/api/document-requests', { method: 'POST', body: payload });
+    if (error.value) throw new Error(error.value.data?.message || 'Failed to submit request.');
+    $toast.fire({ title: 'Request submitted successfully!', icon: 'success' });
+    router.push('/document-requests');
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    saving.value = false;
+  }
 }
 </script>
-
-<style scoped> /* Same styles as complaint/new.vue */
-.search-results-list { max-height: 150px; overflow-y: auto; border: 1px solid #e0e0e0; margin-top: -1px; background-color: white; z-index: 100; position:absolute; width: calc(100% - 40px); left: 20px;}
-.v-label {opacity:var(--v-high-emphasis-opacity);font-size:0.875rem;color:rgba(var(--v-theme-on-surface),var(--v-high-emphasis-opacity));display:block;margin-bottom:4px;}
-</style>
