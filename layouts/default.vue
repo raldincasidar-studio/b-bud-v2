@@ -73,7 +73,7 @@ const items = [
     { to: '/document-requests', text: 'Document Requests', icon: 'mdi-file-document' },
     { to: '/borrowed-assets', text: 'Borrowed Assets', icon: 'mdi-archive-arrow-down-outline' },
     { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
-    { to: '/officials', text: 'Officials', icon: 'mdi-bank' },
+    { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Notifications', icon: 'mdi-bell-ring' },
   ]
 

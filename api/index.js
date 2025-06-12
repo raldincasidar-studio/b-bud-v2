@@ -490,257 +490,140 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
 
 
 // ========================= RESIDENTS =================== //
-// ADD NEW RESIDENT (POST) - UPDATED with Household Member Creation (TRANSACTIONAL)
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS)
 app.post('/api/residents', async (req, res) => {
-  // const client = await db(true); // Assuming db(true) can give you the raw client for sessions
-  const dab = await db();
-  const residentsCollection = dab.collection('residents');
-  const session = CLIENT_DB.startSession(); // Start a session
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession(); // Start a MongoDB session for the transaction
 
-  try {
-    // Start the transaction
-    await session.withTransaction(async () => {
-      const {
-        // ... (all your existing head's fields from req.body)
-        first_name, middle_name, last_name, sex, date_of_birth,
-        civil_status, occupation_status, place_of_birth, citizenship, is_pwd,
-        address_house_number, address_street, address_subdivision_zone,
-        address_city_municipality, years_lived_current_address,
-        contact_number, email, password,
-        is_registered_voter, precinct_number, voter_registration_proof_base64,
-        residency_proof_base64,
-        is_household_head,
-        // household_member_ids, // Not used for new head with new members
-        household_members_to_create, // Array of member objects from mobile
-      } = req.body;
+    try {
+        let newHouseholdHead; // To store the created head for the response
 
-      // --- VALIDATION FOR HEAD ---
-      if (!first_name || !last_name || !sex || !date_of_birth || !email || !password) {
-        // Abort transaction and throw error
-        // await session.abortTransaction();
-        // It's better to throw an error that can be caught outside and set status code
-        const err = new Error('Validation failed for head: First name, last name, sex, date of birth, email, and password are required.');
-        err.statusCode = 400;
-        throw err;
-      }
-      if (String(password).length < 6) {
-        // await session.abortTransaction();
-        const err = new Error('Validation failed for head: Password must be at least 6 characters long.');
-        err.statusCode = 400;
-        throw err;
-      }
-      const headAge = calculateAge(date_of_birth);
-      // if (headAge < 16) { /* ... abort and throw ... */ }
+        // Start the transaction
+        await session.withTransaction(async () => {
+            const headData = req.body;
+            const membersToCreate = headData.household_members_to_create || [];
 
-      // Voter ID / Precinct Validation for HEAD
-      let finalPrecinctNumberHead = null;
-      let finalVoterProofDataBase64Head = null;
-      if (Boolean(is_registered_voter)) {
-        if (!precinct_number && !voter_registration_proof_base64) {
-          // await session.abortTransaction();
-          const err = new Error("Validation failed for head: If registered voter, provide Voter's ID Number or upload Voter's ID.");
-          err.statusCode = 400;
-          throw err;
+            // --- Step 1: Validate and Prepare the Household Head ---
+            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
+                throw new Error('Validation failed: Head requires first name, last name, email, and password.');
+            }
+            const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
+            if (existingEmail) {
+                throw new Error('Conflict: The email address for the Household Head is already in use.');
+            }
+
+            // REVERTED HASHING
+            const headPasswordHash = md5(headData.password);
+            const headAge = calculateAge(headData.date_of_birth);
+
+            const headResidentDocument = {
+                // Personal Info
+                first_name: headData.first_name, middle_name: headData.middle_name || null, last_name: headData.last_name,
+                sex: headData.sex, date_of_birth: new Date(headData.date_of_birth), age: headAge,
+                civil_status: headData.civil_status, occupation_status: headData.occupation_status,
+                email: headData.email.toLowerCase(), password_hash: headPasswordHash, contact_number: headData.contact_number,
+                
+                // Address Info
+                address_house_number: headData.address_house_number, address_street: headData.address_street,
+                address_subdivision_zone: headData.address_subdivision_zone, address_city_municipality: headData.address_city_municipality,
+                
+                // Voter Info
+                is_voter: headData.is_voter || false,
+                voter_id_number: headData.is_voter ? headData.voter_id_number : null,
+                voter_registration_proof_base64: headData.is_voter ? headData.voter_registration_proof_base64 : null,
+
+                // Conditional PWD/Senior Info
+                is_pwd: headData.is_pwd || false,
+                pwd_id: headData.is_pwd ? headData.pwd_id : null,
+                pwd_card_base64: headData.is_pwd ? headData.pwd_card_base64 : null,
+                senior_citizen_id: headAge >= 60 ? headData.senior_citizen_id : null,
+                senior_citizen_card_base64: headAge >= 60 ? headData.senior_citizen_card_base64 : null,
+                
+                // System-set Fields
+                is_household_head: true,
+                household_member_ids: [],
+                status: 'Pending',
+                created_at: new Date(),
+                updated_at: new Date(),
+            };
+
+            const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
+            const insertedHeadId = headInsertResult.insertedId;
+            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+
+            // --- Step 2: Validate and Prepare Household Members ---
+            const createdMemberIds = [];
+            const processedEmails = new Set([headData.email.toLowerCase()]);
+
+            for (const memberData of membersToCreate) {
+                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+                    throw new Error(`Validation failed for member: Missing required fields.`);
+                }
+                const memberAge = calculateAge(memberData.date_of_birth);
+                let memberPasswordHash = null;
+                let memberEmail = null;
+
+                if (memberAge >= 16) {
+                    if (!memberData.email || !memberData.password) {
+                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are required for members age 16+.`);
+                    }
+                    memberEmail = memberData.email.toLowerCase();
+                    if (processedEmails.has(memberEmail)) {
+                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
+                    }
+                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
+                    if (existingMemberEmail) {
+                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
+                    }
+                    processedEmails.add(memberEmail);
+                    // REVERTED HASHING
+                    memberPasswordHash = md5(memberData.password);
+                }
+
+                const newMemberDoc = {
+                    first_name: memberData.first_name, middle_name: memberData.middle_name || null, last_name: memberData.last_name,
+                    relationship_to_head: memberData.relationship_to_head,
+                    sex: memberData.sex, date_of_birth: new Date(memberData.date_of_birth), age: memberAge,
+                    email: memberEmail, password_hash: memberPasswordHash,
+                    address_house_number: headData.address_house_number, address_street: headData.address_street,
+                    address_subdivision_zone: headData.address_subdivision_zone, address_city_municipality: headData.address_city_municipality,
+                    is_household_head: false, status: 'Pending',
+                    created_at: new Date(), updated_at: new Date(),
+                };
+
+                const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+                createdMemberIds.push(memberInsertResult.insertedId);
+            }
+
+            // --- Step 3: Link Members to the Head ---
+            if (createdMemberIds.length > 0) {
+                await residentsCollection.updateOne(
+                    { _id: insertedHeadId },
+                    { $set: { household_member_ids: createdMemberIds, updated_at: new Date() } },
+                    { session }
+                );
+                newHouseholdHead.household_member_ids = createdMemberIds;
+            }
+        }); // End of transaction
+
+        res.status(201).json({
+            message: 'Household registered successfully! All accounts are pending approval.',
+            resident: newHouseholdHead
+        });
+
+    } catch (error) {
+        console.error("Error during household registration transaction:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
         }
-        finalPrecinctNumberHead = precinct_number ? String(precinct_number).trim() : null;
-        finalVoterProofDataBase64Head = voter_registration_proof_base64 ? voter_registration_proof_base64 : null;
-      }
-
-      // Email uniqueness check for HEAD
-      // const existingHeadEmail = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() }, { session });
-      // if (existingHeadEmail?._id) {
-      //   // await session.abortTransaction();
-      //   const err = new Error('Conflict: Head email address already in use.');
-      //   err.statusCode = 409;
-      //   throw err;
-      // }
-      // --- END VALIDATION FOR HEAD ---
-
-      // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
-      const headHashedPassword = md5(password);
-      // const headHashedPassword = await bcrypt.hash(password, saltRounds); // For bcrypt
-
-      const headResidentDocument = {
-        first_name: String(first_name).trim(), middle_name: middle_name ? String(middle_name).trim() : null, last_name: String(last_name).trim(),
-        sex: String(sex), age: headAge, date_of_birth: date_of_birth ? new Date(date_of_birth) : null,
-        civil_status: civil_status ? String(civil_status) : null,
-        occupation_status: occupation_status ? String(occupation_status) : null,
-        place_of_birth: place_of_birth ? String(place_of_birth).trim() : null,
-        citizenship: citizenship ? String(citizenship).trim() : null, is_pwd: Boolean(is_pwd),
-        address_house_number: address_house_number ? String(address_house_number).trim() : null,
-        address_street: address_street ? String(address_street).trim() : null,
-        address_subdivision_zone: address_subdivision_zone ? String(address_subdivision_zone).trim() : null,
-        address_city_municipality: address_city_municipality ? String(address_city_municipality).trim() : 'Manila City',
-        years_lived_current_address: years_lived_current_address ? parseInt(years_lived_current_address) : null,
-        contact_number: contact_number ? String(contact_number).trim() : null,
-        email: String(email).trim().toLowerCase(), password_hash: headHashedPassword,
-        is_registered_voter: Boolean(is_registered_voter),
-        precinct_number: finalPrecinctNumberHead,
-        voter_registration_proof_data: finalVoterProofDataBase64Head,
-        residency_proof_data: residency_proof_base64 ? residency_proof_base64 : null,
-        is_household_head: Boolean(is_household_head), // Should be true if household_members_to_create is present
-        household_member_ids: [], // Will be populated if members are created
-        status: 'Pending', // Default status
-        created_at: new Date(), updated_at: new Date(),
-      };
-
-      const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
-      const insertedHeadId = headInsertResult.insertedId;
-
-      const createdMemberIds = [];
-
-      // --- Process household_members_to_create ---
-      if (Boolean(is_household_head) && household_members_to_create && Array.isArray(household_members_to_create) && household_members_to_create.length > 0) {
-        for (const memberData of household_members_to_create) {
-          // VALIDATE EACH MEMBER
-          if (!memberData.first_name || !memberData.last_name || !memberData.sex || !memberData.date_of_birth || !memberData.email || !memberData.password) {
-            // await session.abortTransaction();
-            const err = new Error(`Validation failed for member ${memberData.first_name || '(unknown)'}: Missing required fields.`);
-            err.statusCode = 400;
-            throw err;
-          }
-          if (String(memberData.password).length < 6) {
-            //  await session.abortTransaction();
-            const err = new Error(`Validation failed for member ${memberData.first_name}: Password too short.`);
-            err.statusCode = 400;
-            throw err;
-          }
-          const memberAge = calculateAge(memberData.date_of_birth);
-          // Optional: Age check for members, e.g., if (memberAge < 0) { abort and throw }
-
-          // Email uniqueness check for MEMBER (against DB and other members in this transaction including head)
-          const memberEmailNormalized = String(memberData.email).trim().toLowerCase();
-          if (memberEmailNormalized === headResidentDocument.email) { // Check against head's email
-            // await session.abortTransaction();
-            const err = new Error(`Conflict: Member email ${memberEmailNormalized} is the same as the head's email.`);
-            err.statusCode = 409;
-            throw err;
-          }
-          const existingMemberEmailInDb = await residentsCollection.findOne({ email: memberEmailNormalized }, { session });
-          if (existingMemberEmailInDb) {
-            // await session.abortTransaction();
-            const err = new Error(`Conflict: Member email ${memberEmailNormalized} already in use.`);
-            err.statusCode = 409;
-            throw err;
-          }
-          // Check against other members being created in this batch
-          if (household_members_to_create.filter(m => String(m.email).trim().toLowerCase() === memberEmailNormalized).length > 1) {
-            // await session.abortTransaction();
-            const err = new Error(`Conflict: Duplicate member email ${memberEmailNormalized} within this registration request.`);
-            err.statusCode = 409;
-            throw err;
-          }
-
-
-          // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
-          const memberHashedPassword = md5(memberData.password);
-          // const memberHashedPassword = await bcrypt.hash(memberData.password, saltRounds); // For bcrypt
-
-          const newMemberDoc = {
-            first_name: String(memberData.first_name).trim(),
-            middle_name: memberData.middle_name ? String(memberData.middle_name).trim() : null,
-            last_name: String(memberData.last_name).trim(),
-            sex: String(memberData.sex),
-            age: memberAge,
-            date_of_birth: memberData.date_of_birth ? new Date(memberData.date_of_birth) : null,
-            email: memberEmailNormalized,
-            password_hash: memberHashedPassword,
-            // Inherit address from head
-            address_house_number: headResidentDocument.address_house_number,
-            address_street: headResidentDocument.address_street,
-            address_subdivision_zone: headResidentDocument.address_subdivision_zone,
-            address_city_municipality: headResidentDocument.address_city_municipality,
-            // Other member-specific fields from memberData (if provided)
-            civil_status: memberData.civil_status ? String(memberData.civil_status) : null,
-            occupation_status: memberData.occupation_status ? String(memberData.occupation_status) : null,
-            is_pwd: memberData.hasOwnProperty('is_pwd') ? Boolean(memberData.is_pwd) : false,
-            contact_number: memberData.contact_number ? String(memberData.contact_number).trim() : null,
-            // Members are not household heads by default here
-            is_household_head: false,
-            household_member_ids: [], // Members don't have their own members in this context
-            status: 'Pending', // Or derive from head's status or app default
-            created_at: new Date(),
-            updated_at: new Date(),
-            // Fields that might not apply to members or should default to null
-            years_lived_current_address: null,
-            place_of_birth: null, // Or collect in modal
-            citizenship: null,    // Or collect in modal
-            is_registered_voter: false,
-            precinct_number: null,
-            voter_registration_proof_data: null,
-            residency_proof_data: null,
-          };
-
-          const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
-          createdMemberIds.push(memberInsertResult.insertedId);
+        if (error.message.startsWith('Validation failed:')) {
+             return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
-
-        // Update the head with the newly created member IDs
-        if (createdMemberIds.length > 0) {
-          await residentsCollection.updateOne(
-            { _id: insertedHeadId },
-            { $set: { household_member_ids: createdMemberIds, updated_at: new Date() } },
-            { session }
-          );
-        }
-      }
-      // If not a head or no members to create, the auto-assign logic (if applicable) would run after transaction.
-      // For this specific "register head WITH members" flow, the auto-assign isn't the primary path for THESE members.
-      // But if a non-head registers, that logic is still relevant.
-
-      // Store the ID to fetch outside the transaction for the response
-      req.insertedHeadId = insertedHeadId;
-
-    }); // End of session.withTransaction
-
-    // If transaction was successful, req.insertedHeadId will be set
-    const finalInsertedResident = await residentsCollection.findOne(
-      { _id: req.insertedHeadId },
-      { projection: { password_hash: 0, login_attempts: 0, account_locked_until: 0 } }
-    );
-
-    // Auto-assign logic for non-heads (if head was NOT created with members directly)
-    if (finalInsertedResident && !finalInsertedResident.is_household_head &&
-        (!req.body.household_members_to_create || req.body.household_members_to_create.length === 0) && // Only if not part of batch create
-        finalInsertedResident.address_house_number && finalInsertedResident.address_street &&
-        finalInsertedResident.address_subdivision_zone && finalInsertedResident.address_city_municipality) {
-      // This logic runs OUTSIDE the main transaction for simplicity here,
-      // or could be part of a larger transactional unit if critical.
-      const potentialHead = await residentsCollection.findOne({
-        is_household_head: true,
-        address_house_number: finalInsertedResident.address_house_number,
-        address_street: finalInsertedResident.address_street,
-        address_subdivision_zone: finalInsertedResident.address_subdivision_zone,
-        address_city_municipality: finalInsertedResident.address_city_municipality,
-        _id: { $ne: req.insertedHeadId }
-      });
-      if (potentialHead) {
-        await residentsCollection.updateOne(
-          { _id: potentialHead._id },
-          { $addToSet: { household_member_ids: req.insertedHeadId }, $set: { updated_at: new Date() } }
-        );
-      }
+        res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+    } finally {
+        await session.endSession();
     }
-
-    res.status(201).json({ message: 'Resident and household registered successfully', resident: finalInsertedResident });
-
-  } catch (error) {
-    console.error("Error during resident and household registration:", error);
-    // If error has statusCode, it was thrown by our validation inside transaction
-    if (error.statusCode) {
-      return res.status(error.statusCode).json({ error: error.message.startsWith('Validation failed') ? 'Validation Error' : 'Conflict', message: error.message });
-    }
-    // Handle other errors (e.g., database connection, unexpected issues)
-    if (error.code === 11000) { // Duplicate key error from MongoDB, possibly for email if a check was missed
-        return res.status(409).json({ error: 'Conflict', message: 'An email address submitted is already in use.' });
-    }
-    res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
-  } finally {
-    // End the session
-    await session.endSession();
-    // Close client if db(true) created a new one for this request
-    // await client.close(); // Depends on your db() implementation
-  }
 });
 
 // GET ALL RESIDENTS (GET) - Updated for new schema
@@ -1312,7 +1195,7 @@ app.put('/api/residents/:id', async (req, res) => {
 // NEW Endpoint: PATCH /api/residents/:id/status (Quick Status Update)
 app.patch('/api/residents/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, voter_registration_proof_data } = req.body;
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
@@ -1326,18 +1209,26 @@ app.patch('/api/residents/:id/status', async (req, res) => {
     return res.status(400).json({ error: 'Validation failed', message: `Invalid status value. Allowed: ${allowedStatusValues.join(', ')}` });
   }
 
+  // Add validation for reason if declining
+  if (status === 'Declined' && (!reason || reason.trim() === '')) {
+      return res.status(400).json({ error: 'A reason is required to decline an account.' });
+  }
+
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
   try {
-    const result = await residentsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status: status, updated_at: new Date() } }
-    );
-
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
+    const updateFields = { status: status, updated_at: new Date() };
+    if (status === 'Declined' && reason) {
+        // You might want to store this in a specific field, e.g., 'status_reason'
+        updateFields.status_reason = reason;
     }
+
+
+    const result = await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Resident not found.' });
+
+    
     if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
         // Fetch current status to confirm it's indeed the same
         const currentResident = await residentsCollection.findOne({_id: new ObjectId(id)}, {projection: {status: 1}});
@@ -1702,131 +1593,183 @@ app.put('/api/admins/:id', async (req, res) => {
 
 
 
-// ====================== OFFICIALS CRUD =========================== //
+// ====================== BARANGAY OFFICIALS CRUD (REVISED & COMPLETE) =========================== //
 
-// ADD NEW OFFICIAL (POST)
-app.post('/api/officials', async (req, res) => {
+// --- Define Core Business Rules ---
+const ALLOWED_DESIGNATIONS = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Kagawad'];
+const UNIQUE_ROLES = ['Punong Barangay', 'Barangay Secretary', 'Treasurer'];
 
-  const dab = await db();
+// 1. CREATE: POST /api/barangay-officials
+app.post('/api/barangay-officials', async (req, res) => {
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    const { full_name, position, term_start, term_end, status, photo_url } = req.body;
 
-  const requiredFields = [
-    { field: 'picture', value: req.body.picture, format: /^.*$/ }, // Assuming any string is acceptable
-    { field: 'zone', value: req.body.zone, format: /^[a-zA-Z0-9\s]+$/ }, // Assuming zone is a number
-    { field: 'brgy', value: req.body.brgy, format: /^[a-zA-Z\s]+$/ },
-    { field: 'designation', value: req.body.designation, format: /^(PB|K|A|G|A|W|A|D|SEC|TREAS)$/ },
-    { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
-    { field: 'blood_type', value: req.body.blood_type, format: /^(A|B|AB|O)[+-]$/ },
-  ];
-
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
-
-  if (errors.length > 0) {
-    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
-  }
-
-  const officialsCollection = dab.collection('officials');
-  try {
-    await officialsCollection.insertOne(req.body);
-  } catch (error) {
-    res.json({ error: 'Error adding official: ' + error.message });
-    return;
-  }
-
-  res.json({ message: 'Official added successfully' });
-})
-
-// GET ALL OFFICIALS (GET)
-app.get('/api/officials', async (req, res) => {
-
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-
-  const dab = await db();
-  const officialsCollection = dab.collection('officials');
-  const query = search ? {
-    $or: [
-      { picture: { $regex: new RegExp(search, 'i') } },
-      { zone: { $regex: new RegExp(search, 'i') } },
-      { brgy: { $regex: new RegExp(search, 'i') } },
-      { designation: { $regex: new RegExp(search, 'i') } },
-      { name: { $regex: new RegExp(search, 'i') } },
-      { blood_type: { $regex: new RegExp(search, 'i') } },
-    ]
-  } : {};
-  const officials = await officialsCollection.find(query, {
-    projection: {
-      // picture: 1,
-      zone: 1,
-      brgy: 1,
-      designation: 1,
-      name: 1,
-      blood_type: 1,
-      _id: 1,
-      action: { $ifNull: [ "$action", "" ] }
+    // --- Validation ---
+    if (!full_name || !position || !term_start || !status) {
+        return res.status(400).json({ error: 'Missing required fields: full_name, position, term_start, and status are required.' });
     }
-  })
-    .skip((page - 1) * itemsPerPage)
-    .limit(itemsPerPage)
-    .toArray();
-  const totalOfficials = await officialsCollection.countDocuments(query);
-  res.json({
-    officials: officials,
-    totalOfficials: totalOfficials
-  });
-})
+    if (!ALLOWED_DESIGNATIONS.includes(position)) {
+        return res.status(400).json({ error: 'Invalid position provided.' });
+    }
 
-// GET OFFICIAL BY ID (GET)
-app.get('/api/officials/:id', async (req, res) => {
-  const dab = await db();
-  const officialsCollection = dab.collection('officials');
-  const official = await officialsCollection.findOne(
-    { _id: new ObjectId(req.params.id) }
-  );
-  res.json({ official });
-})
+    // --- Uniqueness Check ---
+    if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
+        const existingOfficial = await collection.findOne({ position, status: 'Active' });
+        if (existingOfficial) {
+            return res.status(409).json({ error: `An active '${position}' already exists.` }); // 409 Conflict
+        }
+    }
 
-// DELETE OFFICIAL BY ID (DELETE)
-app.delete('/api/officials/:id', async (req, res) => {
-  const dab = await db();
-  const officialsCollection = dab.collection('officials');
-  await officialsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({ message: 'Official deleted successfully' });
-})
+    try {
+        const newOfficialDoc = {
+            full_name: String(full_name).trim(),
+            position: String(position),
+            term_start: new Date(term_start),
+            term_end: term_end ? new Date(term_end) : null, // term_end is optional
+            status: String(status),
+            photo_url: photo_url || null,
+            created_at: new Date(),
+            updated_at: new Date(),
+        };
 
-// UPDATE OFFICIAL BY ID (PUT)
-app.put('/api/officials/:id', async (req, res) => {
+        const result = await collection.insertOne(newOfficialDoc);
+        res.status(201).json({ message: 'Barangay Official added successfully', officialId: result.insertedId });
+    } catch (error) {
+        console.error("Error adding official:", error);
+        res.status(500).json({ error: 'Failed to add official.' });
+    }
+});
 
-  const dab = await db();
+// 2. READ (List): GET /api/barangay-officials
+app.get('/api/barangay-officials', async (req, res) => {
+    const search = req.query.search || '';
+    const positionFilter = req.query.position || '';
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
 
-  const officialsCollection = dab.collection('officials');
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    
+    let query = {};
+    const andConditions = [];
 
-  const { picture, zone, brgy, designation, name, blood_type } = req.body;
+    if (search) {
+        const searchRegex = new RegExp(search, 'i');
+        andConditions.push({
+            $or: [
+                { full_name: { $regex: searchRegex } },
+                { position: { $regex: searchRegex } },
+            ]
+        });
+    }
 
-  const requiredFields = [
-    { field: 'picture', value: picture, format: /^.*$/ },
-    { field: 'zone', value: zone, format: /^\d+$/ },
-    { field: 'brgy', value: brgy, format: /^[a-zA-Z\s]+$/ },
-    { field: 'designation', value: designation, format: /^(PB|K|A|G|A|W|A|D|SEC|TREAS)$/ },
-    { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
-    { field: 'blood_type', value: blood_type, format: /^(A|B|AB|O)[+-]$/ },
-  ];
+    if (positionFilter) {
+        andConditions.push({ position: positionFilter });
+    }
+    
+    if (andConditions.length > 0) {
+        query = { $and: andConditions };
+    }
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+    try {
+        const officials = await collection.find(query)
+            .sort({ position: 1, full_name: 1 }) // Sort by position, then name
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+            
+        const totalOfficials = await collection.countDocuments(query);
 
-  if (errors.length > 0) {
-    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
-  }
+        res.json({ officials, totalOfficials });
+    } catch (error) {
+        console.error("Error fetching officials:", error);
+        res.status(500).json({ error: 'Failed to fetch officials.' });
+    }
+});
 
-  await officialsCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: req.body }
-  );
+// 3. READ (Single): GET /api/barangay-officials/:id
+app.get('/api/barangay-officials/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    try {
+        const official = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!official) return res.status(404).json({ error: 'Official not found.' });
+        res.json({ official });
+    } catch (error) {
+        console.error("Error fetching official by ID:", error);
+        res.status(500).json({ error: 'Failed to fetch official.' });
+    }
+});
 
-  res.json({ message: 'Official updated successfully' });
-})
+// 4. UPDATE: PUT /api/barangay-officials/:id
+app.put('/api/barangay-officials/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    const { full_name, position, term_start, term_end, status, photo_url } = req.body;
+
+    // --- Validation ---
+    if (!full_name || !position || !term_start || !status) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+    if (!ALLOWED_DESIGNATIONS.includes(position)) {
+        return res.status(400).json({ error: 'Invalid position provided.' });
+    }
+
+    // --- Uniqueness Check (excluding the current document) ---
+    if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
+        const existingOfficial = await collection.findOne({
+            position: position,
+            status: 'Active',
+            _id: { $ne: new ObjectId(id) } // The crucial part for updates
+        });
+        if (existingOfficial) {
+            return res.status(409).json({ error: `An active '${position}' already exists.` });
+        }
+    }
+
+    try {
+        const updateFields = {
+            full_name: String(full_name).trim(),
+            position: String(position),
+            term_start: new Date(term_start),
+            term_end: term_end ? new Date(term_end) : null,
+            status: String(status),
+            photo_url: photo_url || null,
+            updated_at: new Date(),
+        };
+
+        const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Official not found.' });
+
+        res.json({ message: 'Barangay Official updated successfully' });
+    } catch (error) {
+        console.error("Error updating official:", error);
+        res.status(500).json({ error: 'Failed to update official.' });
+    }
+});
+
+// 5. DELETE: DELETE /api/barangay-officials/:id
+app.delete('/api/barangay-officials/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    
+    try {
+        const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) return res.status(404).json({ error: 'Official not found.' });
+        res.json({ message: 'Official deleted successfully' });
+    } catch (error) {
+        console.error("Error deleting official:", error);
+        res.status(500).json({ error: 'Failed to delete official.' });
+    }
+});
 
 
 
@@ -3319,63 +3262,46 @@ app.delete('/api/complaints/:id', async (req, res) => {
 
 
 
-// ====================== DOCUMENT REQUESTS CRUD =========================== //
-// Ensure ObjectId is imported: import { ObjectId } from 'mongodb';
+// ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
 
-// ADD NEW DOCUMENT REQUEST (POST)
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object)
 app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
   const {
-    request_type,
     requestor_resident_id,
-    requestor_display_name,
-    requestor_address,
-    requestor_contact_number,
-    date_of_request,
-    purpose_of_request,
-    requested_by_resident_id, // Optional ID of admin/official
-    requested_by_display_name,  // Optional name of admin/official
-    document_status, // Initial status, e.g., "Pending"
+    request_type,
+    purpose,
+    details, // This is the new object with custom fields
   } = req.body;
 
-  // Basic Validation
-  if (!request_type || !requestor_resident_id || !requestor_display_name || !requestor_address ||
-      !requestor_contact_number || !date_of_request || !purpose_of_request || !document_status) {
-    return res.status(400).json({ error: 'Missing required fields for document request.' });
+  // Validation
+  if (!requestor_resident_id || !request_type || !purpose) {
+    return res.status(400).json({ error: 'Missing required fields: requestor, type, and purpose are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
   }
-  if (requested_by_resident_id && !ObjectId.isValid(requested_by_resident_id)) {
-    return res.status(400).json({ error: 'Invalid "requested by" resident ID format.' });
-  }
 
   try {
     const newRequest = {
-      request_type: String(request_type).trim(),
       requestor_resident_id: new ObjectId(requestor_resident_id),
-      requestor_display_name: String(requestor_display_name).trim(),
-      requestor_address: String(requestor_address).trim(),
-      requestor_contact_number: String(requestor_contact_number).trim(),
-      date_of_request: new Date(date_of_request),
-      purpose_of_request: String(purpose_of_request).trim(),
-      requested_by_resident_id: requested_by_resident_id ? new ObjectId(requested_by_resident_id) : null,
-      requested_by_display_name: requested_by_display_name ? String(requested_by_display_name).trim() : null,
-      document_status: String(document_status).trim(),
+      request_type: String(request_type).trim(),
+      purpose: String(purpose).trim(),
+      details: details || {}, // Store the details object, default to empty object
+      document_status: "Pending", // Always start as Pending
       created_at: new Date(),
       updated_at: new Date(),
     };
     const collection = dab.collection('document_requests');
     const result = await collection.insertOne(newRequest);
-    const insertedDoc = await collection.findOne({ _id: result.insertedId });
-    res.status(201).json({ message: 'Document request added successfully', request: insertedDoc });
+    res.status(201).json({ message: 'Document request added successfully', requestId: result.insertedId });
   } catch (error) {
     console.error('Error adding document request:', error);
-    res.status(500).json({ error: 'Error adding document request: ' + error.message });
+    res.status(500).json({ error: 'Error adding document request.' });
   }
 });
 
-// GET ALL DOCUMENT REQUESTS (GET) - WITH LOOKUPS
+// GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Updated for table view)
 app.get('/api/document-requests', async (req, res) => {
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
@@ -3391,13 +3317,9 @@ app.get('/api/document-requests', async (req, res) => {
     searchMatchStage = {
       $or: [
         { request_type: { $regex: searchRegex } },
-        { requestor_display_name: { $regex: searchRegex } },
         { "requestor_details.first_name": { $regex: searchRegex } },
         { "requestor_details.last_name": { $regex: searchRegex } },
-        { purpose_of_request: { $regex: searchRegex } },
-        { requested_by_display_name: { $regex: searchRegex } },
-        { "requested_by_details.first_name": { $regex: searchRegex } },
-        { "requested_by_details.last_name": { $regex: searchRegex } },
+        { purpose: { $regex: searchRegex } },
         { document_status: { $regex: searchRegex } },
       ],
     };
@@ -3405,342 +3327,210 @@ app.get('/api/document-requests', async (req, res) => {
 
   try {
     const aggregationPipeline = [
-      { $match: {} }, // Initial match if needed
-      { // Lookup requestor
-        $lookup: {
-          from: 'residents', localField: 'requestor_resident_id',
-          foreignField: '_id', as: 'requestor_details_array'
-        }
+      { // Lookup requestor details
+        $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }
       },
       { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } } },
-      { // Lookup requested_by personnel (admin/official)
-        $lookup: {
-          from: 'residents', // Or 'admins', 'officials' if they are in separate collections
-          localField: 'requested_by_resident_id',
-          foreignField: '_id', as: 'requested_by_details_array'
-        }
-      },
-      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } } },
       { $match: searchMatchStage },
       {
         $project: {
           _id: 1, request_type: 1,
-          requestor_name: { /* ... same as complaint ... */ 
-             $ifNull: [ { $concat: [ "$requestor_details.first_name", " ", { $ifNull: ["$requestor_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$requestor_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$requestor_details.last_name"] }, "$requestor_display_name" ]
-          },
-          date_of_request: 1, purpose_of_request: 1, document_status: 1,
-          requested_by_name: { /* ... same as complaint ... */ 
-            $ifNull: [ { $concat: [ "$requested_by_details.first_name", " ", { $ifNull: ["$requested_by_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$requested_by_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$requested_by_details.last_name"] }, "$requested_by_display_name" ]
-          },
-          created_at: 1,
+          requestor_name: { $concat: [ "$requestor_details.first_name", " ", "$requestor_details.last_name" ] },
+          date_of_request: "$created_at", // Use created_at as date of request
+          purpose_of_request: "$purpose", // Use the new purpose field
+          document_status: 1,
         }
       },
-      { $sort: { date_of_request: -1, created_at: -1 } },
+      { $sort: { date_of_request: -1 } },
       { $skip: skip }, { $limit: itemsPerPage }
     ];
 
     const requests = await collection.aggregate(aggregationPipeline).toArray();
     
-    const countPipeline = [
-        { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
-        { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
-        { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
-        { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
-        { $match: searchMatchStage },
-        { $count: 'total' }
-    ];
+    // Simplified count pipeline
+    const countPipeline = [ ...aggregationPipeline.slice(0, 3), { $count: 'total' } ];
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
 
-    res.json({ requests, total: totalRequests, page, itemsPerPage, totalPages: Math.ceil(totalRequests / itemsPerPage) });
+    res.json({ requests, total: totalRequests });
   } catch (error) {
     console.error('Error fetching document requests:', error);
     res.status(500).json({ error: "Failed to fetch document requests." });
   }
 });
 
-// GET DOCUMENT REQUESTS FOR A SPECIFIC RESIDENT
-app.get('/api/document-requests/by-resident/:residentId', async (req, res) => {
-  const { residentId } = req.params;
-  const search = req.query.search || ''; // Optional: allow searching within their requests
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const skip = (page - 1) * itemsPerPage;
-
-  if (!ObjectId.isValid(residentId)) {
-    return res.status(400).json({ error: 'Invalid Resident ID format' });
-  }
-  const residentObjectId = new ObjectId(residentId);
-
-  try {
-    const dab = await db();
-    const collection = dab.collection('document_requests');
-
-    // --- Main Match Stage: Filter by residentId ---
-    const mainMatchStage = { requestor_resident_id: residentObjectId };
-
-    let searchMatchSubStage = {};
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      searchMatchSubStage = { // Search within this resident's requests
-        $or: [
-          { request_type: { $regex: searchRegex } },
-          { purpose_of_request: { $regex: searchRegex } },
-          { document_status: { $regex: searchRegex } },
-          // Add _id search if you want them to search by reference number
-          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } }
-        ],
-      };
-    }
-
-    // Combine main match with search match
-    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
-
-    const aggregationPipeline = [
-      { $match: combinedMatchStage }, // Filter by resident ID and then by search term
-      // No need to lookup requestor_details if we are already filtering by requestor_resident_id,
-      // unless you still want to include their name explicitly in the output for some reason.
-      // For this user-specific view, requestor_name might be less relevant or can be fetched on client.
-      // However, requested_by_details (admin/official) is still useful.
-      {
-        $lookup: {
-          from: 'residents', // Or 'admins', 'officials'
-          localField: 'requested_by_resident_id',
-          foreignField: '_id',
-          as: 'requested_by_details_array'
-        }
-      },
-      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } } },
-      {
-        $project: {
-          _id: 1,
-          request_type: 1,
-          // requestor_name can be omitted or added if needed, client already knows who the requestor is
-          date_of_request: 1,
-          purpose_of_request: 1,
-          document_status: 1,
-          requested_by_name: { // Name of the admin/official who processed it
-            $ifNull: [
-              { $concat: [
-                  "$requested_by_details.first_name", " ",
-                  { $ifNull: ["$requested_by_details.middle_name", ""] },
-                  { $cond: { if: { $eq: [{ $ifNull: ["$requested_by_details.middle_name", ""] }, ""] }, then: "", else: " " } },
-                  "$requested_by_details.last_name"
-              ]},
-              "$requested_by_display_name", // Fallback to stored display name
-              "N/A" // Further fallback if no details and no display name
-            ]
-          },
-          created_at: 1,
-          updated_at: 1, // Include updated_at for sorting or display
-          // You can add other fields like 'remarks_for_user' if you have them
-        }
-      },
-      { $sort: { date_of_request: -1, created_at: -1 } }, // Sort user's requests
-      { $skip: skip },
-      { $limit: itemsPerPage }
-    ];
-
-    const requests = await collection.aggregate(aggregationPipeline).toArray();
-
-    // Count total documents for this resident matching the search
-    const countPipeline = [
-        { $match: combinedMatchStage },
-        // No need for lookups just for counting if they are not part of combinedMatchStage's search criteria
-        { $count: 'total' }
-    ];
-    const countResult = await collection.aggregate(countPipeline).toArray();
-    const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
-
-    res.json({
-      requests,
-      total: totalRequests,
-      page,
-      itemsPerPage,
-      totalPages: Math.ceil(totalRequests / itemsPerPage)
-    });
-  } catch (error) {
-    console.error(`Error fetching document requests for resident ${residentId}:`, error);
-    res.status(500).json({ error: "Failed to fetch document requests for this resident." });
-  }
-});
-
-// GET DOCUMENT REQUEST BY ID (GET)
+// GET /api/document-requests/:id - GET SINGLE DOCUMENT REQUEST (For Details Page)
 app.get('/api/document-requests/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
   const collection = dab.collection('document_requests');
   try {
-    const aggregationPipeline = [
-      { $match: { _id: new ObjectId(id) } },
-      { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
-      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
-      { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
-      { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
-      { $project: { /* ... project all fields including from lookups ... */
-            request_type: 1, requestor_resident_id: 1, requestor_display_name: 1, requestor_address: 1,
-            requestor_contact_number: 1, date_of_request: 1, purpose_of_request: 1,
-            requested_by_resident_id: 1, requested_by_display_name: 1, document_status: 1,
-            created_at: 1, updated_at: 1,
-            "requestor_details": "$requestor_details", // Send whole object or specific fields
-            "requested_by_details": "$requested_by_details",
-        }
-      }
-    ];
-    const result = await collection.aggregate(aggregationPipeline).toArray();
-    if (result.length === 0) return res.status(404).json({ error: 'Document request not found.' });
-    res.json({ request: result[0] });
+    const request = await collection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!request) return res.status(404).json({ error: 'Document request not found.' });
+    // Fetch requestor details separately for simplicity, or use a lookup as in the list view
+    const requestor = await dab.collection('residents').findOne({ _id: request.requestor_resident_id });
+    request.requestor_details = requestor; // Attach for frontend use
+    res.json({ request });
   } catch (error) { console.error('Error fetching document request by ID:', error); res.status(500).json({ error: "Failed to fetch request." }); }
 });
 
-// UPDATE DOCUMENT REQUEST BY ID (PUT)
+
+// PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (Handles new 'details' object)
 app.put('/api/document-requests/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
-  const dab = await db();
-  const collection = dab.collection('document_requests');
-  const {
-    request_type, requestor_resident_id, requestor_display_name, requestor_address, requestor_contact_number,
-    date_of_request, purpose_of_request,
-    requested_by_resident_id, requested_by_display_name,
-    document_status,
-  } = req.body;
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+    const { requestor_resident_id, request_type, purpose, details } = req.body;
 
-  const updateFields = {};
-  if (request_type !== undefined) updateFields.request_type = String(request_type).trim();
-  if (requestor_resident_id !== undefined) {
-    if (!ObjectId.isValid(requestor_resident_id)) return res.status(400).json({ error: 'Invalid requestor ID for update.' });
-    updateFields.requestor_resident_id = new ObjectId(requestor_resident_id);
-  }
-  if (requestor_display_name !== undefined) updateFields.requestor_display_name = String(requestor_display_name).trim();
-  if (requestor_address !== undefined) updateFields.requestor_address = String(requestor_address).trim();
-  if (requestor_contact_number !== undefined) updateFields.requestor_contact_number = String(requestor_contact_number).trim();
-  if (date_of_request !== undefined) updateFields.date_of_request = new Date(date_of_request);
-  if (purpose_of_request !== undefined) updateFields.purpose_of_request = String(purpose_of_request).trim();
-  if (requested_by_resident_id !== undefined) {
-    updateFields.requested_by_resident_id = requested_by_resident_id && ObjectId.isValid(requested_by_resident_id)
-      ? new ObjectId(requested_by_resident_id) : null;
-  }
-  if (requested_by_display_name !== undefined) updateFields.requested_by_display_name = requested_by_display_name ? String(requested_by_display_name).trim() : null;
-  if (document_status !== undefined) updateFields.document_status = String(document_status).trim();
+    const updateFields = {
+        requestor_resident_id: new ObjectId(requestor_resident_id),
+        request_type, purpose, details,
+        updated_at: new Date()
+    };
 
-  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update.' });
-  updateFields.updated_at = new Date();
-
-  try {
-    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Document request not found.' });
-    
-    const updatedRequestResult = await collection.aggregate([ /* ... same lookup as GET by ID ... */ 
-        { $match: { _id: new ObjectId(id) } },
-        { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
-        { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } }},
-        { $lookup: { from: 'residents', localField: 'requested_by_resident_id', foreignField: '_id', as: 'requested_by_details_array' }},
-        { $addFields: { requested_by_details: { $arrayElemAt: ['$requested_by_details_array', 0] } }},
-        // Project necessary fields
-    ]).toArray();
-    res.json({ message: 'Document request updated successfully', request: updatedRequestResult[0] || null });
-  } catch (error) { console.error('Error updating request:', error); res.status(500).json({ error: 'Error updating request.' }); }
+    try {
+        const result = await collection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updateFields });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Document request not found.' });
+        res.json({ message: 'Document request updated successfully' });
+    } catch (error) { console.error('Error updating request:', error); res.status(500).json({ error: 'Error updating request.' }); }
 });
 
-// UPDATE DOCUMENT REQUEST STATUS
+
+// PATCH /api/document-requests/:id/status - UPDATE STATUS (This remains largely the same)
 app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status: newStatus } = req.body; // Expecting { status: "NewStatusValue" }
+  const { status: newStatus } = req.body;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
 
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid Document Request ID format' });
-  }
-
-  // Define your allowed document request statuses
   const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Denied"];
   if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      message: `Status is required and must be one of: ${ALLOWED_DOC_STATUSES.join(', ')}`
-    });
+    return res.status(400).json({ error: 'Invalid status value.' });
   }
-
+  
   try {
-    const dab = await db(); // Your DB instance
-    const documentRequestsCollection = dab.collection('document_requests');
-    const residentsCollection = dab.collection('residents'); // For fetching requestor details
-
-    // Fetch the current request to get old status and requestor details
-    const currentRequest = await documentRequestsCollection.findOne({ _id: new ObjectId(id) });
-
-    if (!currentRequest) {
-      return res.status(404).json({ error: 'Not found', message: 'Document Request not found.' });
-    }
-
-    if (currentRequest.document_status === newStatus) {
-      return res.json({ message: `Document Request status is already '${newStatus}'.`, statusChanged: false, updatedRequest: currentRequest });
-    }
-
-    const result = await documentRequestsCollection.updateOne(
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+    const result = await collection.updateOne(
       { _id: new ObjectId(id) },
       { $set: { document_status: newStatus, updated_at: new Date() } }
     );
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Request not found.' });
+    // TODO: Send notification to user
+    res.json({ message: `Status updated to '${newStatus}' successfully.` });
+  } catch (error) { console.error("Error updating status:", error); res.status(500).json({ error: 'Could not update status.' }); }
+});
 
-    if (result.matchedCount === 0) { // Should be caught by findOne above, but good for safety
-      return res.status(404).json({ error: 'Not found', message: 'Document Request not found during update.' });
+
+// *** NEW ENDPOINT ***
+// GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
+const puppeteer = require('puppeteer');
+const fs = require('fs').promises; // Use promise-based fs
+
+app.get('/api/document-requests/:id/generate', async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+
+  try {
+    // 1. Fetch ALL necessary data
+    const request = await dab.collection('document_requests').findOne({ _id: new ObjectId(req.params.id) });
+    if (!request) return res.status(404).json({ error: 'Request not found.' });
+
+    const requestor = await dab.collection('residents').findOne({ _id: request.requestor_resident_id });
+    if (!requestor) return res.status(404).json({ error: 'Requestor not found.' });
+
+    // Fetch Barangay Officials (ensure your officials collection and fields are correct)
+    const punongBarangay = await dab.collection('barangay_officials').findOne({ position: 'Punong Barangay' });
+    const barangaySecretary = await dab.collection('barangay_officials').findOne({ position: 'Barangay Secretary' });
+
+    // 2. Select the correct HTML template
+    let templatePath = '';
+    const templateMap = {
+      'Certificate of Cohabitation': 'cohabitation.html',
+      'Certificate of Good Moral': 'good_moral.html',
+      'Barangay Clearance': 'clearance.html',
+      'Barangay Business Clearance': 'business_clearance.html',
+      'Barangay Certification (First Time Jobseeker)': 'jobseeker.html'
+    };
+    templatePath = path.join(__dirname, 'templates', templateMap[request.request_type]);
+    if (!templatePath) return res.status(400).json({ error: 'No template available for this document type.' });
+
+    let html = await fs.readFile(templatePath, 'utf8');
+
+    // 3. Hydrate the template with data (using simple string replacement)
+    const today = new Date();
+    const fullAddress = `${requestor.address_house_number || ''} ${requestor.address_street || ''}, ${requestor.address_subdivision_zone || ''}`.trim();
+    // --- CORRECTED & COMPLETE REPLACEMENT MAP ---
+    const replacements = {
+        // --- General & Common Placeholders ---
+        '[FULL NAME]': `${requestor.first_name} ${requestor.last_name}`.trim(),
+        '[NAME OF APPLICANT]': `${requestor.first_name} ${requestor.last_name}`.trim(),
+        '[Household no, Subdivision/ Zone/Sitio/Purok, City/Municipality]': fullAddress, // Address format 1
+        '[Household No./ Street/ Subdivision/ Sitio/ City or Municipality]': fullAddress, // Address format 2
+        '[PURPOSE]': request.purpose || '',
+        '[DAY]': today.getDate(),
+        '[MONTH]': today.toLocaleString('en-US', { month: 'long' }),
+        '[YEAR]': today.getFullYear(),
+        '[NAME OF BARANGAY SECRETARY]': barangaySecretary?.full_name?.toUpperCase() || 'SECRETARY NAME NOT FOUND',
+        '[NAME OF PUNONG BARANGAY]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
+        '[BARANGAY CHAIRPERSON’S NAME]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
+        
+        // --- Certificate of Cohabitation ---
+        '[FULL NAME OF MALE PARTNER]': request.details.male_partner_name || '',
+        '[MALE BIRTHDATE]': request.details.male_partner_birthdate ? new Date(request.details.male_partner_birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '',
+        '[FULL NAME OF FEMALE PARTNER]': request.details.female_partner_name || '',
+        '[FEMALE BIRTHDATE]': request.details.female_partner_birthdate ? new Date(request.details.female_partner_birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) : '',
+        '[YEAR STARTED COHABITING]': request.details.year_started_cohabiting || '',
+
+        // --- Barangay Clearance ---
+        '[TYPE OF WORK]': request.details.type_of_work || '',
+        '[OTHER WORK]': request.details.other_work || '',
+        '[NUMBER OF STOREYS]': request.details.number_of_storeys || '',
+        '[PURPOSE OF CLEARANCE]': request.details.purpose_of_clearance || '',
+
+        // --- Barangay Business Clearance ---
+        '[BUSINESS NAME]': request.details.business_name || '',
+        '[NATURE OF BUSINESS]': request.details.nature_of_business || '',
+        
+        // --- First Time Jobseeker ---
+        '[AGE]': requestor.age || '',
+        '[NUMBER OF YEARS]': request.details.years_lived || '',
+        '[NUMBER OF MONTHS]': request.details.months_lived || '',
+        '[NEXT YEAR]': today.getFullYear() + 1,
+    };
+
+    for (const placeholder in replacements) {
+        html = html.replace(new RegExp(placeholder.replace(/\[/g, '\\[').replace(/\]/g, '\\]'), 'g'), replacements[placeholder]);
     }
-    if (result.modifiedCount === 0) {
-        // This case should ideally be caught by the status check above
-        return res.json({ message: `Document Request status was already '${newStatus}'. No change made.`, statusChanged: false, updatedRequest: currentRequest });
-    }
 
-    const updatedRequest = await documentRequestsCollection.findOne({ _id: new ObjectId(id) }); // Fetch the updated document
-
-    // --- Send Notification to the Requestor ---
-    if (updatedRequest && updatedRequest.requestor_resident_id) {
-      const requestor = await residentsCollection.findOne({ _id: new ObjectId(updatedRequest.requestor_resident_id) });
-      if (requestor) {
-        let notificationContent = `Dear ${requestor.first_name || 'Resident'}, the status of your document request for "${updatedRequest.request_type}" (Ref: ${updatedRequest._id.toString().slice(-6)}) has been updated to: ${newStatus}.`;
-        if (newStatus === "Ready for Pickup") {
-            notificationContent += " You can now pick up your document at the barangay hall.";
-        } else if (newStatus === "Denied") {
-            notificationContent += " Please contact the barangay office for more details regarding the denial.";
-        }
-        // Assuming you have your createNotification function available
-        await createNotification(dab, {
-          name: `Document Request Update: ${updatedRequest.request_type}`,
-          content: notificationContent,
-          by: "System Administration", // Or the admin user who made the change if trackable
-          type: "Notification", // Or "Alert" if it's urgent
-          target_audience: 'SpecificResidents',
-          recipient_ids: [requestor._id.toString()], // Target only the affected resident
-        });
-      } else {
-        console.warn(`Could not find requestor (ID: ${updatedRequest.requestor_resident_id}) to send notification for document request ${updatedRequest._id}`);
-      }
-    }
-
-    res.json({
-      message: `Document Request status updated to '${newStatus}' successfully. Notification sent.`,
-      statusChanged: true,
-      updatedRequest: updatedRequest // Send back the updated document
-    });
+    // 4. Generate PDF using Puppeteer
+    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Options for server environments
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    const pdfBuffer = await page.pdf({ format: 'Legal', printBackground: true });
+    await browser.close();
+    
+    // 5. Serve the PDF
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename=${request.request_type.replace(/ /g, '_')}_${requestor.last_name}.pdf`);
+    res.send(pdfBuffer);
 
   } catch (error) {
-    console.error("Error updating document request status:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not update document request status.' });
+    console.error(`Error generating PDF for request ${req.params.id}:`, error);
+    res.status(500).json({ error: 'Failed to generate PDF document.' });
   }
 });
 
-// DELETE DOCUMENT REQUEST BY ID (DELETE)
-app.delete('/api/document-requests/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
-  const dab = await db();
-  const collection = dab.collection('document_requests');
-  try {
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) return res.status(404).json({ error: 'Request not found.' });
-    res.json({ message: 'Document request deleted successfully' });
-  } catch (error) { console.error('Error deleting request:', error); res.status(500).json({ error: 'Error deleting request.' }); }
-});
+
+
+
+
+
+
+
+
+
+
+
 
 
 
