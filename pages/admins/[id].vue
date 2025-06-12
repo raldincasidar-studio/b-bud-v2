@@ -1,182 +1,248 @@
-<script setup>
-import { ref, onMounted } from "vue";
-import { useMyFetch } from "../composables/useMyFetch";
-const { $toast } = useNuxtApp();
-const router = useRouter();
-
-const route = useRoute();
-const adminId = ref(null);
-
-const username = ref("");
-const password = ref("");
-const repeat_password = ref("");
-const name = ref("");
-const email = ref("");
-const role = ref("");
-
-onMounted(async () => {
-  adminId.value = route.params.id;
-  if (adminId.value) {
-    try {
-      const { data, error } = await useMyFetch(`/api/admins/${adminId.value}`);
-      if (error.value || data?.value?.error) {
-        return $toast.fire({
-          title: data?.value?.error || 'Error fetching admin data',
-          icon: 'error',
-        });
-      }
-
-      const admin = data.value.admin;
-      username.value = admin.username;
-      password.value = admin.password;
-      name.value = admin.name;
-      email.value = admin.email;
-      role.value = admin.role;
-    } catch (error) {
-      console.error("Error fetching admin:", error);
-      $toast.fire({
-        title: 'Error fetching admin data',
-        icon: 'error',
-      });
-    }
-  }
-});
-
-const saveAdmin = async () => {
-  const apiUrl = adminId.value ? `/api/admins/${adminId.value}` : "/api/admins";
-  const method = adminId.value ? 'put' : 'post';
-
-  const adminData = {
-    username: username.value,
-    name: name.value,
-    email: email.value,
-    role: role.value,
-  };
-
-  if (password.value) adminData.password = password.value;
-
-  if (password.value && (password.value !== repeat_password.value)) {
-    return $toast.fire({
-      title: 'Passwords do not match',
-      icon: 'error',
-    })
-  }
-
-  try {
-    const { data, error } = await useMyFetch(apiUrl, {
-      method: method,
-      body: adminData,
-    });
-
-    if (error.value || data?.value?.error) return $toast.fire({
-      title: data?.value?.error || `Something went wrong ${adminId.value ? 'updating' : 'adding'} admin`,
-      icon: 'error',
-    });
-
-    $toast.fire({
-      title: data?.value?.message || `Admin ${adminId.value ? 'updated' : 'added'} successfully`,
-      icon: 'success',
-    });
-    router.push('/admins'); // Assuming you have an admins list page
-  } catch (error) {
-    console.error(error);
-    $toast.fire({
-      title: `Something went wrong ${adminId.value ? 'updating' : 'adding'} admin`,
-      icon: 'error',
-    });
-  }
-};
-
-const deleteAdmin = async () => {
-  if (!adminId.value) return;
-
-  if (confirm('Are you sure you want to delete this admin?')) {
-    try {
-      const { data, error } = await useMyFetch(`/api/admins/${adminId.value}`, {
-        method: 'delete',
-      });
-
-      if (error.value || data?.value?.error) return $toast.fire({
-        title: data?.value?.error || 'Something went wrong while deleting admin',
-        icon: 'error',
-      });
-
-      $toast.fire({
-        title: data?.value?.message || 'Admin deleted successfully',
-        icon: 'success',
-      });
-      router.push('/admins'); // Redirect after successful deletion
-    } catch (error) {
-      console.error("Error deleting admin:", error);
-      $toast.fire({
-        title: 'Something went wrong while deleting admin',
-        icon: 'error',
-      });
-    }
-  }
-};
-</script>
-
 <template>
   <v-container class="my-10">
-    <v-row justify="space-between mb-10">
-      <v-col><h2>{{ adminId ? 'Update Admin' : 'Add New Admin' }}</h2></v-col>
+    <v-row justify="space-between" align="center" class="mb-4">
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">Edit Admin</h2>
+        <p class="text-grey-darken-1">Update administrator account details.</p>
+      </v-col>
       <v-col class="text-right">
         <v-btn
-          v-if="adminId"
-          rounded
-          size="large"
-          variant="tonal"
-          color="error"
-          prepend-icon="mdi-delete"
-          class="mr-2"
           @click="deleteAdmin"
+          color="error"
+          variant="outlined"
+          size="large"
+          prepend-icon="mdi-delete"
+          class="mr-4"
+          :loading="loading"
         >
-          Delete Admin
+          Delete
         </v-btn>
         <v-btn
-          rounded
-          size="large"
-          variant="tonal"
           @click="saveAdmin"
-          :prepend-icon="adminId ? 'mdi-content-save-edit' : 'mdi-account-plus'"
           color="primary"
+          size="large"
+          prepend-icon="mdi-content-save-edit"
+          :loading="loading"
         >
-          {{ adminId ? 'Save Update' : 'Add Admin' }}
+          Save Update
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card prepend-icon="mdi-account-circle" title="Admin Information">
-      <v-card-item>
+    <v-card v-if="!dataLoaded" class="mt-6" flat border>
+        <v-skeleton-loader type="card-avatar, article, actions"></v-skeleton-loader>
+    </v-card>
+    <v-card v-else class="mt-6" flat border>
+      <v-card-text class="py-6">
         <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="username" label="Username"></v-text-field>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.name"
+              label="Full Name"
+              variant="outlined"
+              :error-messages="v$.name.$errors.map(e => e.$message)"
+              @blur="v$.name.$touch"
+            ></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="password" label="New Password" type="password"></v-text-field>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.username"
+              label="Username"
+              variant="outlined"
+              :error-messages="v$.username.$errors.map(e => e.$message)"
+              @blur="v$.username.$touch"
+            ></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="repeat_password" label="Repeat Password" type="password"></v-text-field>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.email"
+              label="Email Address"
+              type="email"
+              variant="outlined"
+              :error-messages="v$.email.$errors.map(e => e.$message)"
+              @blur="v$.email.$touch"
+            ></v-text-field>
           </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="name" label="Name"></v-text-field>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.contact_number"
+              label="Contact Number"
+              variant="outlined"
+              :error-messages="v$.contact_number.$errors.map(e => e.$message)"
+              @blur="v$.contact_number.$touch"
+            ></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="email" label="Email Address"></v-text-field>
+          <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.password"
+              label="New Password"
+              type="password"
+              variant="outlined"
+              hint="Leave blank to keep the current password."
+              persistent-hint
+              :error-messages="v$.password.$errors.map(e => e.$message)"
+              @blur="v$.password.$touch"
+            ></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.repeat_password"
+              label="Repeat New Password"
+              type="password"
+              variant="outlined"
+              :error-messages="v$.repeat_password.$errors.map(e => e.$message)"
+              @blur="v$.repeat_password.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
+          <v-col cols="12" md="6">
             <v-select
-              v-model="role"
-              :items="['Admin', 'Superadmin']"
+              v-model="form.role"
+              :items="['Admin', 'Technical Admin']"
               label="Role"
+              variant="outlined"
+              :error-messages="v$.role.$errors.map(e => e.$message)"
+              @blur="v$.role.$touch"
             ></v-select>
           </v-col>
         </v-row>
-      </v-card-item>
+      </v-card-text>
     </v-card>
   </v-container>
 </template>
+
+<script setup>
+import { reactive, ref, onMounted, computed } from "vue";
+import { useMyFetch } from "~/composables/useMyFetch";
+import { useVuelidate } from '@vuelidate/core';
+import { required, email, minLength, sameAs, requiredIf } from '@vuelidate/validators';
+
+const { $toast } = useNuxtApp();
+const router = useRouter();
+const route = useRoute();
+const adminId = route.params.id;
+
+const loading = ref(false);
+const dataLoaded = ref(false);
+
+const form = reactive({
+  username: "",
+  password: "",
+  repeat_password: "",
+  name: "",
+  email: "",
+  contact_number: "",
+  role: "",
+});
+
+const passwordRef = computed(() => form.password);
+
+// Validation rules for editing
+const rules = {
+  name: { required },
+  username: { required },
+  email: { required, email },
+  contact_number: { required },
+  // Password is only validated if the user types in it
+  password: { minLength: minLength(6) },
+  // Repeat password is only required if the main password field is not empty
+  repeat_password: { 
+    requiredIf: requiredIf(passwordRef), 
+    sameAs: sameAs(passwordRef) 
+  },
+  role: { required },
+};
+
+const v$ = useVuelidate(rules, form);
+
+onMounted(async () => {
+  if (!adminId) {
+    $toast.fire({ title: 'Invalid Admin ID.', icon: 'error' });
+    router.push('/admins');
+    return;
+  }
+  try {
+    const { data, error } = await useMyFetch(`/api/admins/${adminId}`);
+    
+    if (error.value) throw new Error(error.value.data?.message || 'Error fetching data');
+
+    const admin = data.value.admin;
+    // Populate the form with fetched data
+    form.username = admin.username;
+    form.name = admin.name;
+    form.email = admin.email;
+    form.role = admin.role;
+    form.contact_number = admin.contact_number || ''; // Set to empty string if null/undefined
+
+    dataLoaded.value = true;
+  } catch (err) {
+    $toast.fire({ title: err.message, icon: 'error' });
+    router.push('/admins');
+  }
+});
+
+const saveAdmin = async () => {
+  const isFormCorrect = await v$.value.$validate();
+  if (!isFormCorrect) {
+    return $toast.fire({ title: 'Please correct the errors on the form.', icon: 'error' });
+  }
+
+  loading.value = true;
+  
+  // Build the payload with only the fields that can be updated.
+  const updateData = {
+    username: form.username,
+    name: form.name,
+    email: form.email,
+    role: form.role,
+    contact_number: form.contact_number,
+  };
+
+  // Only include the password in the payload if the user has entered a new one.
+  if (form.password) {
+    updateData.password = form.password;
+  }
+
+  try {
+    const { data, error } = await useMyFetch(`/api/admins/${adminId}`, {
+      method: 'put',
+      body: updateData,
+    });
+
+    if (error.value) throw new Error(error.value.data?.message || 'Error updating admin');
+
+    $toast.fire({ title: 'Admin updated successfully', icon: 'success' });
+    router.push('/admins');
+
+  } catch (err) {
+    $toast.fire({ title: err.message, icon: 'error' });
+  } finally {
+    loading.value = false;
+  }
+};
+
+const deleteAdmin = async () => {
+  // A better confirmation dialog can be used here (e.g., a v-dialog)
+  if (!confirm('Are you sure you want to permanently delete this admin? This action cannot be undone.')) {
+    return;
+  }
+
+  loading.value = true;
+  try {
+    const { error } = await useMyFetch(`/api/admins/${adminId}`, {
+      method: 'delete',
+    });
+
+    if (error.value) throw new Error(error.value.data?.message || 'Error deleting admin');
+
+    $toast.fire({ title: 'Admin deleted successfully', icon: 'success' });
+    router.push('/admins');
+
+  } catch (err) {
+    $toast.fire({ title: err.message, icon: 'error' });
+  } finally {
+    loading.value = false;
+  }
+};
+</script>

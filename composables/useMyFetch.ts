@@ -1,3 +1,4 @@
+// composables\useMyFetch.ts
 // composables/useApiFetch.ts
 import type { UseFetchOptions } from 'nuxt/app';
 const { $swal, $toast } = useNuxtApp();
@@ -11,10 +12,12 @@ export function useMyFetch<T>(url: string | (() => string), options: UseFetchOpt
     onResponseError: (response) => {
       const res_data = response?.response?._data;
       console.log('GLOBAL ERROR:', res_data);
+      // console.log($toast);
       $toast.fire({
-        title: res_data?.error || 'Something went wrong',
+        title: 'Something went wrong',
         icon: 'error'
       })
+      return false;
     }
   });
 }

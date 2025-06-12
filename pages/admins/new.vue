@@ -1,36 +1,158 @@
+<template>
+  <v-container class="my-10">
+    <v-row justify="space-between" align="center" class="mb-4">
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">Add New Admin</h2>
+        <p class="text-grey-darken-1">Create a new administrator account.</p>
+      </v-col>
+      <v-col class="text-right">
+        <v-btn
+          @click="saveAdmin"
+          color="primary"
+          size="large"
+          prepend-icon="mdi-content-save"
+          :loading="loading"
+          :disabled="loading"
+        >
+          Save Admin
+        </v-btn>
+      </v-col>
+    </v-row>
+
+    <v-card class="mt-6" flat border>
+      <v-card-text class="py-6">
+        <v-row>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.name"
+              label="Full Name"
+              variant="outlined"
+              :error-messages="v$.name.$errors.map(e => e.$message)"
+              @blur="v$.name.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.username"
+              label="Username"
+              variant="outlined"
+              :error-messages="v$.username.$errors.map(e => e.$message)"
+              @blur="v$.username.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.email"
+              label="Email Address"
+              type="email"
+              variant="outlined"
+              :error-messages="v$.email.$errors.map(e => e.$message)"
+              @blur="v$.email.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <!-- ADDED CONTACT NUMBER FIELD -->
+            <v-text-field
+              v-model="form.contact_number"
+              label="Contact Number"
+              variant="outlined"
+              :error-messages="v$.contact_number.$errors.map(e => e.$message)"
+              @blur="v$.contact_number.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.password"
+              label="Password"
+              type="password"
+              variant="outlined"
+              hint="Must be at least 6 characters long."
+              persistent-hint
+              :error-messages="v$.password.$errors.map(e => e.$message)"
+              @blur="v$.password.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <v-text-field
+              v-model="form.repeat_password"
+              label="Repeat Password"
+              type="password"
+              variant="outlined"
+              :error-messages="v$.repeat_password.$errors.map(e => e.$message)"
+              @blur="v$.repeat_password.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+             <!-- UPDATED ROLE SELECT -->
+            <v-select
+              v-model="form.role"
+              :items="['Admin', 'Technical Admin']"
+              label="Role"
+              variant="outlined"
+              :error-messages="v$.role.$errors.map(e => e.$message)"
+              @blur="v$.role.$touch"
+            ></v-select>
+          </v-col>
+        </v-row>
+      </v-card-text>
+    </v-card>
+  </v-container>
+</template>
+
 <script setup>
-import { ref } from "vue";
-import { useMyFetch } from "../composables/useMyFetch";
+import { reactive, ref, computed } from "vue"; // Import computed
+import { useMyFetch } from "~/composables/useMyFetch";
+import { useVuelidate } from '@vuelidate/core';
+import { required, email, minLength, sameAs } from '@vuelidate/validators';
+
 const { $toast } = useNuxtApp();
 const router = useRouter();
+const loading = ref(false);
 
-const username = ref("");
-const password = ref("");
-const repeat_password = ref("");
-const name = ref("");
-const email = ref("");
-const role = ref("");
+const form = reactive({
+  username: "",
+  password: "",
+  repeat_password: "",
+  name: "",
+  email: "",
+  contact_number: "",
+  role: "",
+});
+
+// Create a reactive reference to the password field for the validator to watch.
+const passwordRef = computed(() => form.password);
+
+// Define validation rules with the corrected sameAs validator
+const rules = {
+  name: { required },
+  username: { required },
+  email: { required, email },
+  contact_number: { required },
+  password: { required, minLength: minLength(6) },
+  repeat_password: { 
+    required, 
+    sameAs: sameAs(passwordRef) // This now correctly tracks the password field
+  },
+  role: { required },
+};
+
+const v$ = useVuelidate(rules, form);
 
 const saveAdmin = async () => {
-  const adminData = {
-    username: username.value,
-    password: password.value,
-    name: name.value,
-    email: email.value,
-    role: role.value,
-  };
+  const isFormCorrect = await v$.value.$validate();
 
-  if (password.value && (password.value !== repeat_password.value)) {
+  if (!isFormCorrect) {
     return $toast.fire({
-      title: 'Passwords do not match',
+      title: 'Please correct the errors on the form.',
       icon: 'error',
-    })
+    });
   }
 
+  loading.value = true;
   try {
     const { data, error } = await useMyFetch("/api/admins", {
       method: 'post',
-      body: adminData,
+      body: form,
     });
 
     if (error.value || data?.value?.error) {
@@ -46,65 +168,15 @@ const saveAdmin = async () => {
     });
 
     router.push('/admins');
-  } catch (error) {
-    console.error(error);
+
+  } catch (err) {
+    console.error(err);
     $toast.fire({
-      title: 'Something went wrong while adding admin',
+      title: 'An unexpected error occurred.',
       icon: 'error',
     });
+  } finally {
+    loading.value = false;
   }
 };
 </script>
-
-<template>
-  <v-container class="my-10">
-    <v-row justify="space-between" class="mb-10">
-      <v-col><h2>Add New Admin</h2></v-col>
-      <v-col class="text-right">
-        <v-btn
-          rounded
-          size="large"
-          variant="tonal"
-          @click="saveAdmin"
-          prepend-icon="mdi-account-plus"
-          color="primary"
-        >
-          Add Admin
-        </v-btn>
-      </v-col>
-    </v-row>
-
-    <v-card prepend-icon="mdi-account-key" title="Admin Information">
-      <v-card-item>
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="name" label="Full Name" required></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="username" label="Username" required></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="password" label="Password" type="password" required></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="repeat_password" label="Repeat Password" type="password" required></v-text-field>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="email" label="Email Address" type="email" required></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-select
-              v-model="role"
-              :items="['Admin', 'Superadmin']"
-              label="Role"
-              required
-            ></v-select>
-          </v-col>
-        </v-row>
-      </v-card-item>
-    </v-card>
-  </v-container>
-</template>
