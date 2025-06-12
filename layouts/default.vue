@@ -84,6 +84,6 @@ async function logout() {
 }
 
 const itemsFiltered = computed(() => {
-    return items.filter(item => !item.superAdmin || userData.value?.role === 'Superadmin');
+    return items.filter(item => !item.superAdmin || userData.value?.role === 'Technical Admin');
 })
 </script>
