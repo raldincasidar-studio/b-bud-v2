@@ -1,3 +1,4 @@
+// api\index.js
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
@@ -19,7 +20,7 @@ const SMTP_PASS = process.env.SMTP_PASS || 'ziwp tsie srvd eyzm'; // App Passwor
 
 const OTP_EXPIRY_MINUTES_LOGIN = 5; // OTP expiry for login
 const MAX_LOGIN_ATTEMPTS = 5;
-const LOCKOUT_DURATION_MINUTES = 15;
+const LOCKOUT_DURATION_MINUTES = 5;
 
 const transporter = nodemailer.createTransport({
   host: SMTP_HOST,
@@ -91,9 +92,27 @@ app.post('/api/login', async (req, res) => {
     return;
   }
 
+  // Check for lockout
+  if (user.account_locked_until && new Date(user.account_locked_until) > new Date()) {
+      const timeLeft = Math.ceil((new Date(user.account_locked_until) - new Date()) / 60000);
+      return res.json({ error: `Account locked. Try again in ${timeLeft} minutes.` });
+  }
+
+  // Check password
   if (user.password !== md5(password)) {
-    res.json({error: 'Invalid username or password'});
-    return;
+      let attempts = (user.login_attempts || 0) + 1;
+      let update = { $set: { login_attempts: attempts } };
+      if (attempts >= MAX_LOGIN_ATTEMPTS) {
+          update.$set.account_locked_until = new Date(Date.now() + LOCKOUT_DURATION_MINUTES * 60 * 1000);
+          update.$set.login_attempts = 0; // Reset attempts after locking
+      }
+      await usersCollection.updateOne({ _id: user._id }, update);
+      
+      if (update.$set.account_locked_until) {
+          return res.json({ error: 'Account locked due to too many failed attempts.' });
+      } else {
+            return res.json({ error: 'Invalid username or password' });
+      }
   }
 
 
@@ -1553,10 +1572,10 @@ app.post('/api/admins', async (req, res) => {
 
   const requiredFields = [
     { field: 'username', value: req.body.username, format: /^[a-zA-Z0-9._%+-]+$/ },
-    { field: 'password', value: req.body.password, format: /^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9]).{5,}$/ },
+    { field: 'password', value: req.body.password, format: /^[a-zA-Z0-9._%+-]{6,}$/ },
     { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
     { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: req.body.role, format: /^(Superadmin|Admin)$/ },
+    { field: 'role', value: req.body.role, format: /^(Technical Admin|Admin)$/ },
   ];
 
   const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
@@ -1567,6 +1586,15 @@ app.post('/api/admins', async (req, res) => {
   }
 
   const adminsCollection = dab.collection('admins');
+
+  // Check for validation
+  if (req.body.role === 'Technical Admin') {
+      const existingTechAdmin = await adminsCollection.findOne({ role: 'Technical Admin' });
+      if (existingTechAdmin) {
+          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
+      }
+  }
+
   await adminsCollection.insertOne({...req.body, password: md5(req.body.password)});
 
   res.json({message: 'Admin added successfully'});
@@ -2290,34 +2318,69 @@ app.delete('/api/notifications/:id', async (req, res) => {
 // ====================== BORROW ASSETS CRUD (REVISED for Resident Borrower) =========================== //
 // Ensure ObjectId is imported: import { ObjectId } from 'mongodb';
 
-// ADD NEW BORROW ASSET TRANSACTION (POST)
+// ADD NEW BORROW ASSET TRANSACTION (POST) - UPDATED WITH QUANTITY
 app.post('/api/borrowed-assets', async (req, res) => {
   const dab = await db();
   const {
-    borrower_resident_id, // ID of the resident borrowing
-    borrower_display_name,  // Name of the resident (for convenience, sent by frontend)
+    borrower_resident_id,
+    borrower_display_name,
     borrow_datetime,
     borrowed_from_personnel,
     item_borrowed,
+    quantity_borrowed, // <<< NEW: Receiving the quantity
     status,
     notes,
   } = req.body;
 
   // Validation
-  if (!borrower_resident_id || !borrower_display_name || !borrow_datetime || !borrowed_from_personnel || !item_borrowed || !status) {
-    return res.status(400).json({ error: 'Missing required fields. Borrower, item, date, personnel, and status are required.' });
+  if (!borrower_resident_id || !borrower_display_name || !item_borrowed || !quantity_borrowed) {
+    return res.status(400).json({ error: 'Missing required fields. Borrower, item, and quantity are required.' });
   }
   if (!ObjectId.isValid(borrower_resident_id)) {
     return res.status(400).json({ error: 'Invalid borrower resident ID format.' });
   }
+  const requestedQuantity = parseInt(quantity_borrowed, 10);
+  if (isNaN(requestedQuantity) || requestedQuantity <= 0) {
+      return res.status(400).json({ error: 'Quantity must be a number greater than 0.' });
+  }
 
+
+  // --- START: SERVER-SIDE VALIDATION ---
   try {
+    const assetsCollection = dab.collection('assets');
+    const borrowedAssetsCollection = dab.collection('borrowed_assets');
+
+    // 1. Get the master record for the item to find its total quantity
+    const masterAsset = await assetsCollection.findOne({ name: item_borrowed });
+    if (!masterAsset) {
+      return res.status(404).json({ error: 'Item not found in inventory.' });
+    }
+
+    // 2. Calculate how many are currently borrowed
+    const borrowedCountResult = await borrowedAssetsCollection.aggregate([
+        { $match: { item_borrowed: item_borrowed, status: { $in: ['Borrowed', 'Overdue'] } } },
+        { $group: { _id: "$item_borrowed", total_borrowed: { $sum: "$quantity_borrowed" } } }
+    ]).toArray();
+
+    const totalBorrowed = borrowedCountResult.length > 0 ? borrowedCountResult[0].total_borrowed : 0;
+    const availableStock = masterAsset.total_quantity - totalBorrowed;
+
+    // 3. Compare and validate
+    if (requestedQuantity > availableStock) {
+      return res.status(400).json({ 
+          error: 'Insufficient stock.',
+          message: `Cannot borrow ${requestedQuantity}. Only ${availableStock} ${item_borrowed} are available.`
+      });
+    }
+  // --- END: VALIDATION ---
+
     const newTransaction = {
       borrower_resident_id: new ObjectId(borrower_resident_id),
-      borrower_display_name: String(borrower_display_name).trim(), // Store for easy display
+      borrower_display_name: String(borrower_display_name).trim(),
       borrow_datetime: new Date(borrow_datetime),
       borrowed_from_personnel: String(borrowed_from_personnel).trim(),
       item_borrowed: String(item_borrowed),
+      quantity_borrowed: requestedQuantity, // <<< NEW: Saving the validated quantity
       status: String(status).trim(),
       date_returned: null,
       return_condition: null,
@@ -2325,10 +2388,10 @@ app.post('/api/borrowed-assets', async (req, res) => {
       created_at: new Date(),
       updated_at: new Date(),
     };
-    const collection = dab.collection('borrowed_assets');
-    const result = await collection.insertOne(newTransaction);
-    const insertedDoc = await collection.findOne({ _id: result.insertedId }); // Fetch to include _id
+    const result = await borrowedAssetsCollection.insertOne(newTransaction);
+    const insertedDoc = await borrowedAssetsCollection.findOne({ _id: result.insertedId });
     res.status(201).json({ message: 'Asset borrowing transaction added successfully', transaction: insertedDoc });
+
   } catch (error) {
     console.error('Error adding borrow asset transaction:', error);
     res.status(500).json({ error: 'Error adding transaction: ' + error.message });
@@ -2773,6 +2836,44 @@ app.delete('/api/borrowed-assets/:id', async (req, res) => {
 
 
 
+
+// ================================ INVENTORY MANAGEMENT ================================ //
+
+// NEW ENDPOINT: GET /api/assets/inventory-status
+app.get('/api/assets/inventory-status', async (req, res) => {
+    try {
+        const dab = await db();
+        const assetsCollection = dab.collection('assets');
+        const borrowedAssetsCollection = dab.collection('borrowed_assets');
+
+        // Step 1: Get the master list of all assets and their total quantities
+        const allAssets = await assetsCollection.find({}, { projection: { name: 1, total_quantity: 1, _id: 0 } }).toArray();
+
+        // Step 2: Get the count of all items currently borrowed (not Returned, Lost, or Damaged)
+        const borrowedCounts = await borrowedAssetsCollection.aggregate([
+            { $match: { status: { $in: ['Borrowed', 'Overdue'] } } },
+            { $group: { _id: "$item_borrowed", borrowed: { $sum: "$quantity_borrowed" } } }
+        ]).toArray();
+
+        // Step 3: Combine the data
+        const inventoryStatus = allAssets.map(asset => {
+            const borrowedInfo = borrowedCounts.find(b => b._id === asset.name);
+            const borrowedCount = borrowedInfo ? borrowedInfo.borrowed : 0;
+            return {
+                name: asset.name,
+                total: asset.total_quantity,
+                borrowed: borrowedCount,
+                available: asset.total_quantity - borrowedCount,
+            };
+        });
+
+        res.json({ inventory: inventoryStatus });
+
+    } catch (error) {
+        console.error("Error fetching inventory status:", error);
+        res.status(500).json({ error: "Failed to fetch inventory status" });
+    }
+});
 
 
 
@@ -3731,6 +3832,83 @@ app.get('/api/dashboard', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch dashboard metrics", message: error.message });
   }
 });
+
+// GET /api/dashboard/age-distribution
+// Provides data structured for the age distribution chart.
+app.get('/api/dashboard/age-distribution', async (req, res) => {
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        const ageBrackets = [
+            // { name: "Infants", min: 0, max: 2 },
+            { name: "0-10", min: 0, max: 10 },
+            { name: "11-20", min: 11, max: 20 },
+            { name: "21-30", min: 21, max: 30 },
+            { name: "31-40", min: 31, max: 40 },
+            { name: "41-50", min: 41, max: 50 },
+            { name: "51-60", min: 51, max: 60 },
+            { name: "61-70", min: 61, max: 70 },
+            { name: "71-80", min: 71, max: 80 },
+            { name: "81+", min: 81, max: 999 }, // A large number for max
+        ];
+
+        const pipeline = [
+            // Stage 1: Add an 'age' field to each document.
+            // Using a simple approximation here. For exact age, a more complex calculation is needed.
+            // This is usually sufficient for statistical charts.
+            {
+                $addFields: {
+                    age: {
+                        $dateDiff: {
+                            startDate: "$date_of_birth",
+                            endDate: "$$NOW",
+                            unit: "year"
+                        }
+                    }
+                }
+            },
+            // Stage 2: Group residents into buckets based on their age.
+            {
+                $bucket: {
+                    groupBy: "$age",
+                    boundaries: [0, 11, 21, 31, 41, 51, 61, 71, 81, 999], // The lower bound of each bucket
+                    default: "Other", // For any documents that fall outside the boundaries
+                    output: {
+                        "count": { $sum: 1 }
+                    }
+                }
+            }
+        ];
+
+        const results = await residentsCollection.aggregate(pipeline).toArray();
+
+        // Map the MongoDB results to the predefined bracket names and structure
+        const formattedData = ageBrackets.map(bracket => {
+            const resultForBracket = results.find(r => r._id === bracket.min);
+            return {
+                bracket: bracket.name,
+                count: resultForBracket ? resultForBracket.count : 0,
+                minAge: bracket.min,
+                maxAge: bracket.max
+            };
+        });
+
+        res.json({ ageDistribution: formattedData });
+
+    } catch (error) {
+        console.error("Error fetching age distribution data:", error);
+        res.status(500).json({ error: "Failed to fetch age distribution", message: error.message });
+    }
+});
+
+
+
+
+
+
+
+
 
 // Server
 const PORT = process.env.PORT || 3001;

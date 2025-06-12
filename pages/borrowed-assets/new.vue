@@ -66,14 +66,52 @@
                 variant="outlined" density="compact" required
               ></v-text-field>
             </v-col>
-            <v-col cols="12" md="6">
-              <v-select
+            <!-- REWORKED ITEM & QUANTITY SELECTION -->
+            <v-col cols="12" md="7">
+              <label class="v-label mb-1">Item Borrowed <span class="text-red">*</span></label>
+              <v-autocomplete
                 v-model="transaction.item_borrowed"
-                label="Item Borrowed"
-                :items="assetItems"
-                :rules="[rules.required]"
-                variant="outlined" density="compact" required
-              ></v-select>
+                label="Search for an available item..."
+                :items="inventoryItems"
+                item-title="name"
+                item-value="name"
+                :loading="isLoadingInventory"
+                :rules="[rules.required, rules.itemIsAvailable]"
+                variant="outlined"
+                density="compact"
+                required
+                no-data-text="No inventory items found."
+                @update:model-value="onItemSelect"
+              >
+                <!-- Custom slot to display availability in the dropdown -->
+                <template v-slot:item="{ props, item }">
+                  <v-list-item
+                    v-bind="props"
+                    :subtitle="`Available: ${item.raw.available} / ${item.raw.total}`"
+                    :disabled="item.raw.available <= 0"
+                  >
+                    <template v-slot:append>
+                      <v-chip v-if="item.raw.available <= 0" color="red-darken-2" size="small" label text="Unavailable"></v-chip>
+                      <v-chip v-else-if="item.raw.available <= 5" color="orange-darken-1" size="small" label text="Low Stock"></v-chip>
+                    </template>
+                  </v-list-item>
+                </template>
+              </v-autocomplete>
+            </v-col>
+            <v-col cols="12" md="5">
+               <label class="v-label mb-1">Quantity <span class="text-red">*</span></label>
+                <v-text-field
+                    v-model.number="transaction.quantity_borrowed"
+                    label="Quantity"
+                    type="number"
+                    variant="outlined"
+                    density="compact"
+                    required
+                    :disabled="!transaction.item_borrowed"
+                    :hint="quantityHint"
+                    persistent-hint
+                    :rules="[rules.required, rules.quantityIsValid]"
+                ></v-text-field>
             </v-col>
           </v-row>
            <v-row>
@@ -127,17 +165,54 @@ const isLoadingBorrowers = ref(false);
 const selectedBorrowerId = ref(null);
 const selectedBorrowerName = ref(''); // For display in hint
 
-const assetItems = [
-  'Chairs', 'Tables', 'Tents', 'Oxygen Tank',
-  'Blood Pressure Monitor (BP Monitor)', 'First Aid Kit',
-  'Wheelchair', 'Nebulizer', 'Walking Stick'
-];
+
+// --- NEW REFS FOR INVENTORY ---
+const inventoryItems = ref([]); // Will hold [{ name, total, borrowed, available }, ...]
+const isLoadingInventory = ref(true);
+
+// const assetItems = [
+//   'Chairs', 'Tables', 'Tents', 'Oxygen Tank',
+//   'Blood Pressure Monitor (BP Monitor)', 'First Aid Kit',
+//   'Wheelchair', 'Nebulizer', 'Walking Stick'
+// ];
 const statusOptions = ['Borrowed', 'Returned', 'Overdue', 'Damaged'];
 
+// UPDATE the rules object
 const rules = {
   required: value => !!value || 'This field is required.',
   borrowerSelected: value => !!selectedBorrowerId.value || 'A borrower must be selected.',
+  // NEW RULE: Check if the selected item is available
+  itemIsAvailable: (value) => {
+    if (!value) return true; // Don't validate if empty, 'required' rule handles that
+    const selectedItem = inventoryItems.value.find(item => item.name === value);
+    return (selectedItem && selectedItem.available > 0) || 'This item is currently unavailable.';
+  },
 };
+
+// --- NEW FUNCTION TO FETCH INVENTORY ---
+async function fetchInventory() {
+  isLoadingInventory.value = true;
+  try {
+    const { data, error } = await useMyFetch('/api/assets/inventory-status');
+    if (error.value) {
+      $toast.fire({ title: 'Could not load asset inventory.', icon: 'error' });
+    } else {
+      inventoryItems.value = data.value?.inventory || [];
+    }
+  } catch (e) {
+    console.error("Exception fetching inventory:", e);
+  } finally {
+    isLoadingInventory.value = false;
+  }
+}
+
+const userData = useCookie('userData');
+
+// Fetch inventory when the component is mounted
+onMounted(() => {
+  fetchInventory();
+  transaction.value.borrowed_from_personnel = userData.value.name;
+});
 
 // Debounce utility
 function debounce(func, delay) {

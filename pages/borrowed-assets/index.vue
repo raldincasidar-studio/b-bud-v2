@@ -54,23 +54,35 @@
           </template>
 
           <template v-slot:item.status="{ item }">
-            <v-select
-                :model-value="item.status"
-                :items="BORROW_STATUS_OPTIONS"
-                @update:modelValue="(newStatus) => updateTransactionStatus(item, newStatus)"
-                density="compact"
-                variant="outlined"
-                hide-details
-                class="status-select"
-                :disabled="updatingStatusFor === item._id"
-                :loading="updatingStatusFor === item._id"
-            >
-                <template v-slot:selection="{ item: selItem }">
-                    <v-chip :color="getStatusColor(selItem.value)" small label>
-                        {{ selItem.title }}
-                    </v-chip>
-                </template>
-            </v-select>
+              <div class="d-flex align-center justify-center">
+                  <v-chip :color="getStatusColor(item.status)" label size="small" class="me-2">
+                      {{ item.status }}
+                  </v-chip>
+                  <v-menu offset-y>
+                      <template v-slot:activator="{ props }">
+                      <v-btn
+                          icon="mdi-dots-vertical"
+                          size="small"
+                          variant="text"
+                          v-bind="props"
+                          :loading="updatingStatusFor === item._id"
+                      ></v-btn>
+                      </template>
+                      <v-list density="compact">
+                      <v-list-item
+                          v-for="action in getAvailableActions(item.status)"
+                          :key="action.status"
+                          @click="updateTransactionStatus(item, action.status)"
+                          :disabled="updatingStatusFor === item._id"
+                      >
+                          <template v-slot:prepend>
+                          <v-icon :icon="action.icon" :color="action.color" size="small"></v-icon>
+                          </template>
+                          <v-list-item-title>{{ action.title }}</v-list-item-title>
+                      </v-list-item>
+                      </v-list>
+                  </v-menu>
+              </div>
           </template>
 
           <template v-slot:item.action="{ item }">
@@ -104,7 +116,21 @@ const loading = ref(true);
 const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null); // ID of the transaction being updated
 
-const BORROW_STATUS_OPTIONS = ['Borrowed', 'Returned', 'Overdue', 'Lost', 'Damaged'];
+// const BORROW_STATUS_OPTIONS = ['Borrowed', 'Returned', 'Overdue', 'Lost', 'Damaged'];
+
+const getAvailableActions = (currentStatus) => {
+  const allActions = {
+    'Borrowed': { status: 'Borrowed', title: 'Mark as Borrowed', icon: 'mdi-arrow-up-bold-box-outline', color: 'orange-darken-1' },
+    'Returned': { status: 'Returned', title: 'Mark as Returned', icon: 'mdi-arrow-down-bold-box-outline', color: 'green-darken-1' },
+    'Overdue': { status: 'Overdue', title: 'Mark as Overdue', icon: 'mdi-alert-octagon-outline', color: 'red-darken-2' },
+    'Lost': { status: 'Lost', title: 'Mark as Lost', icon: 'mdi-help-rhombus-outline', color: 'error' },
+    'Damaged': { status: 'Damaged', title: 'Mark as Damaged', icon: 'mdi-tools', color: 'warning' },
+  };
+
+  // Logic to show only relevant actions.
+  // Example: You can't mark an already "Returned" item as "Returned" again.
+  return Object.values(allActions).filter(action => action.status !== currentStatus);
+};
 
 const headers = ref([
   { title: 'Ref #', key: 'reference_number', sortable: false, width: '200px'},

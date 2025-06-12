@@ -51,8 +51,9 @@ async function login() {
 
     if (data.value?.error || error.value) {
         isLoading.value = false;
+        console.log(error.value, data.value);
         $toast.fire({
-            title: data.value?.error || 'Invalid username or password',
+            title: data.value?.error || error.value || 'Invalid username or password',
             icon: 'error'
         })
         return;
