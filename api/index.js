@@ -1547,6 +1547,14 @@ app.get('/api/admins/:id', async (req, res) => {
 app.delete('/api/admins/:id', async (req, res) => {
   const dab = await db();
   const adminsCollection = dab.collection('admins');
+
+
+  // check if admin is Technical Admin
+  const admin = await adminsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  if (admin.role === 'Technical Admin') {
+      return res.status(200).json({ error: 'Cannot delete Technical Admin account.' });
+  }
+
   await adminsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
   res.json({message: 'Admin deleted successfully'});
 })
