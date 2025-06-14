@@ -34,13 +34,38 @@
             <v-col cols="12" md="4"><v-text-field v-model="form.first_name" label="First Name*" :readonly="!editMode" variant="outlined" :error-messages="v$.first_name.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.middle_name" label="Middle Name" :readonly="!editMode" variant="outlined"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.last_name" label="Last Name*" :readonly="!editMode" variant="outlined" :error-messages="v$.last_name.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="3"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" :readonly="!editMode" variant="outlined" :error-messages="v$.sex.$errors.map(e => e.$message)"></v-select></v-col>
+            <v-col cols="12" md="3"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" :readonly="!editMode" variant="outlined" placeholder="Select Sex" :error-messages="v$.sex.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="3"><v-text-field v-model="form.date_of_birth" label="Date of Birth*" type="date" :readonly="!editMode" variant="outlined" :error-messages="v$.date_of_birth.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="3"><v-text-field :model-value="calculatedAge" label="Age" readonly variant="outlined" hint="Auto-calculated" persistent-hint></v-text-field></v-col>
-            <v-col cols="12" md="3"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed']" label="Civil Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
-            <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
+            <v-col cols="12" md="2"><v-text-field :model-value="calculatedAge" label="Age" readonly variant="outlined" hint="Auto-calculated" persistent-hint></v-text-field></v-col>
+            <!-- REVISION: Updated civil status options -->
+            <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" :readonly="!editMode" variant="outlined" placeholder="Select Civil Status" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
+            <!-- REVISION: Added Citizenship field -->
+            <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" :readonly="!editMode" variant="outlined" placeholder="Select Citizenship" :error-messages="v$.citizenship.$errors.map(e => e.$message)"></v-select></v-col>
+            <!-- REVISION: Updated occupation status options -->
+            <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly="!editMode" variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- REVISION: Added Address Information Card -->
+      <v-card class="mb-6" flat border>
+        <v-card-title class="text-h6 font-weight-medium">Address Information</v-card-title>
+        <v-card-text class="pt-4">
+          <v-row>
+            <v-col cols="12" md="4"><v-text-field v-model="form.address_house_number" label="House Number/Lot/Block*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_house_number.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="8"><v-text-field v-model="form.address_street" label="Street*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_street.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_subdivision_zone.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.address_city_municipality" label="City/Municipality" readonly variant="outlined"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.years_at_current_address" label="Years at Current Address*" type="number" :readonly="!editMode" variant="outlined" :error-messages="v$.years_at_current_address.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6">
+              <v-file-input v-if="editMode" v-model="form.proof_of_residency_file" label="Upload to Replace Proof of Residency" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
+              <div v-else><label class="v-label mb-1">Uploaded Proof of Residency</label>
+                <v-img v-if="form.proof_of_residency_base64" :src="form.proof_of_residency_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                <p v-else class="text-grey mt-2">No file uploaded.</p>
+              </div>
+            </v-col>
           </v-row>
         </v-card-text>
       </v-card>
@@ -63,7 +88,7 @@
         </v-card-text>
       </v-card>
       
-      <!-- Special Classification Card (RESTORED) -->
+      <!-- Special Classification Card -->
       <v-card class="mb-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Special Classification</v-card-title>
         <v-card-text class="pt-2">
@@ -78,21 +103,35 @@
               </div>
             </v-col>
           </v-row>
+          <!-- REVISION: Updated Senior Citizen logic -->
           <v-row v-if="isSenior">
             <v-divider class="my-4"></v-divider>
-            <v-col cols="12"><p class="text-subtitle-1 font-weight-medium">Senior Citizen Information (Age 60+)</p></v-col>
-            <v-col cols="12" md="6"><v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.senior_citizen_id.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="6">
-              <v-file-input v-if="editMode" v-model="form.senior_citizen_card_file" label="Upload to Replace Senior ID" variant="outlined" accept="image/*" clearable></v-file-input>
-              <div v-else><label class="v-label mb-1">Uploaded Senior Citizen ID</label>
-                <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
-                <p v-else class="text-grey mt-2">No file uploaded.</p>
-              </div>
-            </v-col>
+            <v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label><v-radio-group v-model="form.is_senior_citizen" inline :readonly="!editMode"><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col>
+            <template v-if="form.is_senior_citizen">
+              <v-col cols="12" md="6"><v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.senior_citizen_id.$errors.map(e => e.$message)"></v-text-field></v-col>
+              <v-col cols="12" md="6">
+                <v-file-input v-if="editMode" v-model="form.senior_citizen_card_file" label="Upload to Replace Senior ID" variant="outlined" accept="image/*" clearable></v-file-input>
+                <div v-else><label class="v-label mb-1">Uploaded Senior Citizen ID</label>
+                  <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                  <p v-else class="text-grey mt-2">No file uploaded.</p>
+                </div>
+              </v-col>
+            </template>
           </v-row>
         </v-card-text>
       </v-card>
 
+      <!-- REVISION: Added Change Password Card, only shows in edit mode -->
+      <v-card v-if="editMode" class="mb-6" flat border>
+        <v-card-title class="text-h6 font-weight-medium">Change Password</v-card-title>
+        <v-card-text class="pt-4">
+          <v-row>
+            <v-col cols="12" md="6"><v-text-field v-model="form.newPassword" label="New Password" type="password" variant="outlined" hint="Leave blank to keep current password" persistent-hint :error-messages="v$.newPassword.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.confirmNewPassword" label="Confirm New Password" type="password" variant="outlined" :error-messages="v$.confirmNewPassword.$errors.map(e => e.$message)"></v-text-field></v-col>
+          </v-row>
+        </v-card-text>
+      </v-card>
+      
       <!-- Household Management Card -->
       <v-card class="mb-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Household Management</v-card-title>
@@ -118,29 +157,25 @@
         </v-card-text>
       </v-card>
 
-          <v-dialog v-model="confirmDeleteDialog" persistent max-width="500px">
-            <v-card>
-              <v-card-title class="text-h5">
-                <v-icon color="error" class="mr-2">mdi-alert-circle-outline</v-icon>
-                Confirm Deletion
-              </v-card-title>
-              <v-card-text>
-                Are you sure you want to permanently delete the record for 
-                <strong>{{ form.first_name }} {{ form.last_name }}</strong>? 
-                <br><br>
-                This action cannot be undone.
-              </v-card-text>
-              <v-card-actions>
-                <v-spacer></v-spacer>
-                <v-btn color="grey" text @click="confirmDeleteDialog = false" :disabled="deleting">
-                  Cancel
-                </v-btn>
-                <v-btn color="error" variant="flat" @click="deleteResident" :loading="deleting">
-                  Delete Resident
-                </v-btn>
-              </v-card-actions>
-            </v-card>
-          </v-dialog>
+      <v-dialog v-model="confirmDeleteDialog" persistent max-width="500px">
+        <v-card>
+          <v-card-title class="text-h5">
+            <v-icon color="error" class="mr-2">mdi-alert-circle-outline</v-icon>
+            Confirm Deletion
+          </v-card-title>
+          <v-card-text>
+            Are you sure you want to permanently delete the record for 
+            <strong>{{ form.first_name }} {{ form.last_name }}</strong>? 
+            <br><br>
+            This action cannot be undone.
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn color="grey" text @click="confirmDeleteDialog = false" :disabled="deleting">Cancel</v-btn>
+            <v-btn color="error" variant="flat" @click="deleteResident" :loading="deleting">Delete Resident</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
     </div>
   </v-container>
 </template>
@@ -149,7 +184,7 @@
 import { reactive, ref, onMounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf, helpers } from '@vuelidate/validators';
+import { required, email, minLength, sameAs, requiredIf, helpers, numeric } from '@vuelidate/validators'; // REVISION: Added numeric validator
 import { useMyFetch } from '~/composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -158,13 +193,15 @@ const route = useRoute();
 const router = useRouter();
 const residentId = route.params.id;
 
+// REVISION: Added all new fields to the form state to match new.vue
 const form = reactive({
   first_name: '', middle_name: '', last_name: '', sex: null, date_of_birth: '', civil_status: null,
-  occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
+  citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
   address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  years_at_current_address: null, proof_of_residency_file: null, proof_of_residency_base64: null,
   is_voter: false, voter_id_number: '', voter_id_file: null, voter_registration_proof_base64: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null, pwd_card_base64: null,
-  senior_citizen_id: '', senior_citizen_card_file: null, senior_citizen_card_base64: null,
+  is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null, senior_citizen_card_base64: null,
   is_household_head: false, household_members_details: [],
 });
 const originalFormState = ref({});
@@ -188,15 +225,18 @@ const calculatedAge = computed(() => {
 });
 const isSenior = computed(() => calculatedAge.value !== null && calculatedAge.value >= 60);
 
+// REVISION: Updated validation rules to match new.vue
 const rules = {
   first_name: { required }, last_name: { required }, sex: { required }, date_of_birth: { required },
-  civil_status: { required }, occupation_status: { required }, email: { required, email }, contact_number: { required },
+  civil_status: { required }, citizenship: { required }, occupation_status: { required },
+  email: { required, email }, contact_number: { required },
   address_house_number: { required }, address_street: { required }, address_subdivision_zone: { required },
+  years_at_current_address: { required, numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file && !form.voter_registration_proof_base64)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID is required.', requiredIf(() => form.is_pwd)) },
-  senior_citizen_id: { requiredIf: helpers.withMessage('Senior ID is required for age 60+.', requiredIf(isSenior)) },
+  senior_citizen_id: { requiredIf: helpers.withMessage('Senior ID is required.', requiredIf(() => form.is_senior_citizen)) },
 };
 const v$ = useVuelidate(rules, form);
 
@@ -216,13 +256,15 @@ async function fetchResident() {
   finally { loading.value = false; }
 }
 
-const cancelEdit = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); editMode.value = false; };
+const cancelEdit = () => { Object.assign(form, JSON.parse(JSON.stringify(originalFormState.value))); v$.value.$reset(); editMode.value = false; };
 
-const convertFileToBase64 = async (file) => {
-  if (!file) return null;
+const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader(); reader.readAsDataURL(file);
-    reader.onload = () => resolve(reader.result); reader.onerror = (error) => reject(error);
+    if (!file || file.length === 0) { resolve(null); return; }
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file[0]);
   });
 };
 
@@ -235,11 +277,14 @@ async function saveChanges() {
     payload.household_member_ids = form.household_members_details.map(m => m._id);
     delete payload.household_members_details;
     
+    // REVISION: Handle all potential new file uploads
     if (form.voter_id_file) payload.voter_registration_proof_base64 = await convertFileToBase64(form.voter_id_file);
     if (form.pwd_card_file) payload.pwd_card_base64 = await convertFileToBase64(form.pwd_card_file);
     if (form.senior_citizen_card_file) payload.senior_citizen_card_base64 = await convertFileToBase64(form.senior_citizen_card_file);
+    if (form.proof_of_residency_file) payload.proof_of_residency_base64 = await convertFileToBase64(form.proof_of_residency_file);
     
-    delete payload.voter_id_file; delete payload.pwd_card_file; delete payload.senior_citizen_card_file;
+    // REVISION: Clean up all file objects before sending payload
+    delete payload.voter_id_file; delete payload.pwd_card_file; delete payload.senior_citizen_card_file; delete payload.proof_of_residency_file;
     
     await useMyFetch(`/api/residents/${residentId}`, { method: 'PUT', body: payload });
     $toast.fire({ title: 'Resident updated successfully!', icon: 'success' });

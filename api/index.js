@@ -490,63 +490,94 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
 
 
 // ========================= RESIDENTS =================== //
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS)
+// ========================= RESIDENTS =================== //
+
+// Helper function to create a resident document from payload data.
+// This reduces code duplication between head and member creation.
+const createResidentDocument = (data, isHead = false, headAddress = null) => {
+    const age = calculateAge(data.date_of_birth);
+    let passwordHash = null;
+    let email = data.email ? String(data.email).toLowerCase() : null;
+
+    // Password is required for the head, and for members creating an account.
+    if (data.password) {
+        // REVERTED HASHING - WARNING: MD5 is insecure. Use bcrypt in production.
+        passwordHash = md5(data.password);
+    }
+    
+    return {
+        // Personal Info
+        first_name: data.first_name,
+        middle_name: data.middle_name || null,
+        last_name: data.last_name,
+        sex: data.sex,
+        date_of_birth: new Date(data.date_of_birth),
+        age: age,
+        civil_status: data.civil_status,
+        citizenship: data.citizenship, // REVISION: Added field
+        occupation_status: data.occupation_status,
+        email: email,
+        password_hash: passwordHash,
+        contact_number: data.contact_number,
+        relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
+
+        // Address Info (Use head's address if provided)
+        address_house_number: headAddress ? headAddress.address_house_number : data.address_house_number,
+        address_street: headAddress ? headAddress.address_street : data.address_street,
+        address_subdivision_zone: headAddress ? headAddress.address_subdivision_zone : data.address_subdivision_zone,
+        address_city_municipality: headAddress ? headAddress.address_city_municipality : data.address_city_municipality,
+        years_at_current_address: isHead ? data.years_at_current_address : null, // REVISION: Added field (only for head)
+        proof_of_residency_base64: isHead ? data.proof_of_residency_base64 : null, // REVISION: Added field (only for head)
+
+        // Voter Info
+        is_voter: data.is_voter || false,
+        voter_id_number: data.is_voter ? data.voter_id_number : null,
+        voter_registration_proof_base64: data.is_voter ? data.voter_registration_proof_base64 : null,
+
+        // PWD Info
+        is_pwd: data.is_pwd || false,
+        pwd_id: data.is_pwd ? data.pwd_id : null,
+        pwd_card_base64: data.is_pwd ? data.pwd_card_base64 : null,
+
+        // REVISION: Senior Citizen Info now based on the flag, not just age
+        is_senior_citizen: data.is_senior_citizen || false,
+        senior_citizen_id: data.is_senior_citizen ? data.senior_citizen_id : null,
+        senior_citizen_card_base64: data.is_senior_citizen ? data.senior_citizen_card_base64 : null,
+        
+        // System-set Fields
+        is_household_head: isHead,
+        household_member_ids: isHead ? [] : undefined, // Only heads have this array initially
+        status: 'Pending',
+        created_at: new Date(),
+        updated_at: new Date(),
+    };
+};
+
+
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - REVISED
 app.post('/api/residents', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-    const session = CLIENT_DB.startSession(); // Start a MongoDB session for the transaction
+    const session = CLIENT_DB.startSession();
 
     try {
-        let newHouseholdHead; // To store the created head for the response
+        let newHouseholdHead;
 
-        // Start the transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
-                throw new Error('Validation failed: Head requires first name, last name, email, and password.');
+                throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
             if (existingEmail) {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
             }
 
-            // REVERTED HASHING
-            const headPasswordHash = md5(headData.password);
-            const headAge = calculateAge(headData.date_of_birth);
-
-            const headResidentDocument = {
-                // Personal Info
-                first_name: headData.first_name, middle_name: headData.middle_name || null, last_name: headData.last_name,
-                sex: headData.sex, date_of_birth: new Date(headData.date_of_birth), age: headAge,
-                civil_status: headData.civil_status, occupation_status: headData.occupation_status,
-                email: headData.email.toLowerCase(), password_hash: headPasswordHash, contact_number: headData.contact_number,
-                
-                // Address Info
-                address_house_number: headData.address_house_number, address_street: headData.address_street,
-                address_subdivision_zone: headData.address_subdivision_zone, address_city_municipality: headData.address_city_municipality,
-                
-                // Voter Info
-                is_voter: headData.is_voter || false,
-                voter_id_number: headData.is_voter ? headData.voter_id_number : null,
-                voter_registration_proof_base64: headData.is_voter ? headData.voter_registration_proof_base64 : null,
-
-                // Conditional PWD/Senior Info
-                is_pwd: headData.is_pwd || false,
-                pwd_id: headData.is_pwd ? headData.pwd_id : null,
-                pwd_card_base64: headData.is_pwd ? headData.pwd_card_base64 : null,
-                senior_citizen_id: headAge >= 60 ? headData.senior_citizen_id : null,
-                senior_citizen_card_base64: headAge >= 60 ? headData.senior_citizen_card_base64 : null,
-                
-                // System-set Fields
-                is_household_head: true,
-                household_member_ids: [],
-                status: 'Pending',
-                created_at: new Date(),
-                updated_at: new Date(),
-            };
+            // Create head document using the helper function
+            const headResidentDocument = createResidentDocument(headData, true);
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
@@ -561,14 +592,13 @@ app.post('/api/residents', async (req, res) => {
                     throw new Error(`Validation failed for member: Missing required fields.`);
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
-                let memberPasswordHash = null;
-                let memberEmail = null;
-
-                if (memberAge >= 16) {
+                
+                // REVISION: Validate member account creation (age 15+)
+                if (memberAge >= 15 && (memberData.email || memberData.password)) {
                     if (!memberData.email || !memberData.password) {
-                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are required for members age 16+.`);
+                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
                     }
-                    memberEmail = memberData.email.toLowerCase();
+                    const memberEmail = memberData.email.toLowerCase();
                     if (processedEmails.has(memberEmail)) {
                         throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
                     }
@@ -577,20 +607,14 @@ app.post('/api/residents', async (req, res) => {
                         throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
                     }
                     processedEmails.add(memberEmail);
-                    // REVERTED HASHING
-                    memberPasswordHash = md5(memberData.password);
+                } else {
+                    // If no account is being created, ensure email/pass are null
+                    memberData.email = null;
+                    memberData.password = null;
                 }
-
-                const newMemberDoc = {
-                    first_name: memberData.first_name, middle_name: memberData.middle_name || null, last_name: memberData.last_name,
-                    relationship_to_head: memberData.relationship_to_head,
-                    sex: memberData.sex, date_of_birth: new Date(memberData.date_of_birth), age: memberAge,
-                    email: memberEmail, password_hash: memberPasswordHash,
-                    address_house_number: headData.address_house_number, address_street: headData.address_street,
-                    address_subdivision_zone: headData.address_subdivision_zone, address_city_municipality: headData.address_city_municipality,
-                    is_household_head: false, status: 'Pending',
-                    created_at: new Date(), updated_at: new Date(),
-                };
+                
+                // REVISION: Create full member document using helper, passing head's address
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -605,7 +629,7 @@ app.post('/api/residents', async (req, res) => {
                 );
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
-        }); // End of transaction
+        });
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending approval.',
@@ -1015,7 +1039,7 @@ app.delete('/api/residents/:id', async (req, res) => {
   res.json({message: 'Resident deleted successfully'});
 })
 
-// UPDATE RESIDENT BY ID (PUT)
+// UPDATE RESIDENT BY ID (PUT) - REVISED
 app.put('/api/residents/:id', async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
@@ -1023,171 +1047,127 @@ app.put('/api/residents/:id', async (req, res) => {
   }
   const dab = await db();
   const residentsCollection = dab.collection('residents');
-
   const updatePayload = req.body;
   const updateFields = {};
 
-  // Fetch the current resident state for comparisons and fallbacks
   const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
   if (!currentResident) {
     return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
   }
-
-  // General fields (excluding files and complex conditional logic for now)
+  
+  // REVISION: Expanded field lists to match the new form
   const simpleFields = [
     'first_name', 'middle_name', 'last_name', 'sex', 'civil_status',
-    'occupation_status', 'place_of_birth', 'citizenship',
-    'address_house_number', 'address_street', 'address_subdivision_zone',
-    'address_city_municipality', 'contact_number'
+    'occupation_status', 'citizenship', 'contact_number',
+    'address_house_number', 'address_street', 'address_subdivision_zone'
   ];
-  const booleanFields = ['is_pwd', 'is_household_head']; // is_registered_voter handled separately
-  const numericFields = ['years_lived_current_address'];
-
+  const booleanFields = ['is_voter', 'is_pwd', 'is_senior_citizen', 'is_household_head'];
+  const numericFields = ['years_at_current_address'];
+  
+  // Process simple text fields
   simpleFields.forEach(field => {
     if (updatePayload.hasOwnProperty(field)) {
-      updateFields[field] = updatePayload[field] !== null ? String(updatePayload[field]).trim() : null;
+      updateFields[field] = updatePayload[field];
     }
   });
+
+  // Process booleans
   booleanFields.forEach(field => {
     if (updatePayload.hasOwnProperty(field)) {
       updateFields[field] = Boolean(updatePayload[field]);
     }
   });
+
+  // Process numbers
   numericFields.forEach(field => {
      if (updatePayload.hasOwnProperty(field)) {
-        updateFields[field] = (updatePayload[field] !== null && updatePayload[field] !== '') ? parseInt(updatePayload[field]) : null;
+        updateFields[field] = updatePayload[field] ? parseInt(updatePayload[field], 10) : null;
     }
   });
 
-  // Date of Birth and Age
+  // Process Date of Birth and Age
   if (updatePayload.hasOwnProperty('date_of_birth')) {
     updateFields.date_of_birth = updatePayload.date_of_birth ? new Date(updatePayload.date_of_birth) : null;
     updateFields.age = calculateAge(updateFields.date_of_birth);
   }
 
-  // Email (with uniqueness check)
+  // Process Email with uniqueness check
   if (updatePayload.hasOwnProperty('email')) {
     const newEmail = String(updatePayload.email).trim().toLowerCase();
     if (currentResident.email !== newEmail) {
         const existingEmailUser = await residentsCollection.findOne({ email: newEmail, _id: { $ne: new ObjectId(id) } });
         if (existingEmailUser) {
-            return res.status(409).json({ error: 'Conflict', message: 'Email address already in use by another resident.' });
+            return res.status(409).json({ error: 'Conflict', message: 'Email address already in use.' });
         }
     }
     updateFields.email = newEmail;
   }
 
-  // --- Voter Information ---
-  let finalIsRegisteredVoter = currentResident.is_registered_voter;
-  if (updatePayload.hasOwnProperty('is_registered_voter')) {
-    finalIsRegisteredVoter = Boolean(updatePayload.is_registered_voter);
-    updateFields.is_registered_voter = finalIsRegisteredVoter;
+  // REVISION: Process Voter, PWD, and Senior info with cleanup logic
+  // Voter
+  if (updatePayload.is_voter === true) {
+      if (updatePayload.hasOwnProperty('voter_id_number')) updateFields.voter_id_number = updatePayload.voter_id_number;
+      if (updatePayload.hasOwnProperty('voter_registration_proof_base64')) updateFields.voter_registration_proof_base64 = updatePayload.voter_registration_proof_base64;
+  } else if (updatePayload.is_voter === false) {
+      updateFields.voter_id_number = null;
+      updateFields.voter_registration_proof_base64 = null;
   }
 
-  let finalPrecinctNumber = currentResident.precinct_number;
-  if (updatePayload.hasOwnProperty('precinct_number')) {
-    finalPrecinctNumber = updatePayload.precinct_number ? String(updatePayload.precinct_number).trim() : null;
-    updateFields.precinct_number = finalPrecinctNumber;
+  // PWD
+  if (updatePayload.is_pwd === true) {
+      if (updatePayload.hasOwnProperty('pwd_id')) updateFields.pwd_id = updatePayload.pwd_id;
+      if (updatePayload.hasOwnProperty('pwd_card_base64')) updateFields.pwd_card_base64 = updatePayload.pwd_card_base64;
+  } else if (updatePayload.is_pwd === false) {
+      updateFields.pwd_id = null;
+      updateFields.pwd_card_base64 = null;
   }
 
-  let finalVoterProofData = currentResident.voter_registration_proof_data;
-  // Frontend [id].vue sends 'voter_registration_proof_data' key in payload if changed
-  if (updatePayload.hasOwnProperty('voter_registration_proof_data')) {
-    finalVoterProofData = updatePayload.voter_registration_proof_data; // This will be new Base64 or null
-    updateFields.voter_registration_proof_data = finalVoterProofData;
+  // Senior Citizen
+  if (updatePayload.is_senior_citizen === true) {
+      if (updatePayload.hasOwnProperty('senior_citizen_id')) updateFields.senior_citizen_id = updatePayload.senior_citizen_id;
+      if (updatePayload.hasOwnProperty('senior_citizen_card_base64')) updateFields.senior_citizen_card_base64 = updatePayload.senior_citizen_card_base64;
+  } else if (updatePayload.is_senior_citizen === false) {
+      updateFields.senior_citizen_id = null;
+      updateFields.senior_citizen_card_base64 = null;
+  }
+  
+  // REVISION: Process Proof of Residency file
+  if (updatePayload.hasOwnProperty('proof_of_residency_base64')) {
+    updateFields.proof_of_residency_base64 = updatePayload.proof_of_residency_base64;
   }
 
-  if (finalIsRegisteredVoter) {
-    if (!finalPrecinctNumber && !finalVoterProofData) {
-      return res.status(400).json({ error: 'Validation failed', message: "If registered voter, ensure either Voter's ID Number or Voter's ID upload is present." });
-    }
-  } else {
-    // If explicitly set to not a voter, or becomes not a voter
-    updateFields.precinct_number = null;
-    updateFields.voter_registration_proof_data = null;
-  }
-
-  // --- Residency Proof ---
-  // Frontend [id].vue sends 'residency_proof_data' key in payload if changed
-  if (updatePayload.hasOwnProperty('residency_proof_data')) {
-    updateFields.residency_proof_data = updatePayload.residency_proof_data; // New Base64 or null
-  }
-
-  // --- Household Info ---
+  // Household Membership
   if (updatePayload.hasOwnProperty('is_household_head')) {
-    // updateFields.is_household_head is already set by booleanFields loop
-    if (updateFields.is_household_head === false) {
-      updateFields.household_member_ids = []; // Clear members if no longer head
+    if (updatePayload.is_household_head === false) {
+      updateFields.household_member_ids = []; // Clear members if no longer a head
     } else if (updatePayload.hasOwnProperty('household_member_ids')) {
-      // If becoming head AND new member list is provided
       updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
         ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
         : [];
     }
-    // If is_household_head is true but household_member_ids is NOT in payload, existing members are kept (unless explicitly cleared by sending empty array)
-  } else if (updatePayload.hasOwnProperty('household_member_ids')) {
-    // is_household_head not in payload, so use current status
-    if (currentResident.is_household_head) {
-        updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
-            ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
-            : [];
-    } else {
-        // Not a head, and not becoming one, so members should be empty if sent
-         updateFields.household_member_ids = [];
-    }
   }
 
-
-  // --- Status Update ---
-  if (updatePayload.hasOwnProperty('status')) {
-    const allowedStatusValues = ['Approved', 'Declined', 'Deactivated', 'Pending'];
-    if (!allowedStatusValues.includes(updatePayload.status)) {
-      return res.status(400).json({ error: 'Validation failed', message: `Invalid status value. Allowed: ${allowedStatusValues.join(', ')}` });
-    }
-    updateFields.status = updatePayload.status;
-  }
-
-  // --- Password Change ---
+  // Password Change
   if (updatePayload.newPassword) {
-    if (typeof updatePayload.newPassword !== 'string' || updatePayload.newPassword.length < 6) {
-        return res.status(400).json({ error: 'Validation failed', message: 'New password must be at least 6 characters long.' });
+    if (String(updatePayload.newPassword).length < 6) {
+        return res.status(400).json({ error: 'Validation failed', message: 'New password must be at least 6 characters.' });
     }
-    // --- WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT ---
+    // WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT
     updateFields.password_hash = md5(updatePayload.newPassword);
   }
 
   if (Object.keys(updateFields).length === 0) {
-    // No actual data fields were sent for update, just return current
     return res.status(200).json({ message: 'No changes detected.', resident: currentResident });
   }
 
   updateFields.updated_at = new Date();
 
   try {
-    const result = await residentsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateFields }
-    );
-
-    // matchedCount should be 1 if ID is valid, already checked by currentResident fetch
-    // if (result.matchedCount === 0) {
-    //   return res.status(404).json({ error: 'Not found', message: 'Resident not found.' });
-    // }
-
-    if (result.modifiedCount === 0 && result.upsertedCount === 0 && Object.keys(updateFields).length > 1) { // length > 1 because updated_at is always there
-        // This can happen if all submitted values are the same as existing ones
-        // console.log("No effective modification, values might be the same.");
-    }
-
-    const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0, login_attempts: 0, account_locked_until: 0 }});
+    await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0 }});
     res.json({ message: 'Resident updated successfully', resident: updatedResident });
-
   } catch (error) {
     console.error('Error updating resident:', error);
-    // Code 11000 is for duplicate key error (e.g. email)
-    if (error.code === 11000) {
-        return res.status(409).json({ error: 'Conflict', message: 'Update violates a unique constraint (e.g., email already exists).' });
-    }
     res.status(500).json({ error: 'Database error', message: 'Could not update resident.' });
   }
 });
