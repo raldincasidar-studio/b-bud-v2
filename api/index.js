@@ -3417,6 +3417,130 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
 });
 
 
+
+
+// New ENdpoint per action
+
+/**
+ * ACTION 1: Process a Pending Request
+ * Called automatically when an admin views a "Pending" request for the first time.
+ */
+app.patch('/api/document-requests/:id/process', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+  try {
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+    const result = await collection.findOneAndUpdate(
+      { _id: new ObjectId(id), document_status: 'Pending' }, // Condition: Must be Pending
+      { $set: { document_status: 'Processing', updated_at: new Date() } },
+      { returnDocument: 'after' } // Return the updated document
+    );
+
+    if (!result.value) {
+      // This means the document was not found OR it was not in 'Pending' state.
+      // We can fetch the current document to return it without erroring.
+      const currentRequest = await collection.findOne({ _id: new ObjectId(id) });
+      return res.status(200).json({ message: 'Request was not in Pending state.', request: currentRequest });
+    }
+
+    res.json({ message: 'Request moved to Processing.', request: result.value });
+  } catch (error) {
+    console.error("Error processing request:", error);
+    res.status(500).json({ error: 'Could not process request.' });
+  }
+});
+
+/**
+ * ACTION 2: Approve a Processing Request
+ * Called when the admin clicks the "Approve" button.
+ */
+app.patch('/api/document-requests/:id/approve', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  
+  try {
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+    const result = await collection.findOneAndUpdate(
+      { _id: new ObjectId(id), document_status: 'Processing' }, // Condition: Must be Processing
+      { $set: { document_status: 'Approved', updated_at: new Date() } },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
+    }
+    
+    // TODO: Send notification to user
+    res.json({ message: 'Request approved successfully.', request: result });
+  } catch (error) {
+    console.error("Error approving request:", error);
+    res.status(500).json({ error: 'Could not approve request.' });
+  }
+});
+
+/**
+ * ACTION 3: Set an Approved Request to Ready for Pickup
+ * Called when the admin clicks the "Generate & Set..." button.
+ */
+app.patch('/api/document-requests/:id/generate', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  
+  try {
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+    const result = await collection.findOneAndUpdate(
+      { _id: new ObjectId(id), document_status: 'Approved' }, // Condition: Must be Approved
+      { $set: { document_status: 'Ready for Pickup', updated_at: new Date() } },
+      { returnDocument: 'after' }
+    );
+
+    if (!result) {
+      return res.status(404).json({ error: 'Request not found or is not in Approved state.' });
+    }
+    
+    res.json({ message: 'Document is now Ready for Pickup.', request: result });
+  } catch (error) {
+    console.error("Error setting request to Ready for Pickup:", error);
+    res.status(500).json({ error: 'Could not update request status.' });
+  }
+});
+
+/**
+ * ACTION 4: Decline a Processing Request
+ * Called when the admin clicks the "Decline" button.
+ */
+app.patch('/api/document-requests/:id/decline', async (req, res) => {
+    const { id } = req.params;
+    const { reason } = req.body; // You can pass a reason for declining
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+    try {
+        const dab = await db();
+        const collection = dab.collection('document_requests');
+        const result = await collection.findOneAndUpdate(
+            { _id: new ObjectId(id), document_status: 'Processing' }, // Can only decline from Processing
+            { $set: { document_status: 'Declined', updated_at: new Date(), decline_reason: reason || 'No reason provided.' } },
+            { returnDocument: 'after' }
+        );
+
+        if (!result) {
+            return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
+        }
+        
+        res.json({ message: 'Request has been declined.', request: result });
+    } catch (error) {
+        console.error("Error declining request:", error);
+        res.status(500).json({ error: 'Could not decline request.' });
+    }
+});
+
+
+
+
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
 const puppeteer = require('puppeteer');
