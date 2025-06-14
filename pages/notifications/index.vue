@@ -1,55 +1,53 @@
 <template>
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
-      <v-col><h2>Notifications</h2></v-col>
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">Announcement</h2>
+        <p class="text-grey-darken-1">Manage and process all resident document requests.</p>
+      </v-col>
       <v-col class="text-right">
         <v-btn
-          rounded
           size="large"
-          variant="tonal"
           to="/notifications/new"
           prepend-icon="mdi-bell-plus-outline"
           color="primary"
         >
-          New Notification
+          New Announcement
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card elevation="2">
+    <v-card class="mt-4" flat border>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-bell-ring-outline" class="mr-2"></v-icon>
-        Manage Notifications
+        Manage Announcement
+        <v-spacer></v-spacer>
+        <v-text-field
+          v-model="searchKey"
+          density="compact"
+          label="Search Announcements..."
+          prepend-inner-icon="mdi-magnify"
+          variant="solo-filled"
+          flat hide-details single-line
+          style="max-width: 350px;"
+        ></v-text-field>
       </v-card-title>
-      <v-card-text>
-        <v-row class="mb-4">
-            <v-col cols="12" md="8">
-                <v-text-field
-                v-model="searchKey"
-                prepend-inner-icon="mdi-magnify"
-                variant="outlined"
-                color="primary"
-                label="Search Notifications"
-                placeholder="Search by name, content, author, type..."
-                clearable
-                density="compact"
-                hide-details
-                ></v-text-field>
-            </v-col>
-            <v-col cols="12" md="4">
-                <v-select
-                    v-model="typeFilter"
-                    :items="NOTIFICATION_TYPE_FILTER_OPTIONS"
-                    label="Filter by Type"
-                    variant="outlined"
-                    density="compact"
-                    clearable
-                    hide-details
-                    @update:modelValue="filterChanged"
-                ></v-select>
-            </v-col>
-        </v-row>
+      <v-divider></v-divider>
 
+      <!-- REVISION: Replaced v-select with v-tabs for filtering -->
+      <v-tabs v-model="typeFilter" color="primary" class="px-4">
+        <v-tab
+          v-for="item in NOTIFICATION_TYPE_FILTER_OPTIONS"
+          :key="item.value"
+          :value="item.value"
+          class="text-capitalize"
+        >
+          {{ item.title }}
+        </v-tab>
+      </v-tabs>
+      <v-divider></v-divider>
+      
+      <v-card-text>
         <v-data-table-server
           v-model:items-per-page="itemsPerPage"
           :headers="headers"
@@ -58,7 +56,6 @@
           :loading="loading"
           @update:options="loadNotifications"
           item-value="_id"
-          class="mt-2"
         >
           <template v-slot:item.name="{ item }">
             <strong>{{ item.name }}</strong>
@@ -88,8 +85,6 @@
               color="primary"
               size="small"
               :to="`/notifications/${item._id}`"
-              prepend-icon="mdi-eye-outline"
-              title="View/Edit Notification"
             >
               View
             </v-btn>
@@ -113,23 +108,25 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useMyFetch } from '../composables/useMyFetch'; // Adjust path if needed
-import { useNuxtApp } from '#app'; // For $toast, if you want to use it for errors
+import { useNuxtApp } from '#app'; 
 
 const { $toast } = useNuxtApp();
 
+// REVISION: The typeFilter model is now used by v-tabs. Defaulting to `null` means "All Types" is selected initially.
+const typeFilter = ref(null); 
 const searchKey = ref('');
-const typeFilter = ref(null); // For v-select model, null for 'All Types'
 const totalItems = ref(0);
 const notifications = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
-let currentSortBy = [{ key: 'date', order: 'desc' }]; // Default sort
+let currentSortBy = ref([{ key: 'date', order: 'desc' }]);
 
+// REVISION: "title" is used for the tab text, "value" is used for the v-model and API query
 const NOTIFICATION_TYPE_FILTER_OPTIONS = [
-    { title: 'All Types', value: null }, // Represents no type filter
+    // { title: 'All Types', value: null }, 
     { title: 'Announcement', value: 'Announcement' },
     { title: 'Alert', value: 'Alert' },
-    { title: 'Notification', value: 'Notification' },
+    // { title: 'Notification', value: 'Notification' },
 ];
 
 const headers = ref([
@@ -143,29 +140,21 @@ const headers = ref([
 ]);
 
 let searchDebounceTimer = null;
-// Watch for changes in searchKey or typeFilter to trigger a reload
+// The existing watcher works perfectly with the new v-tabs component
 watch([searchKey, typeFilter], () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    // When search or filter changes, v-data-table-server's @update:options
-    // might not fire immediately if page/itemsPerPage didn't change.
-    // So, we manually call loadNotifications with page 1.
-    // The options from v-data-table-server will still be passed eventually for subsequent page changes.
     loadNotifications({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: currentSortBy.value });
-  }, 500); // 500ms debounce
+  }, 500); 
 });
 
-// This function is directly called when the v-select for typeFilter changes.
-// It ensures that a new API call is made with the filter, resetting to page 1.
-function filterChanged() {
-  loadNotifications({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: currentSortBy.value });
-}
+// REVISION: This function is no longer needed as the watcher handles the logic
+// function filterChanged() { ... }
 
 async function loadNotifications(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
 
-  // Update current sort state
   if (sortBy && sortBy.length) {
     currentSortBy.value = sortBy;
   }
@@ -176,35 +165,26 @@ async function loadNotifications(options) {
         page: page,
         itemsPerPage: rpp,
     };
-    if (typeFilter.value) { // Only add type if it's not null/empty
+    if (typeFilter.value) { 
         queryParams.type = typeFilter.value;
     }
-
-    // Add sorting parameters if your API supports them
-    // Example:
-    // if (currentSortBy.value && currentSortBy.value.length > 0) {
-    //   queryParams.sortBy = currentSortBy.value[0].key;
-    //   queryParams.sortOrder = currentSortBy.value[0].order;
-    // } else { // Default sort if none provided by table
-    //    queryParams.sortBy = 'date';
-    //    queryParams.sortOrder = 'desc';
-    // }
-
+    
+    // Add sorting parameters
+    if (currentSortBy.value && currentSortBy.value.length > 0) {
+      queryParams.sortBy = currentSortBy.value[0].key;
+      queryParams.sortOrder = currentSortBy.value[0].order;
+    }
 
     const { data, error } = await useMyFetch('/api/notifications', { query: queryParams });
 
     if (error.value) {
-      console.error('Failed to load notifications:', error.value);
-      $toast.fire({ title: 'Failed to load notifications.', icon: 'error' });
-      notifications.value = [];
-      totalItems.value = 0;
+      throw new Error(error.value.data?.message || 'Failed to load notifications.');
     } else if (data.value) {
       notifications.value = data.value.notifications || [];
       totalItems.value = data.value.total || 0;
     }
   } catch (e) {
-    console.error('Exception while loading notifications:', e);
-    $toast.fire({ title: 'An error occurred while loading notifications.', icon: 'error' });
+    $toast.fire({ title: e.message, icon: 'error' });
     notifications.value = [];
     totalItems.value = 0;
   } finally {
@@ -215,24 +195,20 @@ async function loadNotifications(options) {
 const formatDate = (dateString) => {
   if (!dateString) return 'N/A';
   try {
-    // More concise date formatting
     return new Date(dateString).toLocaleString(undefined, {
         year: 'numeric', month: 'short', day: 'numeric',
         hour: '2-digit', minute: '2-digit'
     });
   } catch (e) {
-    return dateString; // Fallback
+    return dateString;
   }
 };
 
-const getTypeColor = (type) => {
-  switch (type) {
-    case 'Announcement': return 'primary'; // Or 'blue'
-    case 'Alert': return 'error';     // Or 'red'
-    case 'Notification': return 'success'; // Or 'green'
-    default: return 'grey';
-  }
-};
+const getTypeColor = (type) => ({
+    'Announcement': 'primary',
+    'Alert': 'error',
+    'Notification': 'success'
+  }[type] || 'grey');
 
 const formatAudience = (target, recipientsArray) => {
     if (target === 'All') return 'All Approved Residents';
@@ -240,7 +216,7 @@ const formatAudience = (target, recipientsArray) => {
         const count = Array.isArray(recipientsArray) ? recipientsArray.length : 0;
         return `Specific (${count} resident${count === 1 ? '' : 's'})`;
     }
-    return target || 'N/A'; // Fallback for any other target values or if target is undefined
+    return target || 'N/A';
 };
 </script>
 
@@ -249,10 +225,6 @@ const formatAudience = (target, recipientsArray) => {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  display: block; /* Ensures it behaves like a block for truncation */
-}
-/* Optional: Add a little margin between search and filter if they stack on small screens */
-.v-select {
-    max-width: 100%; /* Ensure select doesn't overflow its column */
+  display: block;
 }
 </style>

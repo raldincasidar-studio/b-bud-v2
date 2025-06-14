@@ -21,7 +21,7 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
             <h2 class="text-truncate" :title="notificationData.name">
-                Notification: {{ notificationData.name }}
+                Announcement: {{ notificationData.name }}
                 <v-chip v-if="!editMode" :color="getTypeColor(notificationData.type)" small label class="ml-2">
                     {{ notificationData.type }}
                 </v-chip>
@@ -35,14 +35,14 @@
         </v-col>
       </v-row>
 
-      <v-card prepend-icon="mdi-bell-outline" :title="editMode ? 'Edit Notification Details' : 'Notification Details'">
+      <v-card prepend-icon="mdi-bell-outline" :title="editMode ? 'Edit Announcement Details' : 'Announcement Details'">
         <v-card-text>
           <v-form ref="form">
             <v-row>
               <v-col cols="12" md="6">
                 <v-text-field
                   v-model="editableNotification.name"
-                  label="Notification Name/Title*"
+                  label="Announcement Name/Title*"
                   :rules="[rules.required, rules.nameLength]"
                   :readonly="!editMode"
                   variant="outlined" density="compact"
@@ -86,7 +86,7 @@
               <v-col cols="12">
                 <v-textarea
                   v-model="editableNotification.content"
-                  label="Notification Content*"
+                  label="Announcement Content*"
                   :rules="[rules.required, rules.contentLength]"
                   :readonly="!editMode"
                   variant="outlined" rows="5" auto-grow
@@ -170,7 +170,7 @@
             </div>
 
              <small v-if="editableNotification.target_audience === 'All'" class="d-block mt-2 text-info">
-                This notification targets all 'Approved' residents. The recipient list is managed by the system.
+                This announcement targets all 'Approved' residents. The recipient list is managed by the system.
             </small>
 
             <v-divider v-if="!editMode" class="my-4"></v-divider>

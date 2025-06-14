@@ -653,6 +653,7 @@ app.post('/api/residents', async (req, res) => {
 // GET ALL RESIDENTS (GET) - Updated for new schema
 app.get('/api/residents', async (req, res) => {
   const search = req.query.search || '';
+  const status = req.query.status || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -677,8 +678,12 @@ app.get('/api/residents', async (req, res) => {
         { citizenship: { $regex: searchRegex } }, // Added from your original schema
         { place_of_birth: { $regex: searchRegex } }, // Added from your original schema
         { precinct_number: { $regex: searchRegex } }, // Added from your original schema
-        { status: { $regex: searchRegex } } // Search by status as well
       ],
+      $and: [{ status: { $regex: status } }]
+    };
+  } else {
+    query = {
+      status: { $regex: status }
     };
   }
 
@@ -1592,18 +1597,21 @@ app.put('/api/admins/:id', async (req, res) => {
 // ====================== BARANGAY OFFICIALS CRUD (REVISED & COMPLETE) =========================== //
 
 // --- Define Core Business Rules ---
-const ALLOWED_DESIGNATIONS = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Kagawad'];
+const ALLOWED_DESIGNATIONS = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Sangguniang Barangay Member', 'SK Chairperson', 'SK Member'];
 const UNIQUE_ROLES = ['Punong Barangay', 'Barangay Secretary', 'Treasurer'];
 
 // 1. CREATE: POST /api/barangay-officials
 app.post('/api/barangay-officials', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('barangay_officials');
-    const { full_name, position, term_start, term_end, status, photo_url } = req.body;
+    const { 
+        first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
+        position, term_start, term_end, status, photo_url 
+    } = req.body;
 
     // --- Validation ---
-    if (!full_name || !position || !term_start || !status) {
-        return res.status(400).json({ error: 'Missing required fields: full_name, position, term_start, and status are required.' });
+    if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position) {
+        return res.status(400).json({ error: 'Missing required fields. Please complete all required information.' });
     }
     if (!ALLOWED_DESIGNATIONS.includes(position)) {
         return res.status(400).json({ error: 'Invalid position provided.' });
@@ -1619,10 +1627,16 @@ app.post('/api/barangay-officials', async (req, res) => {
 
     try {
         const newOfficialDoc = {
-            full_name: String(full_name).trim(),
+            first_name: String(first_name).trim(),
+            last_name: String(last_name).trim(),
+            middle_name: middle_name ? String(middle_name).trim() : null,
+            sex: String(sex),
+            civil_status: String(civil_status),
+            religion: religion ? String(religion).trim() : null,
+            term_in_present_position: String(term_in_present_position),
             position: String(position),
             term_start: new Date(term_start),
-            term_end: term_end ? new Date(term_end) : null, // term_end is optional
+            term_end: term_end ? new Date(term_end) : null,
             status: String(status),
             photo_url: photo_url || null,
             created_at: new Date(),
@@ -1655,7 +1669,9 @@ app.get('/api/barangay-officials', async (req, res) => {
         const searchRegex = new RegExp(search, 'i');
         andConditions.push({
             $or: [
-                { full_name: { $regex: searchRegex } },
+                { first_name: { $regex: searchRegex } },
+                { last_name: { $regex: searchRegex } },
+                { middle_name: { $regex: searchRegex } },
                 { position: { $regex: searchRegex } },
             ]
         });
@@ -1671,7 +1687,7 @@ app.get('/api/barangay-officials', async (req, res) => {
 
     try {
         const officials = await collection.find(query)
-            .sort({ position: 1, full_name: 1 }) // Sort by position, then name
+            .sort({ position: 1, last_name: 1, first_name: 1 }) // Sort by position, then last name, then first name
             .skip(skip)
             .limit(itemsPerPage)
             .toArray();
@@ -1707,10 +1723,13 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
     
     const dab = await db();
     const collection = dab.collection('barangay_officials');
-    const { full_name, position, term_start, term_end, status, photo_url } = req.body;
+    const { 
+        first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
+        position, term_start, term_end, status, photo_url 
+    } = req.body;
 
     // --- Validation ---
-    if (!full_name || !position || !term_start || !status) {
+    if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position) {
         return res.status(400).json({ error: 'Missing required fields.' });
     }
     if (!ALLOWED_DESIGNATIONS.includes(position)) {
@@ -1731,7 +1750,13 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
 
     try {
         const updateFields = {
-            full_name: String(full_name).trim(),
+            first_name: String(first_name).trim(),
+            last_name: String(last_name).trim(),
+            middle_name: middle_name ? String(middle_name).trim() : null,
+            sex: String(sex),
+            civil_status: String(civil_status),
+            religion: religion ? String(religion).trim() : null,
+            term_in_present_position: String(term_in_present_position),
             position: String(position),
             term_start: new Date(term_start),
             term_end: term_end ? new Date(term_end) : null,
@@ -1766,7 +1791,6 @@ app.delete('/api/barangay-officials/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete official.' });
     }
 });
-
 
 
 
@@ -2256,8 +2280,26 @@ app.delete('/api/notifications/:id', async (req, res) => {
 
 // ====================== BORROW ASSETS CRUD (REVISED for Resident Borrower) =========================== //
 // Ensure ObjectId is imported: import { ObjectId } from 'mongodb';
+// --- Status Constants ---
+const STATUS = {
+  PENDING: 'Pending',
+  PROCESSING: 'Processing',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
+  RETURNED: 'Returned',
+  OVERDUE: 'Overdue',
+  LOST: 'Lost',
+  DAMAGED: 'Damaged',
+  RESOLVED: 'Resolved',
+};
 
-// ADD NEW BORROW ASSET TRANSACTION (POST) - UPDATED WITH QUANTITY
+// --- Helper Function Placeholder for Notifications ---
+// async function createNotification(db, { name, content, by, type, target_audience, recipient_ids }) {
+//   // Your implementation here...
+// }
+
+
+// 1. ADD NEW BORROW ASSET REQUEST (POST)
 app.post('/api/borrowed-assets', async (req, res) => {
   const dab = await db();
   const {
@@ -2266,14 +2308,14 @@ app.post('/api/borrowed-assets', async (req, res) => {
     borrow_datetime,
     borrowed_from_personnel,
     item_borrowed,
-    quantity_borrowed, // <<< NEW: Receiving the quantity
-    status,
+    quantity_borrowed,
+    expected_return_date,
     notes,
   } = req.body;
 
   // Validation
-  if (!borrower_resident_id || !borrower_display_name || !item_borrowed || !quantity_borrowed) {
-    return res.status(400).json({ error: 'Missing required fields. Borrower, item, and quantity are required.' });
+  if (!borrower_resident_id || !borrower_display_name || !item_borrowed || !quantity_borrowed || !expected_return_date) {
+    return res.status(400).json({ error: 'Missing required fields. Borrower, item, quantity, and expected return date are required.' });
   }
   if (!ObjectId.isValid(borrower_resident_id)) {
     return res.status(400).json({ error: 'Invalid borrower resident ID format.' });
@@ -2283,316 +2325,134 @@ app.post('/api/borrowed-assets', async (req, res) => {
       return res.status(400).json({ error: 'Quantity must be a number greater than 0.' });
   }
 
-
-  // --- START: SERVER-SIDE VALIDATION ---
   try {
     const assetsCollection = dab.collection('assets');
     const borrowedAssetsCollection = dab.collection('borrowed_assets');
 
-    // 1. Get the master record for the item to find its total quantity
+    // Server-side Stock Validation
     const masterAsset = await assetsCollection.findOne({ name: item_borrowed });
     if (!masterAsset) {
       return res.status(404).json({ error: 'Item not found in inventory.' });
     }
-
-    // 2. Calculate how many are currently borrowed
     const borrowedCountResult = await borrowedAssetsCollection.aggregate([
-        { $match: { item_borrowed: item_borrowed, status: { $in: ['Borrowed', 'Overdue'] } } },
+        { $match: { item_borrowed: item_borrowed, status: { $in: [STATUS.APPROVED, STATUS.OVERDUE] } } },
         { $group: { _id: "$item_borrowed", total_borrowed: { $sum: "$quantity_borrowed" } } }
     ]).toArray();
-
     const totalBorrowed = borrowedCountResult.length > 0 ? borrowedCountResult[0].total_borrowed : 0;
     const availableStock = masterAsset.total_quantity - totalBorrowed;
-
-    // 3. Compare and validate
     if (requestedQuantity > availableStock) {
-      return res.status(400).json({ 
+      return res.status(400).json({
           error: 'Insufficient stock.',
           message: `Cannot borrow ${requestedQuantity}. Only ${availableStock} ${item_borrowed} are available.`
       });
     }
-  // --- END: VALIDATION ---
 
+    // Create New Transaction Document
     const newTransaction = {
       borrower_resident_id: new ObjectId(borrower_resident_id),
       borrower_display_name: String(borrower_display_name).trim(),
       borrow_datetime: new Date(borrow_datetime),
       borrowed_from_personnel: String(borrowed_from_personnel).trim(),
       item_borrowed: String(item_borrowed),
-      quantity_borrowed: requestedQuantity, // <<< NEW: Saving the validated quantity
-      status: String(status).trim(),
+      quantity_borrowed: requestedQuantity,
+      expected_return_date: new Date(expected_return_date),
+      status: STATUS.PENDING,
       date_returned: null,
-      return_condition: null,
+      return_proof_image_url: null,
+      return_condition_notes: null,
       notes: notes ? String(notes).trim() : null,
       created_at: new Date(),
       updated_at: new Date(),
     };
     const result = await borrowedAssetsCollection.insertOne(newTransaction);
     const insertedDoc = await borrowedAssetsCollection.findOne({ _id: result.insertedId });
-    res.status(201).json({ message: 'Asset borrowing transaction added successfully', transaction: insertedDoc });
+
+    res.status(201).json({ message: 'Asset borrowing request submitted successfully', transaction: insertedDoc });
 
   } catch (error) {
     console.error('Error adding borrow asset transaction:', error);
-    res.status(500).json({ error: 'Error adding transaction: ' + error.message });
+    res.status(500).json({ error: 'Error processing your request: ' + error.message });
   }
 });
 
-// GET ALL BORROWED ASSETS TRANSACTIONS (GET) - WITH BORROWER NAME LOOKUP
+// 2. GET ALL BORROWED ASSETS (GET)
 app.get('/api/borrowed-assets', async (req, res) => {
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
-
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
-  
-  // Base match stage for search (applied after lookup if searching on borrower's actual name)
+
   let searchMatchStage = {};
   if (search) {
-    const searchRegex = new RegExp(search, 'i');
-    searchMatchStage = { // This will be part of the main aggregation pipeline
-        $or: [
-            // Search on fields from borrowed_assets collection directly
-            { borrower_display_name: { $regex: searchRegex } }, // Search on the stored display name
-            { item_borrowed: { $regex: searchRegex } },
-            { status: { $regex: searchRegex } },
-            { borrowed_from_personnel: { $regex: searchRegex } },
-            // Search on looked-up borrower fields
-            { "borrower_details.first_name": { $regex: searchRegex } },
-            { "borrower_details.last_name": { $regex: searchRegex } },
-        ]
-    };
+      const searchRegex = new RegExp(search, 'i');
+      searchMatchStage = {
+          $or: [
+              { borrower_display_name: searchRegex },
+              { item_borrowed: searchRegex },
+              { status: searchRegex },
+              { "borrower_details.first_name": searchRegex },
+              { "borrower_details.last_name": searchRegex },
+          ]
+      };
   }
 
   try {
     const aggregationPipeline = [
-      { // Optional: initial match on borrowed_assets fields if not searching resident details
-        $match: search ? {} : {} // If search is complex and needs pre-filtering before lookup
-      },
+      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
+      { $match: searchMatchStage },
       {
-        $lookup: {
-          from: 'residents', // The collection to join
-          localField: 'borrower_resident_id', // Field from the borrowed_assets input
-          foreignField: '_id', // Field from the residents collection
-          as: 'borrower_details_array' // Output array field
-        }
-      },
-      { // $lookup returns an array, so $unwind or $addFields to get the single borrower object
-        $addFields: {
-          borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] }
-        }
-      },
-      { // Now apply searchMatchStage which can include borrower_details fields
-        $match: searchMatchStage
-      },
-      {
-        $project: { // Define the output structure
-          _id: 1,
-          borrow_datetime: 1,
-          borrowed_from_personnel: 1,
-          item_borrowed: 1,
-          status: 1,
-          date_returned: 1,
-          return_condition: 1,
-          notes: 1,
-          created_at: 1,
-          borrower_resident_id: 1,
-          // Include borrower's full name from the lookup
-          borrower_name: { 
-            $concat: [
-              "$borrower_details.first_name", 
-              " ", 
-              { $ifNull: ["$borrower_details.middle_name", ""] }, // Handle if middle_name is null
-              { $cond: { if: { $eq: [{ $ifNull: ["$borrower_details.middle_name", ""] }, ""] }, then: "", else: " " } }, // Add space only if middle_name exists
-              "$borrower_details.last_name"
-            ]
-          },
-          // borrower_display_name: 1, // Can also return the stored display name
+        $project: {
+          _id: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1, status: "$current_status",
+          borrower_name: { $concat: [ { $ifNull: ["$borrower_details.first_name", "Unknown"] }, " ", { $ifNull: ["$borrower_details.last_name", "Resident"] } ] },
         }
       },
       { $sort: { borrow_datetime: -1 } },
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
-
     const transactions = await collection.aggregate(aggregationPipeline).toArray();
-
-    // For total count, we need a separate aggregation without skip/limit but with the match stages
     const countPipeline = [
-        // ... (same $lookup, $addFields, $match as above) ...
-         {
-            $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array'}
-        },
-        {
-            $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } }
-        },
-        {
-            $match: searchMatchStage // Apply the same search criteria
-        },
-        { $count: 'total' }
+      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array'} },
+      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
+      { $match: searchMatchStage },
+      { $count: 'total' }
     ];
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
-
-    res.json({
-      transactions: transactions,
-      total: totalTransactions,
-      page: page,
-      itemsPerPage: itemsPerPage,
-      totalPages: Math.ceil(totalTransactions / itemsPerPage),
-    });
+    res.json({ transactions, total: totalTransactions, page, itemsPerPage, totalPages: Math.ceil(totalTransactions / itemsPerPage) });
   } catch (error) {
     console.error('Error fetching borrowed assets:', error);
     res.status(500).json({ error: "Failed to fetch transactions." });
   }
 });
 
-// GET BORROWED ASSET TRANSACTIONS FOR A SPECIFIC RESIDENT
-app.get('/api/borrowed-assets/by-resident/:residentId', async (req, res) => {
-  const { residentId } = req.params;
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const skip = (page - 1) * itemsPerPage;
-
-  if (!ObjectId.isValid(residentId)) {
-    return res.status(400).json({ error: 'Invalid Resident ID format' });
-  }
-  const residentObjectId = new ObjectId(residentId);
-
-  try {
-    const dab = await db();
-    const collection = dab.collection('borrowed_assets'); // Make sure this is your collection name
-
-    const mainMatchStage = { borrower_resident_id: residentObjectId };
-
-    let searchMatchSubStage = {};
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      searchMatchSubStage = {
-        $or: [
-          { item_borrowed: { $regex: searchRegex } }, // Assuming item_borrowed is a string name
-          // If item_borrowed is an ObjectId linking to an 'assets' collection, you'd lookup assets first
-          // then search on "asset_details.name"
-          { status: { $regex: searchRegex } },
-          { borrowed_from_personnel: { $regex: searchRegex } }, // Name of personnel
-          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } } // Search by Ref #
-        ],
-      };
-    }
-
-    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
-
-    const aggregationPipeline = [
-      { $match: combinedMatchStage },
-      // Optional: Lookup item details if item_borrowed stores an item_id
-      // {
-      //   $lookup: {
-      //     from: 'inventory_items', // or your items collection name
-      //     localField: 'item_id', // Assuming you store item_id
-      //     foreignField: '_id',
-      //     as: 'item_details_array'
-      //   }
-      // },
-      // { $addFields: { item_details: { $arrayElemAt: ['$item_details_array', 0] } } },
-      // // Optional: Lookup personnel details if borrowed_from_personnel stores an ID
-      // {
-      //   $lookup: {
-      //     from: 'residents', // or 'admins'/'officials'
-      //     localField: 'borrowed_from_personnel_id',
-      //     foreignField: '_id',
-      //     as: 'personnel_details_array'
-      //   }
-      // },
-      // { $addFields: { personnel_details: { $arrayElemAt: ['$personnel_details_array', 0] } } },
-      {
-        $project: {
-          _id: 1,
-          borrow_datetime: 1,
-          item_borrowed: 1, // Direct name, or "$item_details.name" if looked up
-          status: 1,
-          borrowed_from_personnel: 1, // Direct name, or construct from "$personnel_details"
-          date_returned: 1,
-          return_condition: 1,
-          notes: 1,
-          created_at: 1,
-          updated_at: 1,
-          // borrower_name is known (it's the current user)
-        }
-      },
-      { $sort: { borrow_datetime: -1, created_at: -1 } },
-      { $skip: skip },
-      { $limit: itemsPerPage }
-    ];
-
-    const transactions = await collection.aggregate(aggregationPipeline).toArray();
-
-    const countPipeline = [
-        { $match: combinedMatchStage },
-        // Add lookups here if searchMatchSubStage depends on looked-up fields for accurate count
-        { $count: 'total' }
-    ];
-    const countResult = await collection.aggregate(countPipeline).toArray();
-    const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
-
-    res.json({
-      transactions,
-      total: totalTransactions,
-      page,
-      itemsPerPage,
-      totalPages: Math.ceil(totalTransactions / itemsPerPage)
-    });
-  } catch (error) {
-    console.error(`Error fetching borrowed assets for resident ${residentId}:`, error);
-    res.status(500).json({ error: "Failed to fetch borrowed asset transactions for this resident." });
-  }
-});
-
-// GET BORROWED ASSET TRANSACTION BY ID (GET) - WITH BORROWER NAME LOOKUP
+// 3. GET TRANSACTION BY ID (GET)
 app.get('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
-  }
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   try {
     const aggregationPipeline = [
       { $match: { _id: new ObjectId(id) } },
-      {
-        $lookup: {
-          from: 'residents',
-          localField: 'borrower_resident_id',
-          foreignField: '_id',
-          as: 'borrower_details_array'
-        }
-      },
-      {
-        $addFields: {
-          borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] }
-        }
-      },
+      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
       {
         $project: {
-          // Select fields from borrowed_assets
-          borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, status: 1,
-          date_returned: 1, return_condition: 1, notes: 1, created_at: 1, updated_at: 1,
-          borrower_resident_id: 1, borrower_display_name: 1, // Keep stored display name
-          // Add borrower's actual details from lookup
-          borrower_first_name: '$borrower_details.first_name',
-          borrower_last_name: '$borrower_details.last_name',
-          borrower_middle_name: '$borrower_details.middle_name',
-          borrower_contact_number: '$borrower_details.contact_number', // Example additional field
-          borrower_address_street: '$borrower_details.address_street', // Example
+          borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1, status: "$current_status", expected_return_date: 1,
+          date_returned: 1, return_proof_image_url: 1, return_condition_notes: 1, notes: 1, created_at: 1, updated_at: 1, borrower_resident_id: 1,
+          borrower_display_name: 1, borrower_details: 1,
         }
       }
     ];
     const result = await collection.aggregate(aggregationPipeline).toArray();
-
-    if (result.length === 0) {
-      return res.status(404).json({ error: 'Transaction not found.' });
-    }
+    if (result.length === 0) return res.status(404).json({ error: 'Transaction not found.' });
     res.json({ transaction: result[0] });
   } catch (error) {
     console.error('Error fetching transaction by ID:', error);
@@ -2600,178 +2460,115 @@ app.get('/api/borrowed-assets/:id', async (req, res) => {
   }
 });
 
-// UPDATE BORROWED ASSET TRANSACTION BY ID (PUT)
+// 4. UPDATE TRANSACTION DETAILS (PUT)
 app.put('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
-  }
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
-  const {
-    borrower_resident_id, // Expecting ID
-    borrower_display_name,  // Expecting Name
-    borrow_datetime,
-    borrowed_from_personnel,
-    item_borrowed,
-    status,
-    date_returned,
-    return_condition,
-    notes,
-  } = req.body;
-
+  const { borrow_datetime, item_borrowed, quantity_borrowed, expected_return_date, notes } = req.body;
   const updateFields = {};
-  // Only update borrower_resident_id and borrower_display_name if they are explicitly provided
-  if (borrower_resident_id !== undefined) {
-    if (!ObjectId.isValid(borrower_resident_id)) return res.status(400).json({ error: 'Invalid borrower resident ID format for update.' });
-    updateFields.borrower_resident_id = new ObjectId(borrower_resident_id);
-  }
-  if (borrower_display_name !== undefined) updateFields.borrower_display_name = String(borrower_display_name).trim();
-  
   if (borrow_datetime !== undefined) updateFields.borrow_datetime = new Date(borrow_datetime);
-  if (borrowed_from_personnel !== undefined) updateFields.borrowed_from_personnel = String(borrowed_from_personnel).trim();
   if (item_borrowed !== undefined) updateFields.item_borrowed = String(item_borrowed);
-  if (status !== undefined) updateFields.status = String(status).trim();
-  if (date_returned !== undefined) updateFields.date_returned = date_returned ? new Date(date_returned) : null;
-  if (return_condition !== undefined) updateFields.return_condition = return_condition ? String(return_condition).trim() : null;
+  if (quantity_borrowed !== undefined) updateFields.quantity_borrowed = parseInt(quantity_borrowed, 10);
+  if (expected_return_date !== undefined) updateFields.expected_return_date = new Date(expected_return_date);
   if (notes !== undefined) updateFields.notes = notes ? String(notes).trim() : null;
-
-  if (Object.keys(updateFields).length === 0) {
-    return res.status(400).json({ error: 'No fields to update provided.' });
-  }
+  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update provided.' });
   updateFields.updated_at = new Date();
-
   try {
     const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Transaction not found.' });
-    }
-    // Fetch the updated doc with looked-up borrower details for the response
-    const updatedTransactionResult = await collection.aggregate([
-        { $match: { _id: new ObjectId(id) } },
-        { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' }},
-        { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } }},
-        // Project fields similar to GET by ID
-    ]).toArray();
-
-    res.json({ message: 'Transaction updated successfully', transaction: updatedTransactionResult[0] || null });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Transaction not found.' });
+    const updatedDoc = await collection.findOne({ _id: new ObjectId(id) });
+    res.json({ message: 'Transaction updated successfully', transaction: updatedDoc });
   } catch (error) {
     console.error('Error updating transaction:', error);
     res.status(500).json({ error: 'Error updating transaction: ' + error.message });
   }
 });
 
+// 5. UPDATE TRANSACTION STATUS (PATCH)
 app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status: newStatus } = req.body;
-
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid Borrowed Asset Transaction ID format' });
-  }
-
-  // Define your allowed statuses for borrowed assets
-  const ALLOWED_BORROW_STATUSES = ['Borrowed', 'Returned', 'Overdue', 'Lost', 'Damaged']; // Added more common statuses
-  if (!newStatus || !ALLOWED_BORROW_STATUSES.includes(newStatus)) {
-    return res.status(400).json({
-      error: 'Validation failed',
-      message: `Status is required and must be one of: ${ALLOWED_BORROW_STATUSES.join(', ')}`
-    });
-  }
-
+  const { status: newStatus, notes } = req.body;
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid Transaction ID format' });
+  if (!newStatus || !Object.values(STATUS).includes(newStatus)) return res.status(400).json({ error: `Status is required and must be one of: ${Object.values(STATUS).join(', ')}` });
   try {
     const dab = await db();
-    const borrowedAssetsCollection = dab.collection('borrowed_assets'); // Ensure collection name matches
+    const borrowedAssetsCollection = dab.collection('borrowed_assets');
     const residentsCollection = dab.collection('residents');
-
-    const currentTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
-    if (!currentTransaction) {
-      return res.status(404).json({ error: 'Not found', message: 'Borrowed asset transaction not found.' });
-    }
-
-    if (currentTransaction.status === newStatus) {
-      return res.json({ message: `Transaction status is already '${newStatus}'.`, statusChanged: false, updatedTransaction: currentTransaction });
-    }
-
+    const transaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
+    if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
     const updateFields = { status: newStatus, updated_at: new Date() };
-
-    // If status is changing to 'Returned', automatically set date_returned
-    if (newStatus === 'Returned' && !currentTransaction.date_returned) {
-      updateFields.date_returned = new Date();
+    if (notes) {
+      updateFields.notes = transaction.notes ? `${transaction.notes}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}` : `[${new Date().toLocaleString()}] ${notes}`;
     }
-    // If changing away from 'Returned', you might want to nullify date_returned (depends on your business logic)
-    // else if (currentTransaction.status === 'Returned' && newStatus !== 'Returned') {
-    //   updateFields.date_returned = null;
-    // }
-
-
-    const result = await borrowedAssetsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateFields }
-    );
-
-    if (result.modifiedCount === 0) {
-      // This case might be hit if only updated_at would change but status didn't effectively change
-       return res.json({ message: `Transaction status was already effectively '${newStatus}'. No substantive fields changed.`, statusChanged: false, updatedTransaction: currentTransaction });
+    if ([STATUS.LOST, STATUS.DAMAGED].includes(newStatus)) {
+        await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Deactivated' } });
+    } else if (newStatus === STATUS.RESOLVED && [STATUS.LOST, STATUS.DAMAGED].includes(transaction.status)) {
+        await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Active' } });
     }
-
+    await borrowedAssetsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
-
-    // --- Send Notification to the Borrower ---
-    if (updatedTransaction && updatedTransaction.borrower_resident_id) {
-      const borrower = await residentsCollection.findOne({ _id: new ObjectId(updatedTransaction.borrower_resident_id) });
-      if (borrower) {
-        let notificationContent = `Dear ${borrower.first_name || 'Resident'}, the status of your borrowed item "${updatedTransaction.item_borrowed}" (Ref: ${updatedTransaction._id.toString().slice(-6)}) has been updated to: ${newStatus}.`;
-        if (newStatus === "Overdue") {
-            notificationContent += " Please return it as soon as possible.";
-        } else if (newStatus === "Returned") {
-            notificationContent += " Thank you for returning the item.";
-        }
-        // Assuming you have your createNotification function available
-        await createNotification(dab, {
-          name: `Borrowed Item Update: ${updatedTransaction.item_borrowed}`,
-          content: notificationContent,
-          by: "System Administration",
-          type: (newStatus === "Overdue" || newStatus === "Lost" || newStatus === "Damaged") ? "Alert" : "Notification",
-          target_audience: 'SpecificResidents',
-          recipient_ids: [borrower._id.toString()],
-        });
-      } else {
-        console.warn(`Could not find borrower (ID: ${updatedTransaction.borrower_resident_id}) for notification of borrowed asset ${updatedTransaction._id}`);
-      }
-    }
-
-    res.json({
-      message: `Borrowed asset status updated to '${newStatus}' successfully.`,
-      statusChanged: true,
-      updatedTransaction: updatedTransaction
-    });
-
+    res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
   } catch (error) {
-    console.error("Error updating borrowed asset status:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not update status.' });
+    console.error("Error updating transaction status:", error);
+    res.status(500).json({ error: 'Database error during status update.' });
   }
 });
 
-// DELETE BORROWED ASSET TRANSACTION BY ID (DELETE)
+// 6. PROCESS ITEM RETURN (PATCH) - UPDATED FOR BASE64
+app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
+    const { id } = req.params;
+    // Expect the Base64 string from the frontend
+    const { return_proof_image_base64, return_condition_notes } = req.body;
+
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid transaction ID format.' });
+
+    try {
+        const dab = await db();
+        const collection = dab.collection('borrowed_assets');
+
+        const transaction = await collection.findOne({ _id: new ObjectId(id) });
+        if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
+
+        if (![STATUS.APPROVED, STATUS.OVERDUE].includes(transaction.status)) {
+          return res.status(400).json({ error: `Cannot return an item with status '${transaction.status}'.` });
+        }
+
+        const updateFields = {
+            status: STATUS.RETURNED,
+            date_returned: new Date(),
+            // Store the received Base64 data URL directly.
+            return_proof_image_url: return_proof_image_base64 || null,
+            return_condition_notes: return_condition_notes || "Item returned.",
+            updated_at: new Date(),
+        };
+
+        await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        const updatedTransaction = await collection.findOne({ _id: new ObjectId(id) });
+
+        res.json({ message: 'Item marked as returned successfully.', transaction: updatedTransaction });
+    } catch (error) {
+        console.error('Error marking item as returned:', error);
+        res.status(500).json({ error: 'Failed to update transaction.' });
+    }
+});
+
+// 7. DELETE TRANSACTION (DELETE)
 app.delete('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
-  }
+  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   try {
     const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      return res.status(404).json({ error: 'Transaction not found.' });
-    }
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Transaction not found.' });
     res.json({ message: 'Transaction deleted successfully' });
   } catch (error) {
     console.error('Error deleting transaction:', error);
     res.status(500).json({ error: 'Error deleting transaction: ' + error.message });
   }
 });
-
 
 
 
@@ -2816,6 +2613,156 @@ app.get('/api/assets/inventory-status', async (req, res) => {
 
 
 
+// ================================== ASSETS CRUD ================================== //
+
+// 1. CREATE: POST /api/assets
+app.post('/api/assets', async (req, res) => {
+    const dab = await db();
+    const collection = dab.collection('assets');
+    const { name, total_quantity, category } = req.body;
+
+    // --- Validation ---
+    if (!name || total_quantity === undefined || !category) {
+        return res.status(400).json({ error: 'Missing required fields: name, total_quantity, and category are required.' });
+    }
+    const quantity = parseInt(total_quantity, 10);
+    if (isNaN(quantity) || quantity < 0) {
+        return res.status(400).json({ error: 'Total quantity must be a non-negative number.' });
+    }
+
+    try {
+        const newAssetDoc = {
+            name: String(name).trim(),
+            total_quantity: quantity,
+            category: String(category).trim(),
+            created_at: new Date(),
+            updated_at: new Date(),
+        };
+
+        const result = await collection.insertOne(newAssetDoc);
+        res.status(201).json({ message: 'Asset added successfully', assetId: result.insertedId });
+    } catch (error) {
+        console.error("Error adding asset:", error);
+        res.status(500).json({ error: 'Failed to add asset.' });
+    }
+});
+
+// 2. READ (List): GET /api/assets
+app.get('/api/assets', async (req, res) => {
+    const search = req.query.search || '';
+    const categoryFilter = req.query.category || '';
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const collection = dab.collection('assets');
+    
+    let query = {};
+    const andConditions = [];
+
+    if (search) {
+        const searchRegex = new RegExp(search, 'i');
+        andConditions.push({
+            $or: [
+                { name: { $regex: searchRegex } },
+                { category: { $regex: searchRegex } },
+            ]
+        });
+    }
+
+    if (categoryFilter) {
+        andConditions.push({ category: categoryFilter });
+    }
+    
+    if (andConditions.length > 0) {
+        query = { $and: andConditions };
+    }
+
+    try {
+        const assets = await collection.find(query)
+            .sort({ name: 1 })
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+            
+        const totalAssets = await collection.countDocuments(query);
+
+        res.json({ assets, totalAssets });
+    } catch (error) {
+        console.error("Error fetching assets:", error);
+        res.status(500).json({ error: 'Failed to fetch assets.' });
+    }
+});
+
+// 3. READ (Single): GET /api/assets/:id
+app.get('/api/assets/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    const dab = await db();
+    const collection = dab.collection('assets');
+    try {
+        const asset = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!asset) return res.status(404).json({ error: 'Asset not found.' });
+        res.json({ asset });
+    } catch (error) {
+        console.error("Error fetching asset by ID:", error);
+        res.status(500).json({ error: 'Failed to fetch asset.' });
+    }
+});
+
+// 4. UPDATE: PUT /api/assets/:id
+app.put('/api/assets/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('assets');
+    const { name, total_quantity, category } = req.body;
+
+    // --- Validation ---
+    if (!name || total_quantity === undefined || !category) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+    const quantity = parseInt(total_quantity, 10);
+    if (isNaN(quantity) || quantity < 0) {
+        return res.status(400).json({ error: 'Total quantity must be a non-negative number.' });
+    }
+
+    try {
+        const updateFields = {
+            name: String(name).trim(),
+            total_quantity: quantity,
+            category: String(category).trim(),
+            updated_at: new Date(),
+        };
+
+        const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Asset not found.' });
+
+        res.json({ message: 'Asset updated successfully' });
+    } catch (error) {
+        console.error("Error updating asset:", error);
+        res.status(500).json({ error: 'Failed to update asset.' });
+    }
+});
+
+// 5. DELETE: DELETE /api/assets/:id
+app.delete('/api/assets/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('assets');
+    
+    try {
+        const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) return res.status(404).json({ error: 'Asset not found.' });
+        res.json({ message: 'Asset deleted successfully' });
+    } catch (error) {
+        console.error("Error deleting asset:", error);
+        res.status(500).json({ error: 'Failed to delete asset.' });
+    }
+});
+
 
 
 
@@ -2830,6 +2777,7 @@ app.post('/api/complaints', async (req, res) => {
     complainant_display_name,
     complainant_address,
     contact_number,
+    category,
     date_of_complaint,
     time_of_complaint,
     person_complained_against_name, // Name (can be manual or from resident search)
@@ -2839,7 +2787,7 @@ app.post('/api/complaints', async (req, res) => {
   } = req.body;
 
   // Validation
-  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number ||
+  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category || 
       !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
@@ -2863,6 +2811,7 @@ app.post('/api/complaints', async (req, res) => {
       person_complained_against_name: String(person_complained_against_name).trim(),
       person_complained_against_resident_id: person_complained_against_resident_id ? new ObjectId(person_complained_against_resident_id) : null,
       status: String(status).trim(),
+      category: String(category).trim(),
       notes_description: String(notes_description).trim(),
       created_at: new Date(),
       updated_at: new Date(),
@@ -2899,6 +2848,7 @@ app.get('/api/complaints', async (req, res) => {
         { "person_complained_details.first_name": { $regex: searchRegex } }, // Search looked-up name
         { "person_complained_details.last_name": { $regex: searchRegex } },
         { status: { $regex: searchRegex } },
+        { category: { $regex: searchRegex } },
         { notes_description: { $regex: searchRegex } },
       ],
     };
@@ -2938,7 +2888,7 @@ app.get('/api/complaints', async (req, res) => {
               "$person_complained_against_name" // Fallback to manually entered/stored name
             ]
           },
-          date_of_complaint: 1, status: 1, notes_description: 1, created_at: 1,
+          date_of_complaint: 1, status: 1, notes_description: 1, created_at: 1, category: 1,
         }
       },
       { $sort: { date_of_complaint: -1, created_at: -1 } },
@@ -3102,6 +3052,7 @@ app.get('/api/complaints/:id', async (req, res) => {
           "complainant_details._id": 1, "complainant_details.first_name": 1, /* ... etc ... */
           // Person complained against details
           "person_complained_details._id": 1, "person_complained_details.first_name": 1, /* ... etc ... */
+          category: 1,
         }
       }
     ];

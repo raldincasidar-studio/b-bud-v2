@@ -5,7 +5,7 @@
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
       <p class="mt-2 text-grey-darken-1">Loading Official Data...</p>
     </div>
-    <div v-else-if="!form.full_name">
+    <div v-else-if="!form.last_name">
       <v-alert type="warning" prominent border="start" text="Official not found.">
         <template v-slot:append><v-btn to="/barangay-officials">Back to List</v-btn></template>
       </v-alert>
@@ -16,7 +16,7 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Edit Barangay Official</h2>
-          <p class="text-grey-darken-1">Update details for {{ form.full_name }}</p>
+          <p class="text-grey-darken-1">Update details for {{ form.first_name }} {{ form.last_name }}</p>
         </v-col>
         <v-col class="text-right">
           <v-btn v-if="!editMode" color="primary" @click="editMode = true" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn>
@@ -29,23 +29,84 @@
       <v-card class="mt-4" flat border>
         <v-card-text class="py-6">
           <v-row>
-            <v-col cols="12" md="6">
-              <label class="v-label mb-1">Full Name <span v-if="editMode" class="text-red">*</span></label>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Last Name <span v-if="editMode" class="text-red">*</span></label>
               <v-text-field
-                v-model="form.full_name"
+                v-model="form.last_name"
                 :readonly="!editMode" variant="outlined"
-                :error-messages="v$.full_name.$errors.map(e => e.$message)"
-                @blur="v$.full_name.$touch"
+                :error-messages="v$.last_name.$errors.map(e => e.$message)"
+                @blur="v$.last_name.$touch"
               ></v-text-field>
             </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">First Name <span v-if="editMode" class="text-red">*</span></label>
+              <v-text-field
+                v-model="form.first_name"
+                :readonly="!editMode" variant="outlined"
+                :error-messages="v$.first_name.$errors.map(e => e.$message)"
+                @blur="v$.first_name.$touch"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Middle Name (Optional)</label>
+              <v-text-field
+                v-model="form.middle_name"
+                :readonly="!editMode" variant="outlined"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+
+          <v-row>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Sex <span v-if="editMode" class="text-red">*</span></label>
+              <v-select
+                v-model="form.sex"
+                :items="['M', 'F']"
+                :readonly="!editMode" variant="outlined"
+                :error-messages="v$.sex.$errors.map(e => e.$message)"
+                @blur="v$.sex.$touch"
+              ></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Civil Status <span v-if="editMode" class="text-red">*</span></label>
+              <v-select
+                v-model="form.civil_status"
+                :items="['Single', 'Married', 'Widowed', 'Separated']"
+                :readonly="!editMode" variant="outlined"
+                :error-messages="v$.civil_status.$errors.map(e => e.$message)"
+                @blur="v$.civil_status.$touch"
+              ></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Religion (Optional)</label>
+              <v-text-field
+                v-model="form.religion"
+                :readonly="!editMode" variant="outlined"
+              ></v-text-field>
+            </v-col>
+          </v-row>
+
+          <v-divider class="my-4"></v-divider>
+
+          <v-row>
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Position / Designation <span v-if="editMode" class="text-red">*</span></label>
               <v-select
                 v-model="form.position"
-                :items="['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Kagawad']"
+                :items="['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Sangguniang Barangay Member', 'SK Chairperson', 'SK Member']"
                 :readonly="!editMode" variant="outlined"
                 :error-messages="v$.position.$errors.map(e => e.$message)"
                 @blur="v$.position.$touch"
+              ></v-select>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label mb-1">Term in Present Position <span v-if="editMode" class="text-red">*</span></label>
+              <v-select
+                v-model="form.term_in_present_position"
+                :items="['1st', '2nd', '3rd']"
+                :readonly="!editMode" variant="outlined"
+                :error-messages="v$.term_in_present_position.$errors.map(e => e.$message)"
+                @blur="v$.term_in_present_position.$touch"
               ></v-select>
             </v-col>
           </v-row>
@@ -84,7 +145,7 @@
     <v-dialog v-model="confirmDeleteDialog" persistent max-width="400">
       <v-card>
         <v-card-title class="text-h5">Confirm Deletion</v-card-title>
-        <v-card-text>Delete official record for <strong>{{ form.full_name }}</strong>? This action cannot be undone.</v-card-text>
+        <v-card-text>Delete official record for <strong>{{ form.first_name }} {{ form.last_name }}</strong>? This action cannot be undone.</v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
           <v-btn color="blue-darken-1" variant="text" @click="confirmDeleteDialog = false">Cancel</v-btn>
@@ -110,7 +171,8 @@ const officialId = route.params.id;
 
 // --- STATE ---
 const form = reactive({
-  full_name: '', position: null, term_start: '', term_end: '', status: 'Active',
+  first_name: '', last_name: '', middle_name: '', sex: null, civil_status: null, religion: '', term_in_present_position: null,
+  position: null, term_start: '', term_end: '', status: 'Active',
 });
 const originalFormState = ref({});
 const loading = ref(true);
@@ -121,7 +183,8 @@ const confirmDeleteDialog = ref(false);
 
 // --- VUELIDATE ---
 const rules = {
-  full_name: { required }, position: { required }, term_start: { required }, status: { required },
+  first_name: { required }, last_name: { required }, sex: { required }, civil_status: { required },
+  position: { required }, term_in_present_position: { required }, term_start: { required }, status: { required },
 };
 const v$ = useVuelidate(rules, form);
 

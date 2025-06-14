@@ -55,30 +55,6 @@
             <v-chip :color="getStatusColor(item.status)" label size="small" class="me-2">
               {{ item.status }}
             </v-chip>
-            <v-menu offset-y>
-              <template v-slot:activator="{ props }">
-                <v-btn
-                  icon="mdi-dots-vertical"
-                  size="small"
-                  variant="text"
-                  v-bind="props"
-                  :loading="updatingStatusFor === item._id"
-                  :disabled="updatingStatusFor === item._id"
-                ></v-btn>
-              </template>
-              <v-list density="compact">
-                <v-list-item
-                  v-for="action in getAvailableActions(item.status)"
-                  :key="action.status"
-                  @click="updateComplaintStatus(item, action.status)"
-                >
-                  <template v-slot:prepend>
-                    <v-icon :icon="action.icon" :color="action.color" size="small"></v-icon>
-                  </template>
-                  <v-list-item-title>{{ action.title }}</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu>
           </div>
         </template>
 
@@ -117,7 +93,7 @@ const headers = ref([
   { title: 'Complainant', key: 'complainant_name', sortable: true },
   { title: 'Complained Against', key: 'person_complained_against', sortable: true },
   { title: 'Date Filed', key: 'date_of_complaint', sortable: true },
-  { title: 'Description Preview', key: 'notes_description', sortable: false },
+  { title: 'Category', key: 'category', sortable: false },
   { title: 'Status & Actions', key: 'status', sortable: true, align: 'center', width: '220px'},
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);

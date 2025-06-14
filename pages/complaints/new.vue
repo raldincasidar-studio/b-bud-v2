@@ -120,6 +120,17 @@
           </v-row>
           <v-row>
             <v-col cols="12">
+              <v-select
+                v-model="form.category"
+                label="Category"
+                :items="complaintCategories"
+                variant="outlined"
+                placeholder="Select Category"
+                :error-messages="v$.category.$errors.map(e => e.$message)"
+                @blur="v$.category.$touch"
+              ></v-select>
+            </v-col>
+            <v-col cols="12">
               <v-textarea
                 v-model="form.notes_description"
                 label="Notes / Description of Complaint"
@@ -149,9 +160,31 @@ const form = reactive({
   complainant_resident_id: null, complainant_display_name: '', complainant_address: '', contact_number: '',
   date_of_complaint: new Date().toISOString().split('T')[0],
   time_of_complaint: new Date().toTimeString().slice(0,5),
+  category: '',
   person_complained_against_resident_id: null, person_complained_against_name: '',
   status: 'New', notes_description: '',
 });
+
+const complaintCategories = ref([
+  'Theft / Robbery',
+  'Scam / Fraud',
+  'Physical Assault / Violence',
+  'Verbal Abuse / Threats',
+  'Sexual Harassment / Abuse',
+  'Vandalism',
+  'Noise Disturbance',
+  'Illegal Parking / Obstruction',
+  'Drunk and Disorderly Behavior',
+  'Curfew Violation / Minor Offenses',
+  'Illegal Gambling',
+  'Animal Nuisance / Stray Animal Concern',
+  'Garbage / Sanitation Complaints',
+  'Boundary Disputes / Trespassing',
+  'Barangay Staff / Official Misconduct',
+  'Others',
+
+]);
+
 const saving = ref(false);
 
 const complainantSearchQuery = ref('');
@@ -167,6 +200,7 @@ const rules = {
     complainant_resident_id: { required: helpers.withMessage('A complainant must be selected.', required) },
     complainant_address: { required }, contact_number: { required }, date_of_complaint: { required }, time_of_complaint: { required },
     person_complained_against_name: { required: helpers.withMessage('The person being complained against is required.', required) },
+    category: { required },
     status: { required }, notes_description: { required }
 };
 const v$ = useVuelidate(rules, form);

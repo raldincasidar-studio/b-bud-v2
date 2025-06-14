@@ -21,25 +21,92 @@
     <v-card class="mt-4" flat border>
       <v-card-text class="py-6">
         <v-row>
-          <v-col cols="12" md="6">
-            <label class="v-label mb-1">Full Name <span class="text-red">*</span></label>
-            <v-text-field
-              v-model="form.full_name"
-              label="Enter the full name"
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Last Name <span class="text-red">*</span></label>
+              <v-text-field
+                v-model="form.last_name"
+                label="Enter last name"
+                variant="outlined"
+                :error-messages="v$.last_name.$errors.map(e => e.$message)"
+                @blur="v$.last_name.$touch"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">First Name <span class="text-red">*</span></label>
+              <v-text-field
+                v-model="form.first_name"
+                label="Enter first name"
+                variant="outlined"
+                :error-messages="v$.first_name.$errors.map(e => e.$message)"
+                @blur="v$.first_name.$touch"
+              ></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label mb-1">Middle Name (Optional)</label>
+              <v-text-field
+                v-model="form.middle_name"
+                label="Enter middle name"
+                variant="outlined"
+              ></v-text-field>
+            </v-col>
+        </v-row>
+
+        <v-row>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-1">Sex <span class="text-red">*</span></label>
+            <v-select
+              v-model="form.sex"
+              label="Select sex"
+              :items="['Male', 'Female']"
               variant="outlined"
-              :error-messages="v$.full_name.$errors.map(e => e.$message)"
-              @blur="v$.full_name.$touch"
+              :error-messages="v$.sex.$errors.map(e => e.$message)"
+              @blur="v$.sex.$touch"
+            ></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-1">Civil Status <span class="text-red">*</span></label>
+            <v-select
+              v-model="form.civil_status"
+              label="Select civil status"
+              :items="['Single', 'Married', 'Widowed', 'Separated']"
+              variant="outlined"
+              :error-messages="v$.civil_status.$errors.map(e => e.$message)"
+              @blur="v$.civil_status.$touch"
+            ></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-1">Religion (Optional)</label>
+            <v-text-field
+              v-model="form.religion"
+              label="Enter religion"
+              variant="outlined"
             ></v-text-field>
           </v-col>
+        </v-row>
+        
+        <v-divider class="my-4"></v-divider>
+
+        <v-row>
           <v-col cols="12" md="6">
             <label class="v-label mb-1">Position / Designation <span class="text-red">*</span></label>
             <v-select
               v-model="form.position"
               label="Select a position"
-              :items="['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Kagawad']"
+              :items="['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Sangguniang Barangay Member', 'SK Chairperson', 'SK Member']"
               variant="outlined"
               :error-messages="v$.position.$errors.map(e => e.$message)"
               @blur="v$.position.$touch"
+            ></v-select>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label mb-1">Term in Present Position <span class="text-red">*</span></label>
+            <v-select
+              v-model="form.term_in_present_position"
+              label="Select term"
+              :items="['1st', '2nd', '3rd']"
+              variant="outlined"
+              :error-messages="v$.term_in_present_position.$errors.map(e => e.$message)"
+              @blur="v$.term_in_present_position.$touch"
             ></v-select>
           </v-col>
         </v-row>
@@ -92,20 +159,30 @@ const router = useRouter();
 
 // State for the form, aligned with the new data model
 const form = reactive({
-  full_name: '',
+  first_name: '',
+  last_name: '',
+  middle_name: '',
+  sex: null,
+  civil_status: null,
+  religion: '',
+  term_in_present_position: null,
   position: null,
   term_start: '',
   term_end: '',
   status: 'Active',
-  photo_url: null, // photo is optional for now
+  photo_url: null,
 });
 
 const saving = ref(false);
 
 // Vuelidate rules
 const rules = {
-  full_name: { required },
+  first_name: { required },
+  last_name: { required },
+  sex: { required },
+  civil_status: { required },
   position: { required },
+  term_in_present_position: { required },
   term_start: { required },
   status: { required },
 };

@@ -25,6 +25,21 @@
       </v-card-title>
       <v-divider></v-divider>
 
+      <!-- Filter Chip Group -->
+      <v-card-text>
+        <v-chip-group
+          v-model="statusFilter"
+          column
+          color="primary"
+        >
+          <v-chip filter value="All">All</v-chip>
+          <v-chip filter value="Pending">Pending</v-chip>
+          <v-chip filter value="Approved">Approved</v-chip>
+          <v-chip filter value="Deactivated">Deactivated</v-chip>
+        </v-chip-group>
+      </v-card-text>
+      <v-divider></v-divider>
+
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
         :headers="headers"
@@ -115,6 +130,7 @@ import { useMyFetch } from '~/composables/useMyFetch';
 const { $toast } = useNuxtApp();
 
 const searchKey = ref('');
+const statusFilter = ref('All');
 const totalItems = ref(0);
 const residents = ref([]);
 const loading = ref(true);
@@ -205,11 +221,21 @@ watch(searchKey, () => {
   }, 500);
 });
 
+watch(statusFilter, () => {
+  loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+});
+
 async function loadResidents(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp } = options;
   try {
-    const { data, error } = await useMyFetch('/api/residents', { query: { search: searchKey.value, page, itemsPerPage: rpp } });
+    const queryParams = {
+        search: searchKey.value,
+        page,
+        itemsPerPage: rpp,
+        status: statusFilter.value === 'All' ? '' : statusFilter.value
+    };
+    const { data, error } = await useMyFetch('/api/residents', { query: queryParams });
     if (error.value) throw new Error('Failed to load residents.');
     residents.value = data.value.residents || [];
     totalItems.value = data.value.total || 0;

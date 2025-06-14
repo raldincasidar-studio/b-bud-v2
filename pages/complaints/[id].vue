@@ -19,7 +19,7 @@
           <p class="text-grey-darken-1">Reference #: {{ complaintId }}</p>
         </v-col>
         <v-col class="text-right">
-          <v-btn v-if="!editMode" color="primary" @click="toggleEditMode(true)" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn>
+          <!-- <v-btn v-if="!editMode" color="primary" @click="toggleEditMode(true)" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn> -->
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving">Save Changes</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
@@ -91,10 +91,38 @@
             <!-- Description -->
             <v-row>
               <v-col cols="12">
+                <label class="v-label mb-1">Category <span v-if="editMode" class="text-red">*</span></label>
+                <v-select :readonly="!editMode" v-model="form.category" :items="complaintCategories" variant="outlined" :error-messages="v$.category.$errors.map(e => e.$message)" @blur="v$.category.$touch"></v-select>
+              </v-col>
+              <v-col cols="12">
                 <label class="v-label mb-1">Description of Complaint <span v-if="editMode" class="text-red">*</span></label>
                 <v-textarea v-model="form.notes_description" :readonly="!editMode" variant="outlined" rows="5" auto-grow :error-messages="v$.notes_description.$errors.map(e => e.$message)" @blur="v$.notes_description.$touch"></v-textarea>
               </v-col>
             </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- add new v-card for actions button -->
+      <v-card class="mt-4">
+        <v-card-title>Set Action</v-card-title>
+        <v-divider></v-divider>
+        <v-card-text>
+          <v-card-row>
+            <v-col cols="12">
+              <v-alert v-if="form.status === 'New'" type="info" class="my-2">Current Status: New</v-alert>
+              <v-alert v-else-if="form.status === 'Under Investigation'" type="warning" class="my-2">Current Status: Under Investigation</v-alert>
+              <v-alert v-else-if="form.status === 'Resolved'" type="success" class="my-2">Current Status: Resolved</v-alert>
+              <v-alert v-else-if="form.status === 'Dismissed'" type="success" class="my-2">Current Status: Dismissed</v-alert>
+              <v-alert v-else-if="form.status === 'Closed'" type="error" class="my-2">Current Status: Closed</v-alert>
+              <!-- <v-alert v-if="form.status === 'Dismissed' || form.status === 'Closed' || form.status === 'Resolved'" type="info" class="my-2">No further action is required</v-alert> -->
+            </v-col>
+            <v-col cols="12">
+              <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify">Under Investigation</v-btn>
+              <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle">Resolved</v-btn>
+              <v-btn v-if="form.status === 'New'" color="grey-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline">Close</v-btn>
+              <v-btn v-if="form.status === 'Under Investigation'" color="error" size=large class="ma-2" @click="updateComplaintStatus('Dismissed')" prepend-icon="mdi-cancel">Dismissed</v-btn>
+            </v-col>
+          </v-card-row>
         </v-card-text>
       </v-card>
     </div>
@@ -132,7 +160,28 @@ const form = reactive({
   date_of_complaint: '', time_of_complaint: '',
   person_complained_against_resident_id: null, person_complained_against_name: '',
   status: 'New', notes_description: '',
+  category: '',
 });
+
+const complaintCategories = ref([
+  'Theft / Robbery',
+  'Scam / Fraud',
+  'Physical Assault / Violence',
+  'Verbal Abuse / Threats',
+  'Sexual Harassment / Abuse',
+  'Vandalism',
+  'Noise Disturbance',
+  'Illegal Parking / Obstruction',
+  'Drunk and Disorderly Behavior',
+  'Curfew Violation / Minor Offenses',
+  'Illegal Gambling',
+  'Animal Nuisance / Stray Animal Concern',
+  'Garbage / Sanitation Complaints',
+  'Boundary Disputes / Trespassing',
+  'Barangay Staff / Official Misconduct',
+  'Others',
+]);
+
 const originalFormState = ref({});
 const loading = ref(true);
 const editMode = ref(false);
@@ -153,12 +202,28 @@ const rules = {
     complainant_resident_id: { required: helpers.withMessage('A complainant must be selected.', required) },
     complainant_address: { required }, contact_number: { required }, date_of_complaint: { required }, time_of_complaint: { required },
     person_complained_against_name: { required: helpers.withMessage('The person being complained against is required.', required) },
-    notes_description: { required }
+    notes_description: { required },
+    category: { required },
 };
 const v$ = useVuelidate(rules, form);
 
+async function updateComplaintStatus(status){
+  
+  const {data, error} = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body: { status } });
+
+  if (error.value) $toast.fire({ title: error.value, icon: 'error' });
+  if (data.value?.error) $toast.fire({ title: data.value?.error, icon: 'success' });
+
+  await fetchComplaint();
+
+
+}
+
 // --- LIFECYCLE & DATA FETCHING ---
-onMounted(async () => { await fetchComplaint(); });
+onMounted(async () => { 
+  await fetchComplaint(); 
+});
+
 
 async function fetchComplaint(){
     loading.value = true;
@@ -166,10 +231,12 @@ async function fetchComplaint(){
         const { data, error } = await useMyFetch(`/api/complaints/${complaintId}`);
         if (error.value || !data.value?.complaint) throw new Error('Complaint not found.');
         const complaint = data.value.complaint;
+        console.log(complaint);
         Object.assign(form, { ...complaint, date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date') });
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
+        
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/complaints'); }
     finally { loading.value = false; }
 }

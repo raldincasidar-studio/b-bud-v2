@@ -1,15 +1,25 @@
 <template>
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
-      <v-col><h2>Borrowed Assets Log</h2></v-col>
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">Borrowed Assets Log</h2>
+        <p class="text-grey-darken-1">Track and manage all asset borrowing requests and history.</p>
+      </v-col>
       <v-col class="text-right">
-        <v-btn rounded size="large" variant="tonal" to="/borrowed-assets/new" prepend-icon="mdi-plus-circle-outline" color="primary">
-          Log New Borrowing
+        <v-btn
+          rounded="lg"
+          size="large"
+          variant="tonal"
+          to="/borrowed-assets/new"
+          prepend-icon="mdi-plus-circle-outline"
+          color="primary"
+        >
+          New Borrow Request
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card elevation="2">
+    <v-card elevation="2" border>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-archive-arrow-down-outline" class="mr-2"></v-icon>
         Transaction History
@@ -20,8 +30,7 @@
           prepend-inner-icon="mdi-magnify"
           variant="outlined"
           color="primary"
-          label="Search Transactions"
-          placeholder="Search by Ref #, borrower, item, status..."
+          label="Search by Borrower, Item, or Status..."
           clearable
           density="compact"
           class="mb-4"
@@ -38,62 +47,68 @@
           class="elevation-1 mt-4"
           item-value="_id"
         >
-          <template v-slot:item.reference_number="{ item }">
-             <span class="font-weight-medium text-caption copyable-id" @click="copyToClipboard(item._id)" title="Click to copy ID">
-                {{ item._id }}
-                <v-icon size="x-small" class="ml-1">mdi-content-copy</v-icon>
-            </span>
-          </template>
-
           <template v-slot:item.borrow_datetime="{ item }">
             {{ formatDate(item.borrow_datetime) }}
           </template>
 
+          <template v-slot:item.expected_return_date="{ item }">
+            {{ formatDate(item.expected_return_date, false) }}
+          </template>
+
           <template v-slot:item.date_returned="{ item }">
-            {{ item.date_returned ? formatDate(item.date_returned) : 'Not Yet Returned' }}
+            <span v-if="item.date_returned">{{ formatDate(item.date_returned) }}</span>
+            <span v-else class="text-grey-darken-1">—</span>
           </template>
 
           <template v-slot:item.status="{ item }">
-              <div class="d-flex align-center justify-center">
-                  <v-chip :color="getStatusColor(item.status)" label size="small" class="me-2">
-                      {{ item.status }}
-                  </v-chip>
-                  <v-menu offset-y>
-                      <template v-slot:activator="{ props }">
-                      <v-btn
-                          icon="mdi-dots-vertical"
-                          size="small"
-                          variant="text"
-                          v-bind="props"
-                          :loading="updatingStatusFor === item._id"
-                      ></v-btn>
-                      </template>
-                      <v-list density="compact">
-                      <v-list-item
-                          v-for="action in getAvailableActions(item.status)"
-                          :key="action.status"
-                          @click="updateTransactionStatus(item, action.status)"
-                          :disabled="updatingStatusFor === item._id"
-                      >
-                          <template v-slot:prepend>
-                          <v-icon :icon="action.icon" :color="action.color" size="small"></v-icon>
-                          </template>
-                          <v-list-item-title>{{ action.title }}</v-list-item-title>
-                      </v-list-item>
-                      </v-list>
-                  </v-menu>
-              </div>
+            <v-chip :color="getStatusColor(item.status)" label size="small" class="font-weight-bold">
+              <v-icon start :icon="getStatusIcon(item.status)"></v-icon>
+              {{ item.status }}
+            </v-chip>
           </template>
 
           <template v-slot:item.action="{ item }">
-            <v-btn variant="tonal" color="primary" size="small" :to="`/borrowed-assets/${item._id}`" prepend-icon="mdi-eye-outline">
-              View/Manage
-            </v-btn>
+            <div class="d-flex justify-center align-center">
+              <v-btn
+                variant="tonal"
+                color="primary"
+                size="small"
+                :to="`/borrowed-assets/${item._id}`"
+                class="me-2 text-capitalize"
+              >
+                Manage
+              </v-btn>
+              <v-menu v-if="getAvailableActions(item.status).length > 0" offset-y>
+                <template v-slot:activator="{ props }">
+                  <v-btn
+                    icon="mdi-dots-vertical"
+                    size="small"
+                    variant="text"
+                    v-bind="props"
+                    :loading="updatingStatusFor === item._id"
+                  ></v-btn>
+                </template>
+                <v-list density="compact">
+                  <v-list-subheader>Quick Actions</v-list-subheader>
+                  <v-list-item
+                    v-for="action in getAvailableActions(item.status)"
+                    :key="action.status"
+                    @click="updateTransactionStatus(item, action.status, action.prompt)"
+                    :disabled="updatingStatusFor === item._id"
+                  >
+                    <template v-slot:prepend>
+                      <v-icon :icon="action.icon" :color="action.color" size="small"></v-icon>
+                    </template>
+                    <v-list-item-title>{{ action.title }}</v-list-item-title>
+                  </v-list-item>
+                </v-list>
+              </v-menu>
+            </div>
           </template>
 
-          <template v-slot:no-data>
+           <template v-slot:no-data>
             <v-alert type="info" class="ma-3" border="start" prominent>
-                No borrowing transactions found matching your criteria.
+                No borrowing transactions found. Start by creating a new borrow request.
             </v-alert>
           </template>
         </v-data-table-server>
@@ -104,7 +119,7 @@
 
 <script setup>
 import { ref, watch } from 'vue';
-import { useMyFetch } from '../../composables/useMyFetch'; // Adjust path as needed
+import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
@@ -114,196 +129,148 @@ const totalItems = ref(0);
 const transactions = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
-const updatingStatusFor = ref(null); // ID of the transaction being updated
-
-// const BORROW_STATUS_OPTIONS = ['Borrowed', 'Returned', 'Overdue', 'Lost', 'Damaged'];
-
-const getAvailableActions = (currentStatus) => {
-  const allActions = {
-    'Borrowed': { status: 'Borrowed', title: 'Mark as Borrowed', icon: 'mdi-arrow-up-bold-box-outline', color: 'orange-darken-1' },
-    'Returned': { status: 'Returned', title: 'Mark as Returned', icon: 'mdi-arrow-down-bold-box-outline', color: 'green-darken-1' },
-    'Overdue': { status: 'Overdue', title: 'Mark as Overdue', icon: 'mdi-alert-octagon-outline', color: 'red-darken-2' },
-    'Lost': { status: 'Lost', title: 'Mark as Lost', icon: 'mdi-help-rhombus-outline', color: 'error' },
-    'Damaged': { status: 'Damaged', title: 'Mark as Damaged', icon: 'mdi-tools', color: 'warning' },
-  };
-
-  // Logic to show only relevant actions.
-  // Example: You can't mark an already "Returned" item as "Returned" again.
-  return Object.values(allActions).filter(action => action.status !== currentStatus);
-};
+const updatingStatusFor = ref(null); // ID of the transaction being status-updated
 
 const headers = ref([
-  { title: 'Ref #', key: 'reference_number', sortable: false, width: '200px'},
-  { title: 'Borrower Name', key: 'borrower_name', sortable: true }, // API should provide this (e.g., via $lookup)
-  { title: 'Item Borrowed', key: 'item_borrowed', sortable: true }, // API should provide this (e.g., via $lookup if item_id is stored)
-  { title: 'Date Borrowed', key: 'borrow_datetime', sortable: true },
-  { title: 'Borrowed From', key: 'borrowed_from_personnel', sortable: true }, // API should provide this
-  { title: 'Date Returned', key: 'date_returned', sortable: true },
-  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '180px' },
-  { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '150px' },
+  { title: 'Borrower', key: 'borrower_name', sortable: true, width: '15%' },
+  { title: 'Item', key: 'item_borrowed', sortable: true, width: '15%' },
+  { title: 'Date Borrowed', key: 'borrow_datetime', sortable: true, width: '15%' },
+  { title: 'Expected Return', key: 'expected_return_date', sortable: true, width: '15%' },
+  { title: 'Actual Return', key: 'date_returned', sortable: true, width: '15%' },
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '12%' },
+  { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '13%' },
 ]);
 
-let searchDebounceTimer = null;
-let currentSortBy = ref([{ key: 'borrow_datetime', order: 'desc' }]); // Default sort
+const STATUS_CONFIG = {
+  Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
+  Processing: { color: 'blue', icon: 'mdi-cogs' },
+  Approved:   { color: 'orange', icon: 'mdi-check-circle-outline' },
+  Returned:   { color: 'green-darken-1', icon: 'mdi-check-all' },
+  Overdue:    { color: 'red-darken-2', icon: 'mdi-alert-octagon-outline' },
+  Lost:       { color: 'black', icon: 'mdi-help-rhombus-outline' },
+  Damaged:    { color: 'amber-darken-4', icon: 'mdi-alert-decagram-outline' },
+  Resolved:   { color: 'teal', icon: 'mdi-handshake-outline' },
+  Rejected:   { color: 'red-lighten-1', icon: 'mdi-cancel' },
+};
 
-watch(searchKey, (newValue) => {
+const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
+const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
+
+const getAvailableActions = (currentStatus) => {
+  const actions = [];
+  switch (currentStatus) {
+    case 'Pending':
+      actions.push({ status: 'Processing', title: 'Start Processing', icon: 'mdi-cogs', color: 'blue' });
+      actions.push({ status: 'Rejected', title: 'Reject Request', icon: 'mdi-cancel', color: 'red' });
+      break;
+    case 'Processing':
+      actions.push({ status: 'Approved', title: 'Approve & Release Item', icon: 'mdi-check-circle', color: 'green' });
+      actions.push({ status: 'Pending', title: 'Return to Pending', icon: 'mdi-arrow-left', color: 'blue-grey' });
+      break;
+    case 'Approved':
+    case 'Overdue':
+      actions.push({ status: 'Damaged', title: 'Mark as Damaged', icon: getStatusIcon('Damaged'), color: getStatusColor('Damaged'), prompt: true });
+      actions.push({ status: 'Lost', title: 'Mark as Lost', icon: getStatusIcon('Lost'), color: getStatusColor('Lost'), prompt: true });
+      break;
+    case 'Lost':
+    case 'Damaged':
+      actions.push({ status: 'Resolved', title: 'Mark as Resolved', icon: getStatusIcon('Resolved'), color: getStatusColor('Resolved'), prompt: true });
+      break;
+  }
+  return actions;
+};
+
+let searchDebounceTimer = null;
+watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: currentSortBy.value });
+    loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
   }, 500);
 });
 
 async function loadTransactions(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
-
-  if (sortBy && sortBy.length) {
-    currentSortBy.value = sortBy;
-  }
-
   const queryParams = {
     search: searchKey.value,
     page: page,
     itemsPerPage: rpp,
   };
 
-  // if (currentSortBy.value && currentSortBy.value.length > 0) {
-  //   queryParams.sortBy = currentSortBy.value[0].key;
-  //   queryParams.sortOrder = currentSortBy.value[0].order;
-  // } else {
-  //   queryParams.sortBy = 'borrow_datetime';
-  //   queryParams.sortOrder = 'desc';
-  // }
-
   try {
     const { data, error } = await useMyFetch('/api/borrowed-assets', { query: queryParams });
-    if (error.value) {
-      console.error('Failed to load transactions:', error.value);
-      $toast.fire({ title: 'Failed to load transactions.', icon: 'error'});
-      transactions.value = []; totalItems.value = 0;
-    } else if (data.value) {
-      transactions.value = data.value.transactions || [];
-      totalItems.value = data.value.total || 0;
-    }
+    if (error.value) throw new Error(error.value.data?.message || 'Failed to load transactions.');
+    
+    transactions.value = data.value.transactions || [];
+    totalItems.value = data.value.total || 0;
   } catch (e) {
-    console.error('Exception loading transactions:', e);
-    $toast.fire({ title: 'An error occurred.', icon: 'error'});
-    transactions.value = []; totalItems.value = 0;
+    $toast.fire({ title: e.message, icon: 'error'});
+    transactions.value = [];
+    totalItems.value = 0;
   } finally {
     loading.value = false;
   }
 }
 
-const formatDate = (dateString) => {
-  if (!dateString) return '';
-  try {
-    const options = { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-    return new Date(dateString).toLocaleString(undefined, options);
-  } catch (e) { return dateString; }
-};
-
-const getStatusColor = (status) => {
-  const colors = {
-    'Borrowed': 'orange-darken-1',
-    'Returned': 'green-darken-1',
-    'Overdue': 'red-darken-2',
-    'Lost': 'error',
-    'Damaged': 'warning',
-  };
-  return colors[status] || 'grey';
-};
-
-async function updateTransactionStatus(transactionItem, newStatus) {
-  if (transactionItem.status === newStatus) return;
-
-  const originalStatus = transactionItem.status;
-  updatingStatusFor.value = transactionItem._id;
-
-  const itemIndex = transactions.value.findIndex(t => t._id === transactionItem._id);
-  if (itemIndex > -1) {
-    transactions.value[itemIndex].status = newStatus;
-    // Optimistically update date_returned if status is 'Returned'
-    if (newStatus === 'Returned' && !transactions.value[itemIndex].date_returned) {
-        transactions.value[itemIndex].date_returned = new Date().toISOString();
-    }
+async function updateTransactionStatus(transactionItem, newStatus, prompt = false) {
+  if (prompt) {
+    const result = await $toast.fire({
+      title: `Confirm Action: ${newStatus}`,
+      html: `This will mark item <b>${transactionItem.item_borrowed}</b> as <b>${newStatus}</b>.<br/>This may deactivate the resident's account. Are you sure?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#d33',
+      cancelButtonColor: '#3085d6',
+      confirmButtonText: 'Yes, confirm!',
+    });
+    if (!result.isConfirmed) return;
   }
-
+  
+  updatingStatusFor.value = transactionItem._id;
   try {
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionItem._id}/status`, {
       method: 'PATCH',
       body: { status: newStatus },
     });
 
-    if (error.value || (data.value && data.value.error)) {
-      if (itemIndex > -1) {
-        transactions.value[itemIndex].status = originalStatus; // Revert
-        // Also revert date_returned if it was optimistically set
-        if (newStatus === 'Returned' && originalStatus !== 'Returned') {
-            transactions.value[itemIndex].date_returned = transactionItem.date_returned; // original date_returned
-        }
-      }
-      $toast.fire({ title: data.value?.message || data.value?.error || 'Failed to update status.', icon: 'error' });
-    } else {
-      $toast.fire({ title: data.value?.message || 'Status updated successfully!', icon: 'success' });
-      if (data.value && data.value.updatedTransaction && itemIndex > -1) {
-         transactions.value[itemIndex] = { ...transactions.value[itemIndex], ...data.value.updatedTransaction };
-      } else if (itemIndex > -1) {
-         transactions.value[itemIndex].status = newStatus; // Ensure status is final
-         if (newStatus === 'Returned' && !transactions.value[itemIndex].date_returned) { // Set from API if not present
-            transactions.value[itemIndex].date_returned = new Date().toISOString();
-         }
-      }
+    if (error.value) throw new Error(error.value.data?.message || 'API error.');
+
+    $toast.fire({ title: data.value?.message || 'Status updated!', icon: 'success' });
+    
+    // Find item and update its status in the local array for immediate feedback
+    const index = transactions.value.findIndex(t => t._id === transactionItem._id);
+    if (index !== -1) {
+      transactions.value[index].status = newStatus;
     }
   } catch (e) {
-    if (itemIndex > -1) {
-        transactions.value[itemIndex].status = originalStatus;
-        if (newStatus === 'Returned' && originalStatus !== 'Returned') {
-            transactions.value[itemIndex].date_returned = transactionItem.date_returned;
-        }
-    }
-    console.error('Exception updating transaction status:', e);
-    $toast.fire({ title: 'An error occurred while updating status.', icon: 'error' });
+    $toast.fire({ title: e.message || 'Failed to update status.', icon: 'error' });
   } finally {
     updatingStatusFor.value = null;
   }
 }
 
-async function copyToClipboard(text) {
+const formatDate = (dateString, includeTime = true) => {
+  if (!dateString) return '';
   try {
-    await navigator.clipboard.writeText(text);
-    $toast.fire({ title: 'Reference # copied!', icon: 'success', timer: 1500, showConfirmButton: false });
-  } catch (err) {
-    console.error('Failed to copy text: ', err);
-    $toast.fire({ title: 'Failed to copy.', icon: 'error' });
+    const date = new Date(dateString);
+    const options = { year: 'numeric', month: 'short', day: 'numeric' };
+    if (includeTime) {
+      options.hour = '2-digit';
+      options.minute = '2-digit';
+      options.hour12 = true;
+    }
+    return date.toLocaleString('en-US', options);
+  } catch (e) {
+    return dateString;
   }
-}
+};
 </script>
 
 <style scoped>
-.text-truncate {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: block;
+.v-data-table-server {
+  font-size: 0.9rem;
 }
-.status-select {
-    min-width: 180px; /* Adjust for status names */
-    max-width: 200px;
-}
-.copyable-id {
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    transition: color 0.2s ease-in-out;
-}
-.copyable-id:hover {
-    color: rgb(var(--v-theme-primary));
-}
-.copyable-id .v-icon {
-    opacity: 0.6;
-    transition: opacity 0.2s ease-in-out;
-}
-.copyable-id:hover .v-icon {
-    opacity: 1;
+.text-capitalize {
+  text-transform: capitalize;
 }
 </style>

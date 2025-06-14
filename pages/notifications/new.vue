@@ -1,20 +1,20 @@
 <template>
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-6">
-      <v-col><h2>Add New Notification</h2></v-col>
+      <v-col><h2>Add New Announcement</h2></v-col>
       <v-col class="text-right">
         <v-btn color="primary" @click="saveNotification" prepend-icon="mdi-content-save" variant="tonal" :loading="saving" size="large">
-          Save Notification
+          Save Announcement
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card prepend-icon="mdi-bell-plus-outline" title="Notification Details">
+    <v-card prepend-icon="mdi-bell-plus-outline" title="Announcement Details">
       <v-card-text>
         <v-form ref="form">
           <v-row>
             <v-col cols="12" md="6">
-              <v-text-field v-model="notification.name" label="Notification Name/Title*" :rules="[rules.required, rules.nameLength]" variant="outlined" density="compact"></v-text-field>
+              <v-text-field v-model="notification.name" label="Announcement Name/Title*" :rules="[rules.required, rules.nameLength]" variant="outlined" density="compact"></v-text-field>
             </v-col>
             <v-col cols="12" md="6">
               <v-text-field v-model="notification.by" label="Author (e.g., Admin Name)*" :rules="[rules.required]" variant="outlined" density="compact"></v-text-field>
@@ -26,7 +26,7 @@
               <v-select
                 v-model="notification.type"
                 :items="NOTIFICATION_TYPES"
-                label="Notification Type*"
+                label="Announcemnent Type*"
                 :rules="[rules.required]"
                 variant="outlined"
                 density="compact"
@@ -39,7 +39,7 @@
 
           <v-row>
             <v-col cols="12">
-              <v-textarea v-model="notification.content" label="Notification Content*" :rules="[rules.required, rules.contentLength]" variant="outlined" rows="5" auto-grow></v-textarea>
+              <v-textarea v-model="notification.content" label="Announcement Content*" :rules="[rules.required, rules.contentLength]" variant="outlined" rows="5" auto-grow></v-textarea>
             </v-col>
           </v-row>
 
@@ -99,7 +99,7 @@
             </v-col>
           </v-row>
            <small v-if="notification.target_audience === 'All'" class="d-block mt-2 text-info">
-              This notification will be sent to all 'Approved' residents.
+              This announcement will be sent to all 'Approved' residents.
             </small>
 
 
@@ -119,7 +119,7 @@ const { $toast } = useNuxtApp();
 const router = useRouter();
 const form = ref(null);
 
-const NOTIFICATION_TYPES = ['Announcement', 'Alert', 'Notification'];
+const NOTIFICATION_TYPES = ['Announcement', 'Alert'];
 const TARGET_AUDIENCE_OPTIONS = [
   { title: 'All Approved Residents', value: 'All' },
   { title: 'Specific Residents', value: 'SpecificResidents' },

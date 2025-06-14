@@ -46,7 +46,9 @@
           <v-chip filter value="Punong Barangay">Punong Barangay</v-chip>
           <v-chip filter value="Barangay Secretary">Barangay Secretary</v-chip>
           <v-chip filter value="Treasurer">Treasurer</v-chip>
-          <v-chip filter value="Kagawad">Kagawad</v-chip>
+          <v-chip filter value="Sangguniang Barangay Member">Sangguniang Barangay Member</v-chip>
+          <v-chip filter value="SK Chairperson">SK Chairperson</v-chip>
+          <v-chip filter value="SK Member">SK Member</v-chip>
         </v-chip-group>
       </v-card-text>
       <v-divider></v-divider>
@@ -61,6 +63,10 @@
         @update:options="updateTable"
         item-value="_id"
       >
+        <template v-slot:item.name="{ item }">
+          {{ item.last_name }}, {{ item.first_name }} {{ item.middle_name ? item.middle_name[0] + '.' : '' }}
+        </template>
+
         <template v-slot:item.term="{ item }">
           {{ formatDate(item.term_start) }} - {{ formatDate(item.term_end) }}
         </template>
@@ -106,7 +112,7 @@ const itemsPerPage = ref(10);
 
 // Headers reflecting the new, correct data structure
 const headers = ref([
-  { title: 'Full Name', key: 'full_name', sortable: true },
+  { title: 'Name', key: 'name', sortable: true },
   { title: 'Position', key: 'position', sortable: true },
   { title: 'Term of Office', key: 'term', sortable: false },
   { title: 'Status', key: 'status', sortable: true },
