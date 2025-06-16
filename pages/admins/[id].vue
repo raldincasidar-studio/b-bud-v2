@@ -7,6 +7,7 @@
       </v-col>
       <v-col class="text-right">
         <v-btn
+          v-if="form.role == 'Admin'"
           @click="deleteAdmin"
           color="error"
           variant="outlined"

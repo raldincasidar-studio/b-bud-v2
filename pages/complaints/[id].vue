@@ -102,6 +102,65 @@
         </v-card-text>
       </v-card>
 
+      <!-- START: ADDED NOTES SECTION -->
+      <v-card v-if="form.status === 'Under Investigation'" class="mt-4" flat border>
+        <v-card-title>Investigation Notes</v-card-title>
+        <v-divider></v-divider>
+        <v-card-text>
+          <!-- Display Notes -->
+          <div v-if="notesLoading" class="text-center py-4">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+            <p class="mt-2 text-grey-darken-1 text-caption">Loading Notes...</p>
+          </div>
+          <v-alert v-else-if="!investigationNotes.length" type="info" variant="tonal" density="compact" class="mb-4">
+            No investigation notes have been added yet.
+          </v-alert>
+          <v-timeline v-else side="end" align="start" density="compact" class="mb-4">
+            <v-timeline-item
+              v-for="note in investigationNotes"
+              :key="note._id"
+              dot-color="blue-grey-lighten-1"
+              size="small"
+            >
+              <template v-slot:opposite>
+                <div class="text-caption text-grey-darken-1 pt-1">
+                  <div>{{ formatDateTime(note.createdAt) }}</div>
+                  <div class="font-weight-bold">{{ note.author?.name || 'System' }}</div>
+                </div>
+              </template>
+              <v-alert class="pa-3" border="start" density="compact" color="blue-grey-lighten-5">
+                <p class="text-body-2" style="white-space: pre-wrap;">{{ note.content }}</p>
+              </v-alert>
+            </v-timeline-item>
+          </v-timeline>
+
+          <v-divider class="my-4"></v-divider>
+          
+          <!-- Add Note Form -->
+          <h4 class="text-subtitle-1 font-weight-medium mb-2">Add New Note</h4>
+          <v-textarea
+            v-model="newNoteContent"
+            label="Write your note here..."
+            variant="outlined"
+            rows="3"
+            auto-grow
+            clearable
+          ></v-textarea>
+          <div class="d-flex justify-end mt-2">
+            <v-btn
+              color="primary"
+              @click="addNote"
+              :disabled="!newNoteContent || !newNoteContent.trim()"
+              :loading="addingNote"
+              prepend-icon="mdi-plus-circle-outline"
+            >
+              Add Note
+            </v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+      <!-- END: ADDED NOTES SECTION -->
+
       <!-- add new v-card for actions button -->
       <v-card class="mt-4">
         <v-card-title>Set Action</v-card-title>
@@ -197,6 +256,13 @@ const personComplainedSearchQuery = ref('');
 const personComplainedSearchResults = ref([]);
 const isLoadingPersonComplained = ref(false);
 
+// START: NOTES STATE
+const investigationNotes = ref([]);
+const newNoteContent = ref('');
+const notesLoading = ref(false);
+const addingNote = ref(false);
+// END: NOTES STATE
+
 // --- VUELIDATE ---
 const rules = {
     complainant_resident_id: { required: helpers.withMessage('A complainant must be selected.', required) },
@@ -208,15 +274,10 @@ const rules = {
 const v$ = useVuelidate(rules, form);
 
 async function updateComplaintStatus(status){
-  
   const {data, error} = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body: { status } });
-
   if (error.value) $toast.fire({ title: error.value, icon: 'error' });
   if (data.value?.error) $toast.fire({ title: data.value?.error, icon: 'success' });
-
   await fetchComplaint();
-
-
 }
 
 // --- LIFECYCLE & DATA FETCHING ---
@@ -224,18 +285,23 @@ onMounted(async () => {
   await fetchComplaint(); 
 });
 
-
 async function fetchComplaint(){
     loading.value = true;
     try {
         const { data, error } = await useMyFetch(`/api/complaints/${complaintId}`);
         if (error.value || !data.value?.complaint) throw new Error('Complaint not found.');
         const complaint = data.value.complaint;
-        console.log(complaint);
         Object.assign(form, { ...complaint, date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date') });
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
+
+        // Fetch notes if status is correct on initial load
+        if (form.status === 'Under Investigation') {
+          await fetchNotes();
+        } else {
+          investigationNotes.value = []; // Ensure notes are cleared if status is not relevant
+        }
         
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/complaints'); }
     finally { loading.value = false; }
@@ -273,6 +339,16 @@ watch(personComplainedSearchQuery, (nq) => {
     }
 });
 
+// START: NOTES WATCHER
+watch(() => form.status, (newStatus, oldStatus) => {
+  if (newStatus === 'Under Investigation' && newStatus !== oldStatus) {
+    fetchNotes();
+  } else if (newStatus !== 'Under Investigation') {
+    investigationNotes.value = []; // Clear notes if status changes away
+  }
+});
+// END: NOTES WATCHER
+
 const onComplainantSelect = (selectedId) => {
     const resident = complainantSearchResults.value.find(r => r._id === selectedId);
     if (!resident) return;
@@ -297,7 +373,6 @@ async function saveChanges() {
   saving.value = true;
   try {
     const payload = { ...form, date_of_complaint: new Date(form.date_of_complaint).toISOString() };
-    // We don't send status from this edit form.
     delete payload.status; 
     const { error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update complaint.');
@@ -323,8 +398,54 @@ async function deleteComplaint(){
   }
 }
 
+// START: NOTES LOGIC
+async function fetchNotes() {
+  notesLoading.value = true;
+  try {
+    const { data, error } = await useMyFetch(`/api/complaints/${complaintId}/notes`);
+    if (error.value) throw new Error('Failed to fetch investigation notes.');
+    // Sort by newest first
+    investigationNotes.value = (data.value?.notes || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+    investigationNotes.value = [];
+  } finally {
+    notesLoading.value = false;
+  }
+}
+
+async function addNote() {
+  if (!newNoteContent.value.trim()) {
+    $toast.fire({ title: 'Note content cannot be empty.', icon: 'warning' });
+    return;
+  }
+  addingNote.value = true;
+  try {
+    const { error } = await useMyFetch(`/api/complaints/${complaintId}/notes`, {
+      method: 'POST',
+      body: { content: newNoteContent.value.trim() }
+    });
+    if (error.value) throw new Error('Failed to add note.');
+    $toast.fire({ title: 'Note added successfully!', icon: 'success' });
+    newNoteContent.value = '';
+    await fetchNotes(); // Refresh the list
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    addingNote.value = false;
+  }
+}
+// END: NOTES LOGIC
+
 // --- HELPER FUNCTIONS ---
 const formatDateForInput = (iso, type='date') => { if (!iso) return ''; const d = new Date(iso); return type === 'date' ? d.toISOString().split('T')[0] : d.toTimeString().slice(0,5); };
+const formatDateTime = (iso) => {
+  if (!iso) return '';
+  return new Date(iso).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true
+  });
+};
 const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'warning', 'Resolved': 'success', 'Closed': 'grey-darken-1', 'Dismissed': 'error' }[status] || 'default');
 </script>
 

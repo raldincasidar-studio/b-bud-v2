@@ -37,6 +37,14 @@
           hide-details
         ></v-text-field>
 
+        <!-- NEW: Multi-select Filter Chip Group -->
+        <v-chip-group v-model="statusFilter" column multiple color="primary">
+          <v-chip v-for="status in Object.keys(STATUS_CONFIG)" :key="status" filter :value="status">
+            <v-icon start size="small" :icon="getStatusIcon(status)"></v-icon>
+            {{ status }}
+          </v-chip>
+        </v-chip-group>
+
         <v-data-table-server
           v-model:items-per-page="itemsPerPage"
           :headers="headers"
@@ -78,37 +86,12 @@
               >
                 Manage
               </v-btn>
-              <v-menu v-if="getAvailableActions(item.status).length > 0" offset-y>
-                <template v-slot:activator="{ props }">
-                  <v-btn
-                    icon="mdi-dots-vertical"
-                    size="small"
-                    variant="text"
-                    v-bind="props"
-                    :loading="updatingStatusFor === item._id"
-                  ></v-btn>
-                </template>
-                <v-list density="compact">
-                  <v-list-subheader>Quick Actions</v-list-subheader>
-                  <v-list-item
-                    v-for="action in getAvailableActions(item.status)"
-                    :key="action.status"
-                    @click="updateTransactionStatus(item, action.status, action.prompt)"
-                    :disabled="updatingStatusFor === item._id"
-                  >
-                    <template v-slot:prepend>
-                      <v-icon :icon="action.icon" :color="action.color" size="small"></v-icon>
-                    </template>
-                    <v-list-item-title>{{ action.title }}</v-list-item-title>
-                  </v-list-item>
-                </v-list>
-              </v-menu>
             </div>
           </template>
 
            <template v-slot:no-data>
             <v-alert type="info" class="ma-3" border="start" prominent>
-                No borrowing transactions found. Start by creating a new borrow request.
+                No borrowing transactions found for the selected filters.
             </v-alert>
           </template>
         </v-data-table-server>
@@ -119,18 +102,26 @@
 
 <script setup>
 import { ref, watch } from 'vue';
+import { useRoute } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
+// --- Composables ---
 const { $toast } = useNuxtApp();
+const route = useRoute();
 
+// --- State Definitions ---
 const searchKey = ref('');
+// MODIFIED: Initialize statusFilter as an array by splitting the URL query, or as an empty array.
+// This handles '?status=Borrowed,Overdue' correctly.
+const statusFilter = ref(route.query.status ? String(route.query.status).split(',') : []);
 const totalItems = ref(0);
 const transactions = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
-const updatingStatusFor = ref(null); // ID of the transaction being status-updated
+const updatingStatusFor = ref(null);
 
+// --- Table and UI Configuration ---
 const headers = ref([
   { title: 'Borrower', key: 'borrower_name', sortable: true, width: '15%' },
   { title: 'Item', key: 'item_borrowed', sortable: true, width: '15%' },
@@ -153,6 +144,65 @@ const STATUS_CONFIG = {
   Rejected:   { color: 'red-lighten-1', icon: 'mdi-cancel' },
 };
 
+// --- REVISED: Data Loading Function ---
+async function loadTransactions(options) {
+  loading.value = true;
+  const { page, itemsPerPage: rpp, sortBy } = options;
+  
+  const queryParams = {
+    search: searchKey.value,
+    page: page,
+    itemsPerPage: rpp,
+  };
+
+  // Add status filter if any are selected. Join array into comma-separated string for the API.
+  if (statusFilter.value && statusFilter.value.length > 0) {
+    queryParams.status = statusFilter.value.join(',');
+  }
+  
+  if (sortBy && sortBy.length > 0) {
+    queryParams.sortBy = sortBy[0].key;
+    queryParams.sortOrder = sortBy[0].order;
+  }
+
+  try {
+    const { data, error } = await useMyFetch('/api/borrowed-assets', { query: queryParams });
+    if (error.value) throw new Error(error.value.data?.message || 'Failed to load transactions.');
+    
+    transactions.value = data.value.transactions || [];
+    totalItems.value = data.value.total || 0;
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error'});
+    transactions.value = [];
+    totalItems.value = 0;
+  } finally {
+    loading.value = false;
+  }
+}
+
+// --- Watchers for UI Filters and URL Changes ---
+let searchDebounceTimer = null;
+watch(searchKey, () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+  }, 500);
+});
+
+// Watcher for the status filter chips.
+watch(statusFilter, () => {
+  loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+}, { deep: true }); // Use deep watch for array changes
+
+// Watcher for URL changes to react to navigation.
+watch(() => route.fullPath, (newPath, oldPath) => {
+    if (newPath === oldPath) return;
+    // Sync local state with URL. This will trigger the watcher above to reload data.
+    statusFilter.value = route.query.status ? String(route.query.status).split(',') : [];
+}, { deep: true });
+
+
+// --- Helper and Action Functions ---
 const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
 const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
 
@@ -170,7 +220,7 @@ const getAvailableActions = (currentStatus) => {
     case 'Approved':
     case 'Overdue':
       actions.push({ status: 'Damaged', title: 'Mark as Damaged', icon: getStatusIcon('Damaged'), color: getStatusColor('Damaged'), prompt: true });
-      actions.push({ status: 'Lost', title: 'Mark as Lost', icon: getStatusIcon('Lost'), color: getStatusColor('Lost'), prompt: true });
+      actions.push({ status: 'Lost', title: 'Mark as Lost', icon: getStatusIcon('Lost'), color: getStatusIcon('Lost'), prompt: true });
       break;
     case 'Lost':
     case 'Damaged':
@@ -179,38 +229,6 @@ const getAvailableActions = (currentStatus) => {
   }
   return actions;
 };
-
-let searchDebounceTimer = null;
-watch(searchKey, () => {
-  clearTimeout(searchDebounceTimer);
-  searchDebounceTimer = setTimeout(() => {
-    loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
-  }, 500);
-});
-
-async function loadTransactions(options) {
-  loading.value = true;
-  const { page, itemsPerPage: rpp, sortBy } = options;
-  const queryParams = {
-    search: searchKey.value,
-    page: page,
-    itemsPerPage: rpp,
-  };
-
-  try {
-    const { data, error } = await useMyFetch('/api/borrowed-assets', { query: queryParams });
-    if (error.value) throw new Error(error.value.data?.message || 'Failed to load transactions.');
-    
-    transactions.value = data.value.transactions || [];
-    totalItems.value = data.value.total || 0;
-  } catch (e) {
-    $toast.fire({ title: e.message, icon: 'error'});
-    transactions.value = [];
-    totalItems.value = 0;
-  } finally {
-    loading.value = false;
-  }
-}
 
 async function updateTransactionStatus(transactionItem, newStatus, prompt = false) {
   if (prompt) {
@@ -237,7 +255,6 @@ async function updateTransactionStatus(transactionItem, newStatus, prompt = fals
 
     $toast.fire({ title: data.value?.message || 'Status updated!', icon: 'success' });
     
-    // Find item and update its status in the local array for immediate feedback
     const index = transactions.value.findIndex(t => t._id === transactionItem._id);
     if (index !== -1) {
       transactions.value[index].status = newStatus;
