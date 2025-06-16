@@ -196,7 +196,7 @@ async function generateAndSetToPickup() {
   
     }
     const baseUrl =process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001/'
-    window.open(`${baseURL}api/document-requests/${requestId}/generate`, '_blank');
+    window.open(`${baseUrl}api/document-requests/${requestId}/generate`, '_blank');
 
     $toast.fire({ title: 'Document is now Ready for Pickup!', icon: 'success' });
   } catch (e) {
