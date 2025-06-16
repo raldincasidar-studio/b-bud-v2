@@ -3751,6 +3751,8 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
 const puppeteer = require('puppeteer');
+const chromium = require("@sparticuz/chromium");
+
 const fs = require('fs').promises; // Use promise-based fs
 
 app.get('/api/document-requests/:id/generate', async (req, res) => {
@@ -3830,7 +3832,11 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     }
 
     // 4. Generate PDF using Puppeteer
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Options for server environments
+    const browser = await puppeteer.launch({
+      args: puppeteer.defaultArgs({ args: chromium.args, headless: "shell" }),
+      executablePath: await chromium.executablePath(),
+      headless: "shell",
+    }); // Options for server environments
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     const pdfBuffer = await page.pdf({ format: 'Legal', printBackground: true });
