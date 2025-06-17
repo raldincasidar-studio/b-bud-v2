@@ -3751,11 +3751,13 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
 const puppeteer = require('puppeteer');
-const chromium = require("@sparticuz/chromium");
 
 const fs = require('fs').promises; // Use promise-based fs
 
 app.get('/api/document-requests/:id/generate', async (req, res) => {
+  const chromium = await import('@sparticuz/chromium');
+
+
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
 
