@@ -501,8 +501,8 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
 
     // Password is required for the head, and for members creating an account.
     if (data.password) {
-        // REVERTED HASHING - WARNING: MD5 is insecure. Use bcrypt in production.
         passwordHash = md5(data.password);
+
     }
     
     return {
