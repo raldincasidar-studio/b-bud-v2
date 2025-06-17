@@ -71,7 +71,7 @@
       </v-card>
 
       <!-- Voter Information Card -->
-      <v-card class="mb-6" flat border>
+      <v-card class="mb-6" flat border v-if="calculatedAge >= 18">
         <v-card-title class="text-h6 font-weight-medium">Voter Information</v-card-title>
         <v-card-text class="pt-2">
           <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="form.is_voter" inline :readonly="!editMode"><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
@@ -144,11 +144,11 @@
               <template v-slot:no-data><v-list-item><v-list-item-title>No eligible residents found.</v-list-item-title></v-list-item></template>
             </v-autocomplete>
             <v-table>
-              <thead><tr><th>Name</th><th>Relationship</th><th v-if="editMode">Actions</th></tr></thead>
+              <thead><tr><th>Name</th><th>Relationship</th><th>Actions</th></tr></thead>
               <tbody>
                 <tr v-for="(member, index) in form.household_members_details" :key="member._id">
                   <td><v-chip link color="primary" prepend-icon="mdi-account" :to="`/residents/${member._id}`">{{ member.first_name }} {{ member.last_name }}</v-chip></td><td>{{ member.relationship_to_head || 'Not specified' }}</td>
-                  <td v-if="editMode"><v-btn icon="mdi-delete-outline" variant="text" color="error" size="small" @click="removeMember(index)"></v-btn></td>
+                  <td><v-btn prepend-icon="mdi-pencil-outline" variant="text" color="primary" size="small" :to="`/residents/${member._id}`">View Info</v-btn><v-btn icon="mdi-delete-outline" variant="text" color="error" v-if="editMode"   size="small" @click="removeMember(index)"></v-btn></td>
                 </tr>
                 <tr v-if="!form.household_members_details || form.household_members_details.length === 0"><td colspan="3" class="text-center text-grey py-3">No members in this household.</td></tr>
               </tbody>

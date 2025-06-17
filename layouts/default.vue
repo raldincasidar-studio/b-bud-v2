@@ -64,6 +64,8 @@
 
 const userData = useCookie('userData');
 
+console.log(userData);
+
 const drawer = ref(false);
 const items = [
     { to: '/dashboard', text: 'Dashboard', icon: 'mdi-speedometer' },
@@ -76,6 +78,7 @@ const items = [
     { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
+    { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
   ]
 
   const router = useRouter();

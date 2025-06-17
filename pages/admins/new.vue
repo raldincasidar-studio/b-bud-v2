@@ -116,7 +116,7 @@ const form = reactive({
   name: "",
   email: "",
   contact_number: "",
-  role: "",
+  role: "Admin",
 });
 
 // Create a reactive reference to the password field for the validator to watch.

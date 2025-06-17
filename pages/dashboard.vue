@@ -1,9 +1,28 @@
 <template>
   <v-container class="my-12">
-    <h1 class="text-h3 font-weight-bold mb-2">Dashboard Overview</h1>
-    <h3 class="text-subtitle-1 text-grey-darken-1 mb-8">
-      Welcome {{ userData?.name || 'Admin' }}! Current community and transaction status.
-    </h3>
+    <div class="d-flex flex-column justify-center align-center mb-10">
+      <h1 class="text-h1  mx-2">
+        <!-- MODIFIED: Use the reactive computed property for the time -->
+        {{ formattedTime }}
+      </h1>
+      <h2 class="text-subtitle-1 mx-2">
+        <!-- MODIFIED: Use the reactive computed property for the date -->
+        {{ formattedDate }}
+      </h2>
+    </div>
+
+
+    <v-row justify="space-between" align="center" class="mb-8">
+      <v-col cols="auto">
+        <h1 class="text-h3 font-weight-bold mb-2">Dashboard Overview</h1>
+        <h3 class="text-subtitle-1 text-grey-darken-1">
+          Welcome {{ userData?.name || 'Admin' }}! Current community and transaction status.
+        </h3>
+      </v-col>
+      <v-col cols="auto">
+        <v-img src="@/assets/img/logo.png" width="100" contain></v-img>
+      </v-col>
+    </v-row>
 
     <div v-if="loading" class="text-center pa-10">
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
@@ -112,26 +131,45 @@
           </v-card>
         </v-col>
       </v-row>
-
-      <!-- Age Brackets Card - REMOVED -->
-      <!-- Quick Navigation Links - REMOVED as per request, replaced by Transaction Alerts -->
-
     </div>
   </v-container>
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
-import { useCookie } from '#app'; // For user data
-import { useMyFetch } from '../composables/useMyFetch'; // Adjust path as needed
+import { ref, onMounted, computed, onUnmounted } from 'vue'; // MODIFIED: Added onUnmounted
+import { useCookie } from '#app';
+import { useMyFetch } from '../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 import VueApexCharts from 'vue3-apexcharts';
-const apexchart = VueApexCharts; // Assign to a const for template use
+const apexchart = VueApexCharts;
 
 const { $toast } = useNuxtApp();
-const userData = useCookie('userData'); // Assuming 'name' property exists
+const userData = useCookie('userData');
 const loading = ref(true);
 const error = ref(false);
+
+// START: ADDED CLOCK LOGIC
+const currentTime = ref(new Date());
+let timer = null; // To hold the interval ID
+
+const formattedTime = computed(() => {
+  return new Intl.DateTimeFormat('en-US', { 
+    hour: 'numeric', 
+    minute: '2-digit', 
+    second: '2-digit',
+    hour12: true // Set to true if you want AM/PM
+  }).format(currentTime.value);
+});
+
+const formattedDate = computed(() => {
+  return new Intl.DateTimeFormat('en-US', { 
+    weekday: 'long', 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  }).format(currentTime.value);
+});
+// END: ADDED CLOCK LOGIC
 
 // Refs for dashboard data from API
 const apiData = ref({
@@ -146,14 +184,21 @@ const apiData = ref({
   pendingDocumentRequestsCount: 0,
   newComplaintsCount: 0,
   borrowedAssetsNotReturnedCount: 0,
-  recentPendingDocumentRequests: [], // If fetching recent items
+  recentPendingDocumentRequests: [],
   recentNewComplaints: [],
   recentBorrowedAssets: [],
 });
 
-const ageData = ref([]); // To store data from API, e.g., [{ bracket: '0-10', count: 15, minAge: 0, maxAge: 10 }]
+const ageData = ref([]);
 
 onMounted(async () => {
+  // START: ADDED CLOCK LOGIC
+  // Start the timer to update the clock every second
+  timer = setInterval(() => {
+    currentTime.value = new Date();
+  }, 1000);
+  // END: ADDED CLOCK LOGIC
+
   loading.value = true;
   error.value = false;
   try {
@@ -164,7 +209,7 @@ onMounted(async () => {
       error.value = true;
       $toast.fire({ title: 'Could not load dashboard data.', icon: 'error'});
     } else {
-      apiData.value = { ...apiData.value, ...dashboardData.value }; // Merge fetched data into apiData
+      apiData.value = { ...apiData.value, ...dashboardData.value };
     }
 
     const { data, error: fetchError2 } = await useMyFetch('/api/dashboard/age-distribution');
@@ -184,24 +229,24 @@ onMounted(async () => {
   }
 });
 
+// START: ADDED CLOCK LOGIC
+// Clean up the timer when the component is unmounted to prevent memory leaks
+onUnmounted(() => {
+  clearInterval(timer);
+});
+// END: ADDED CLOCK LOGIC
+
+
 const router = useRouter();
 
-/**
- * This function is triggered when a user clicks on a bar in the chart.
- * It navigates to the residents list, filtered by the age bracket of the clicked bar.
- */
 const handleBarClick = (event, chartContext, config) => {
   const dataPointIndex = config.dataPointIndex;
   if (dataPointIndex < 0 || !ageData.value[dataPointIndex]) return;
 
   const clickedBracket = ageData.value[dataPointIndex];
-  console.log(`Redirecting to residents aged ${clickedBracket.bracket}`);
-
-  // Navigate to the residents page with query parameters for filtering
   router.push(`/residents?minAge=${clickedBracket.minAge}&maxAge=${clickedBracket.maxAge}`);
 };
 
-// Computed property for the chart's data series
 const chartSeries = computed(() => [
   {
     name: 'Population',
@@ -209,15 +254,13 @@ const chartSeries = computed(() => [
   },
 ]);
 
-// Computed property for the chart's options and configuration
 const chartOptions = computed(() => ({
   chart: {
     type: 'bar',
     height: 350,
     toolbar: {
-      show: false, // Cleaner look
+      show: false,
     },
-    // IMPORTANT: This enables the click-to-redirect functionality
     events: {
       dataPointSelection: handleBarClick,
     },
@@ -225,15 +268,15 @@ const chartOptions = computed(() => ({
   plotOptions: {
     bar: {
       columnWidth: '60%',
-      distributed: true, // Each bar gets a different color
+      distributed: true,
       borderRadius: 4,
     },
   },
   dataLabels: {
-    enabled: false, // Keep the bars clean
+    enabled: false,
   },
   legend: {
-    show: false, // Not needed for a single series
+    show: false,
   },
   xaxis: {
     categories: ageData.value.map(item => item.bracket),
@@ -253,7 +296,6 @@ const chartOptions = computed(() => ({
       formatter: (val) => `${val} residents`,
     },
   },
-  // Add some colors
   colors: [
     '#3366CC', '#DC3912', '#FF9900', '#109618', '#990099', '#3B3EAC',
     '#0099C6', '#DD4477', '#66AA00', '#B82E2E',
@@ -263,12 +305,12 @@ const chartOptions = computed(() => ({
 const mainMetrics = computed(() => [
   { title: 'POPULATION', value: apiData.value.totalPopulation, icon: 'mdi-account-group-outline', color: 'blue-darken-2', linkTo: '/residents' },
   { title: 'HOUSEHOLDS', value: apiData.value.totalHouseholds, icon: 'mdi-home-city-outline', color: 'deep-purple-darken-1', linkTo: '/households' },
-  { title: 'VOTERS', value: apiData.value.totalRegisteredVoters, icon: 'mdi-account-check-outline', color: 'light-blue-darken-3', linkTo: '/residents?is_voter=true' }, // Example filter
-  { title: 'SENIORS', value: apiData.value.totalSeniorCitizens, icon: 'mdi-human-cane', color: 'teal-darken-1', linkTo: '/residents?is_senior=true' }, // Example filter
-  { title: 'PWDs', value: apiData.value.totalPWDs, icon: 'mdi-wheelchair-accessibility', color: 'indigo-darken-1', linkTo: '/residents?is_pwd=true' }, // Example filter
-  { title: 'LABOR FORCE', value: apiData.value.totalLaborForce, icon: 'mdi-briefcase-outline', color: 'green-darken-2', linkTo: '/residents?occupation=Labor force' }, // Example filter
-  { title: 'UNEMPLOYED', value: apiData.value.totalUnemployed, icon: 'mdi-account-off-outline', color: 'amber-darken-2', linkTo: '/residents?occupation=Unemployed' }, // Example filter
-  { title: 'OUT OF SCHOOL YOUTH', value: apiData.value.totalOutOfSchoolYouth, icon: 'mdi-school-outline', color: 'orange-darken-2', linkTo: '/residents?occupation=Out of School Youth' }, // Example filter
+  { title: 'VOTERS', value: apiData.value.totalRegisteredVoters, icon: 'mdi-account-check-outline', color: 'light-blue-darken-3', linkTo: '/residents?is_voter=true' },
+  { title: 'SENIORS', value: apiData.value.totalSeniorCitizens, icon: 'mdi-human-cane', color: 'teal-darken-1', linkTo: '/residents?is_senior=true' },
+  { title: 'PWDs', value: apiData.value.totalPWDs, icon: 'mdi-wheelchair-accessibility', color: 'indigo-darken-1', linkTo: '/residents?is_pwd=true' },
+  { title: 'LABOR FORCE', value: apiData.value.totalLaborForce, icon: 'mdi-briefcase-outline', color: 'green-darken-2', linkTo: '/residents?occupation=Labor force' },
+  { title: 'UNEMPLOYED', value: apiData.value.totalUnemployed, icon: 'mdi-account-off-outline', color: 'amber-darken-2', linkTo: '/residents?occupation=Unemployed' },
+  { title: 'OUT OF SCHOOL YOUTH', value: apiData.value.totalOutOfSchoolYouth, icon: 'mdi-school-outline', color: 'orange-darken-2', linkTo: '/residents?occupation=Out of School Youth' },
 ]);
 
 const transactionAlerts = computed(() => [
@@ -276,10 +318,9 @@ const transactionAlerts = computed(() => [
     title: 'Pending Document Requests',
     count: apiData.value.pendingDocumentRequestsCount,
     icon: 'mdi-file-document-edit-outline',
-    color: 'warning', // Vuetify color name
+    color: 'warning',
     subtext: 'Awaiting processing or approval.',
-    linkTo: '/document-requests?status=Pending', // Example link to filtered list
-    // recentItems: apiData.value.recentPendingDocumentRequests
+    linkTo: '/document-requests?status=Pending',
   },
   {
     title: 'New Complaints Filed',
@@ -288,7 +329,6 @@ const transactionAlerts = computed(() => [
     color: 'error',
     subtext: 'Require investigation or action.',
     linkTo: '/complaints?status=New',
-    // recentItems: apiData.value.recentNewComplaints
   },
   {
     title: 'Assets Currently Borrowed',
@@ -296,7 +336,7 @@ const transactionAlerts = computed(() => [
     icon: 'mdi-archive-arrow-up-outline',
     color: 'info',
     subtext: 'Items that are out and not yet returned.',
-    linkTo: '/borrowed-assets?status=Borrowed,Overdue', // Link to items borrowed or overdue
+    linkTo: '/borrowed-assets?status=Borrowed,Overdue',
     recentItems: apiData.value.recentBorrowedAssets
   },
 ]);
@@ -312,7 +352,7 @@ const transactionAlerts = computed(() => [
   box-shadow: 0 10px 25px rgba(0,0,0,0.15) !important;
 }
 .metric-title {
-    font-size: 0.8rem !important; /* Make overline smaller */
+    font-size: 0.8rem !important;
     line-height: 1.2;
     margin-bottom: 4px;
 }
@@ -323,6 +363,6 @@ const transactionAlerts = computed(() => [
     box-shadow: 0 6px 15px rgba(0,0,0,0.1) !important;
 }
 .v-list-item-subtitle {
-    white-space: normal; /* Allow subtitle to wrap if needed */
+    white-space: normal;
 }
 </style>

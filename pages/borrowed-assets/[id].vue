@@ -80,7 +80,7 @@
                 </div>
 
                 <!-- Return Management -->
-                <div v-else-if="['Approved', 'Overdue'].includes(transactionData.status)">
+                <div v-else-if="['Approved', 'Overdue', 'Returned'].includes(transactionData.status)">
                     <v-card-text>
                         <p class="text-body-2 mb-4">Once the resident returns the item, upload proof and add notes on its condition.</p>
                         <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined" density="compact" prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
@@ -88,7 +88,9 @@
                     </v-card-text>
                     <v-card-actions class="pa-4">
                         <v-spacer></v-spacer>
-                        <v-btn color="success" variant="flat" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
+                        <v-btn color="success" variant="flat" v-if="transactionData.status === 'Approved'" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
+                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-broken-image" size="large">Mark as Damaged</v-btn>
+                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
                     </v-card-actions>
                 </div>
 
@@ -247,7 +249,7 @@ async function updateStatus(newStatus, prompt = false) {
     if (prompt) {
         const { value: notes, isConfirmed } = await $toast.fire({
             title: `Confirm: ${newStatus}`, text: `Please provide a reason or note for this status change.`,
-            input: 'text', icon: 'warning', showCancelButton: true, confirmButtonText: 'Confirm'
+            input: 'text', icon: 'warning', showCancelButton: true, showConfirmButton: true, confirmButtonText: 'Confirm'
         });
         if (!isConfirmed) return;
     }

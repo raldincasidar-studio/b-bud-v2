@@ -47,8 +47,8 @@
 
         <v-divider class="my-6"></v-divider>
         <p class="text-subtitle-2 mb-4">Voter Information</p>
-        <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="form.is_voter" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
-        <v-row v-if="form.is_voter">
+        <v-row v-if="headCalculatedAge >= 18"><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="form.is_voter" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
+        <v-row v-if="form.is_voter && headCalculatedAge >= 18">
           <v-col cols="12" md="6"><v-text-field v-model="form.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vHead$.voter_id_number.$errors.map(e => e.$message)"></v-text-field></v-col>
           <v-col cols="12" md="6">
             <v-file-input v-model="form.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vHead$.voter_id_file.$errors.map(e => e.$message)" show-size clearable></v-file-input>

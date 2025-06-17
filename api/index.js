@@ -650,87 +650,134 @@ app.post('/api/residents', async (req, res) => {
     }
 });
 
-// GET ALL RESIDENTS (GET) - Updated for new schema
+// GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
-  const search = req.query.search || '';
-  const status = req.query.status || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const skip = (page - 1) * itemsPerPage;
-
-  const dab = await db(); // Assuming db() is your database connection function
-  const residentsCollection = dab.collection('residents');
-
-  let query = {};
-  if (search) {
-    const searchRegex = new RegExp(search.trim(), 'i'); // Case-insensitive search, trim whitespace
-    query = {
-      $or: [
-        { first_name: { $regex: searchRegex } },
-        { middle_name: { $regex: searchRegex } },
-        { last_name: { $regex: searchRegex } },
-        { email: { $regex: searchRegex } },
-        { contact_number: { $regex: searchRegex } },
-        { address_house_number: { $regex: searchRegex } },
-        { address_street: { $regex: searchRegex } },
-        { address_subdivision_zone: { $regex: searchRegex } },
-        { address_city_municipality: { $regex: searchRegex } },
-        { citizenship: { $regex: searchRegex } }, // Added from your original schema
-        { place_of_birth: { $regex: searchRegex } }, // Added from your original schema
-        { precinct_number: { $regex: searchRegex } }, // Added from your original schema
-      ],
-      $and: [{ status: { $regex: status } }]
-    };
-  } else {
-    query = {
-      status: { $regex: status }
-    };
-  }
-
-  const projection = {
-    first_name: 1,
-    middle_name: 1,
-    last_name: 1,
-    sex: 1,
-    // age: 1, // Age is derived from date_of_birth or stored, can be included if needed
-    date_of_birth: 1,
-    // civil_status: 1,
-    // occupation_status: 1,
-    // is_pwd: 1,
-    is_household_head: 1,
-    // is_registered_voter: 1,
-    // precinct_number: 1, // Voter ID Number
-    address_house_number: 1,
-    address_street: 1,
-    address_subdivision_zone: 1,
-    address_city_municipality: 1,
-    // years_lived_current_address: 1,
-    contact_number: 1,
-    email: 1,
-    status: 1, // ADDED status
-    created_at: 1,
-    // updated_at: 1,
-    _id: 1,
-
-    // Explicitly exclude fields you NEVER want in a list view for performance/security
-    // password_hash: 0, (already excluded if not in projection, but good practice to be explicit)
-    // voter_registration_proof_data: 0,
-    // residency_proof_data: 0,
-    // login_attempts: 0,
-    // account_locked_until: 0,
-  };
-
   try {
+    // --- 1. Extract and Sanitize All Potential Query Parameters ---
+    const {
+      search,
+      status,
+      is_voter,
+      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
+      is_pwd,
+      occupation, // Assumes a field 'occupation_status' in your DB schema
+      minAge,
+      maxAge,
+      sortBy,   // For dynamic sorting
+      sortOrder // 'asc' or 'desc'
+    } = req.query;
+    
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+
+    // --- 2. Build the MongoDB Filter Array Dynamically ---
+    // This approach is robust and cleanly handles multiple optional filters.
+    const filters = [];
+
+    // Status Filter
+    if (status) {
+      filters.push({ status: status });
+    }
+
+    // Boolean Filters (query params are strings, so we check for 'true')
+    if (is_voter === 'true') {
+      filters.push({ is_registered_voter: true });
+    }
+    if (is_pwd === 'true') {
+      filters.push({ is_pwd: true });
+    }
+    if (is_senior === 'true') {
+      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
+      // If not, you'd need to calculate based on date_of_birth.
+      filters.push({ is_senior_citizen: true });
+    }
+
+    // Occupation Filter
+    if (occupation) {
+      // Assumes your schema has an 'occupation_status' field.
+      filters.push({ occupation_status: occupation });
+    }
+    
+    // Age Range Filter (calculates based on date_of_birth)
+    if (minAge || maxAge) {
+      const ageFilter = {};
+      const now = new Date();
+      if (maxAge) {
+        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
+        const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
+        ageFilter.$gte = minBirthDate;
+      }
+      if (minAge) {
+        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
+        const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
+        ageFilter.$lte = maxBirthDate;
+      }
+      filters.push({ date_of_birth: ageFilter });
+    }
+
+    // General Text Search Filter
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      filters.push({
+        $or: [
+          { first_name: searchRegex },
+          { middle_name: searchRegex },
+          { last_name: searchRegex },
+          { email: searchRegex },
+          { contact_number: searchRegex },
+          { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex },
+          { precinct_number: searchRegex },
+        ],
+      });
+    }
+
+    // Combine all filters with $and. If filters is empty, query will be {} (match all).
+    const finalQuery = filters.length > 0 ? { $and: filters } : {};
+
+    // --- 3. Define Sorting Options ---
+    let sortOptions = { created_at: -1 }; // Default sort
+    if (sortBy) {
+        // Use dynamic key for the field to sort by
+        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+    }
+    
+    // --- 4. Define Projection (Fields to Return) ---
+    // This is the same as your original code, which is good practice.
+    const projection = {
+        first_name: 1,
+        middle_name: 1,
+        last_name: 1,
+        sex: 1,
+        date_of_birth: 1,
+        is_household_head: 1,
+        address_house_number: 1,
+        address_street: 1,
+        address_subdivision_zone: 1,
+        contact_number: 1,
+        email: 1,
+        status: 1,
+        created_at: 1,
+        _id: 1,
+    };
+    
+    // --- 5. Execute Queries ---
     const residents = await residentsCollection
-      .find(query)
+      .find(finalQuery)
       .project(projection)
+      .sort(sortOptions)
       .skip(skip)
       .limit(itemsPerPage)
-      .sort({ created_at: -1 }) // Default sort: newest first
       .toArray();
 
-    const totalResidents = await residentsCollection.countDocuments(query);
+    // Get total count based on the same filters for accurate pagination
+    const totalResidents = await residentsCollection.countDocuments(finalQuery);
 
+    // --- 6. Send Response ---
     res.json({
       residents: residents,
       total: totalResidents,
@@ -738,6 +785,7 @@ app.get('/api/residents', async (req, res) => {
       itemsPerPage: itemsPerPage,
       totalPages: Math.ceil(totalResidents / itemsPerPage),
     });
+
   } catch (error) {
     console.error("Error fetching residents:", error);
     res.status(500).json({ error: "Failed to fetch residents", message: error.message });
@@ -2375,56 +2423,106 @@ app.post('/api/borrowed-assets', async (req, res) => {
   }
 });
 
-// 2. GET ALL BORROWED ASSETS (GET)
+// 2. GET ALL BORROWED ASSETS (GET) - Revised for all filters
 app.get('/api/borrowed-assets', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const skip = (page - 1) * itemsPerPage;
-  const dab = await db();
-  const collection = dab.collection('borrowed_assets');
-
-  let searchMatchStage = {};
-  if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      searchMatchStage = {
-          $or: [
-              { borrower_display_name: searchRegex },
-              { item_borrowed: searchRegex },
-              { status: searchRegex },
-              { "borrower_details.first_name": searchRegex },
-              { "borrower_details.last_name": searchRegex },
-          ]
-      };
-  }
-
   try {
+    // --- 1. Extract and Sanitize All Potential Query Parameters ---
+    const {
+      search,
+      status, // Can be a comma-separated string like "Borrowed,Overdue"
+      sortBy,
+      sortOrder
+    } = req.query;
+
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const collection = dab.collection('borrowed_assets');
+
+    // Assuming STATUS constants are defined elsewhere, e.g., const STATUS = { APPROVED: 'Approved', OVERDUE: 'Overdue' }
+    // If not, define them here or replace with string literals.
+    const STATUS = { APPROVED: 'Approved', OVERDUE: 'Overdue' };
+
+    // --- 2. Build the MongoDB Match Conditions Dynamically ---
+    const matchConditions = [];
+
+    // Add search filter if it exists
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      matchConditions.push({
+        $or: [
+          { item_borrowed: searchRegex },
+          { "borrower_details.first_name": searchRegex },
+          { "borrower_details.last_name": searchRegex },
+          // Also search against the calculated 'current_status'
+          { "current_status": searchRegex },
+        ]
+      });
+    }
+
+    // Add status filter if it exists. Handles single or multiple statuses.
+    if (status) {
+      const statusArray = status.split(',').map(s => s.trim());
+      // Filter against 'current_status' to correctly find 'Overdue' items
+      matchConditions.push({ current_status: { $in: statusArray } });
+    }
+
+    // Combine all filters into a single $match stage
+    const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
+    
+    // --- 3. Define Sorting Stage Dynamically ---
+    let sortStage = { $sort: { borrow_datetime: -1 } }; // Default sort
+    if (sortBy) {
+        sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } };
+    }
+
+    // --- 4. Construct the Main Aggregation Pipeline ---
+    // The order of these stages is important.
     const aggregationPipeline = [
+      // Stage 1: Get borrower details
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      // Stage 2: Calculate the real-time status (e.g., check for Overdue)
       { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
-      { $match: searchMatchStage },
+      // Stage 3: Apply all the combined filters
+      { $match: mainMatchStage },
+      // Stage 4: Shape the data for the frontend
       {
         $project: {
-          _id: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1, status: "$current_status",
+          _id: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1,
+          status: "$current_status", // Use the calculated status
           borrower_name: { $concat: [ { $ifNull: ["$borrower_details.first_name", "Unknown"] }, " ", { $ifNull: ["$borrower_details.last_name", "Resident"] } ] },
         }
       },
-      { $sort: { borrow_datetime: -1 } },
+      // Stage 5 & 6: Sort and Paginate
+      sortStage,
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
+
     const transactions = await collection.aggregate(aggregationPipeline).toArray();
+
+    // --- 5. Get Accurate Total Count for Pagination ---
+    // This pipeline must mirror the filtering logic of the main one.
     const countPipeline = [
-      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array'} },
-      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
-      { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
-      { $match: searchMatchStage },
+      ...aggregationPipeline.slice(0, 4), // Re-use all stages before pagination and sorting
       { $count: 'total' }
     ];
+
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
-    res.json({ transactions, total: totalTransactions, page, itemsPerPage, totalPages: Math.ceil(totalTransactions / itemsPerPage) });
+
+    // --- 6. Send Response ---
+    res.json({
+      transactions,
+      total: totalTransactions,
+      page,
+      itemsPerPage,
+      totalPages: Math.ceil(totalTransactions / itemsPerPage)
+    });
+
   } catch (error) {
     console.error('Error fetching borrowed assets:', error);
     res.status(500).json({ error: "Failed to fetch transactions." });
@@ -3120,6 +3218,115 @@ app.put('/api/complaints/:id', async (req, res) => {
   } catch (error) { console.error('Error updating complaint:', error); res.status(500).json({ error: 'Error updating complaint.' }); }
 });
 
+// --- GET ALL NOTES FOR A COMPLAINT ---
+// GET /api/complaints/:id/notes
+app.get('/api/complaints/:id/notes', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid complaint ID format' });
+  }
+
+  const dab = await db();
+  const collection = dab.collection('complaints');
+
+  try {
+    const aggregationPipeline = [
+      // 1. Find the specific complaint document
+      { $match: { _id: new ObjectId(id) } },
+      
+      // 2. Deconstruct the investigation_notes array to process each note individually
+      { $unwind: { path: '$investigation_notes', preserveNullAndEmptyArrays: true } },
+
+      // 3. If there are no notes, this field will be null, so we can filter them out
+      { $match: { 'investigation_notes': { $ne: null } } },
+
+      // 4. Join with the 'users' collection to get the author's details
+      { 
+        $lookup: {
+          from: 'users', // Assumes you have a 'users' collection
+          localField: 'investigation_notes.authorId',
+          foreignField: '_id',
+          as: 'author_details'
+        }
+      },
+      
+      // 5. Shape the final note object
+      { 
+        $project: {
+          _id: '$investigation_notes._id',
+          content: '$investigation_notes.content',
+          createdAt: '$investigation_notes.createdAt',
+          author: { 
+            name: { $ifNull: [ { $arrayElemAt: ['$author_details.name', 0] }, 'Unknown User' ] }
+          }
+        }
+      }
+    ];
+
+    const notes = await collection.aggregate(aggregationPipeline).toArray();
+    
+    // The aggregation will return an empty array if the complaint doesn't exist or has no notes, which is a valid response.
+    res.json({ notes: notes });
+
+  } catch (error) {
+    console.error('Error fetching complaint notes:', error);
+    res.status(500).json({ error: 'Failed to fetch complaint notes.' });
+  }
+});
+
+
+// --- ADD A NEW NOTE TO A COMPLAINT ---
+// POST /api/complaints/:id/notes
+app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add your actual authentication middleware here
+  const { id } = req.params;
+  const { content } = req.body;
+  
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid complaint ID format' });
+  }
+  if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    return res.status(400).json({ error: 'Note content is required and cannot be empty.' });
+  }
+
+  const dab = await db();
+  const collection = dab.collection('complaints');
+
+  const newNote = {
+    _id: new ObjectId(),
+    content: content.trim(),
+    createdAt: new Date()
+  };
+
+  try {
+    const result = await collection.updateOne(
+      { _id: new ObjectId(id) },
+      { 
+        $push: { 
+          investigation_notes: {
+             $each: [newNote],
+             $sort: { createdAt: -1 } // Optional: keep the array sorted on insert
+          }
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+
+    if (result.modifiedCount === 0) {
+      // This might happen if the update fails for some reason, though it's rare with $push.
+      return res.status(500).json({ error: 'Failed to add the note.' });
+    }
+
+    res.status(201).json({ message: 'Note added successfully', note: newNote });
+
+  } catch (error) {
+    console.error('Error adding complaint note:', error);
+    res.status(500).json({ error: 'Error adding complaint note.' });
+  }
+});
+
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
@@ -3248,58 +3455,107 @@ app.post('/api/document-requests', async (req, res) => {
   }
 });
 
-// GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Updated for table view)
+// GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Revised for all filters)
 app.get('/api/document-requests', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const skip = (page - 1) * itemsPerPage;
-
-  const dab = await db();
-  const collection = dab.collection('document_requests');
-  
-  let searchMatchStage = {};
-  if (search) {
-    const searchRegex = new RegExp(search, 'i');
-    searchMatchStage = {
-      $or: [
-        { request_type: { $regex: searchRegex } },
-        { "requestor_details.first_name": { $regex: searchRegex } },
-        { "requestor_details.last_name": { $regex: searchRegex } },
-        { purpose: { $regex: searchRegex } },
-        { document_status: { $regex: searchRegex } },
-      ],
-    };
-  }
-
   try {
+    // --- 1. Extract and Sanitize All Potential Query Parameters ---
+    const {
+      search,
+      status, // The new status filter from the dashboard and local UI
+      sortBy,
+      sortOrder
+    } = req.query;
+
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const collection = dab.collection('document_requests');
+
+    // --- 2. Build the MongoDB Match Conditions Dynamically ---
+    const matchConditions = [];
+
+    // Add search filter if it exists
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      matchConditions.push({
+        $or: [
+          { request_type: { $regex: searchRegex } },
+          { "requestor_details.first_name": { $regex: searchRegex } },
+          { "requestor_details.last_name": { $regex: searchRegex } },
+          { purpose: { $regex: searchRegex } },
+          { document_status: { $regex: searchRegex } },
+        ],
+      });
+    }
+
+    // Add status filter if it exists
+    if (status) {
+      // Direct match is more efficient than regex for status
+      matchConditions.push({ document_status: status });
+    }
+
+    // Combine all filters into a single $match stage
+    const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
+    
+    // --- 3. Define Sorting Stage Dynamically ---
+    let sortStage = { $sort: { date_of_request: -1 } }; // Default sort
+    if (sortBy) {
+        // Use the key sent from the frontend to sort
+        sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } };
+    }
+
+    // --- 4. Construct the Aggregation Pipeline ---
     const aggregationPipeline = [
-      { // Lookup requestor details
-        $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }
+      { // First, perform the lookup to get requestor details
+        $lookup: {
+          from: 'residents',
+          localField: 'requestor_resident_id',
+          foreignField: '_id',
+          as: 'requestor_details_array'
+        }
       },
-      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] } } },
-      { $match: searchMatchStage },
-      {
+      { // Make the details easier to access
+        $addFields: {
+          requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] }
+        }
+      },
+      { // Now, apply the combined match filters
+        $match: mainMatchStage
+      },
+      { // Project the final shape for the frontend
         $project: {
-          _id: 1, request_type: 1,
-          requestor_name: { $concat: [ "$requestor_details.first_name", " ", "$requestor_details.last_name" ] },
-          date_of_request: "$created_at", // Use created_at as date of request
-          purpose_of_request: "$purpose", // Use the new purpose field
+          _id: 1,
+          request_type: 1,
+          requestor_name: { $concat: ["$requestor_details.first_name", " ", "$requestor_details.last_name"] },
+          date_of_request: "$created_at",
+          purpose_of_request: "$purpose",
           document_status: 1,
         }
       },
-      { $sort: { date_of_request: -1 } },
-      { $skip: skip }, { $limit: itemsPerPage }
+      sortStage, // Apply dynamic sorting
+      { $skip: skip },
+      { $limit: itemsPerPage }
     ];
 
     const requests = await collection.aggregate(aggregationPipeline).toArray();
     
-    // Simplified count pipeline
-    const countPipeline = [ ...aggregationPipeline.slice(0, 3), { $count: 'total' } ];
+    // --- 5. Get Accurate Total Count for Pagination ---
+    // Re-use the initial stages of the pipeline before projection and pagination
+    const countPipeline = [
+        ...aggregationPipeline.slice(0, 3), // Includes lookup, addFields, and the crucial mainMatchStage
+        { $count: 'total' }
+    ];
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
 
-    res.json({ requests, total: totalRequests });
+    // --- 6. Send Response ---
+    res.json({
+      requests,
+      total: totalRequests
+    });
+
   } catch (error) {
     console.error('Error fetching document requests:', error);
     res.status(500).json({ error: "Failed to fetch document requests." });
@@ -3495,6 +3751,8 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
 const puppeteer = require('puppeteer');
+const chromium = require("@sparticuz/chromium");
+
 const fs = require('fs').promises; // Use promise-based fs
 
 app.get('/api/document-requests/:id/generate', async (req, res) => {
@@ -3574,7 +3832,11 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     }
 
     // 4. Generate PDF using Puppeteer
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); // Options for server environments
+    const browser = await puppeteer.launch({
+      args: puppeteer.defaultArgs({ args: chromium.args, headless: "shell" }),
+      executablePath: await chromium.executablePath(),
+      headless: "shell",
+    }); // Options for server environments
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     const pdfBuffer = await page.pdf({ format: 'Legal', printBackground: true });
