@@ -3836,7 +3836,7 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     // 4. Generate PDF using Puppeteer
     const browser = await puppeteer.launch({
       args: puppeteer.defaultArgs({ args: chromium.args, headless: "shell" }),
-      executablePath: await chromium.executablePath(),
+      executablePath: await chromium.executablePath,
       headless: "shell",
     }); // Options for server environments
     const page = await browser.newPage();
