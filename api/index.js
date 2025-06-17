@@ -3750,12 +3750,12 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core'); // ✅ use puppeteer-core
 
 const fs = require('fs').promises; // Use promise-based fs
 
 app.get('/api/document-requests/:id/generate', async (req, res) => {
-  const chromium = await import('@sparticuz/chromium');
+  const chromium = (await import('@sparticuz/chromium')).default;
 
 
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
@@ -3833,10 +3833,12 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         html = html.replace(new RegExp(placeholder.replace(/\[/g, '\\[').replace(/\]/g, '\\]'), 'g'), replacements[placeholder]);
     }
 
+    console.log('executiable path: ', chromium);
+
     // 4. Generate PDF using Puppeteer
     const browser = await puppeteer.launch({
       args: chromium.args,
-      executablePath: await chromium.executablePath,
+      executablePath: await chromium.executablePath(),
       headless: await chromium.headless,
       defaultViewport: chromium.defaultViewport,
     }); // Options for server environments
