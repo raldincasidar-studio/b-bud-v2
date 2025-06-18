@@ -121,7 +121,11 @@ const router = useRouter();
 const documentTypes = [
   'Certificate of Cohabitation',
   'Certificate of Good Moral',
+  'Certificate of Residency',
+  'Certificate of Solo Parent',
+  'Certificate of Indigency',
   'Barangay Clearance',
+  'Barangay Permit (for installations)',
   'Barangay Business Clearance',
   'Barangay Certification (First Time Jobseeker)',
 ];

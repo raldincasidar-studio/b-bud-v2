@@ -351,6 +351,17 @@ app.post('/api/residents/login/verify-otp', async (req, res) => {
       }
     );
 
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      userId: resident._id,
+      userName: `${resident.first_name} ${resident.last_name}`,
+      description: `Resident '${resident.first_name} ${resident.last_name}' logged into the system.`,
+      action: "LOGIN",
+      entityType: "Resident",
+      entityId: resident._id.toString(),
+    })
+    // --- END AUDIT LOG ---
+
     // Prepare resident data to return (excluding sensitive fields)
     const { password_hash, login_attempts, account_locked_until, login_otp, login_otp_expiry, ...residentDataToReturn } = resident;
 
@@ -471,6 +482,17 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
         $unset: { password_reset_otp: "", password_reset_otp_expiry: "" } // Clear OTP fields
       }
     );
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      userId: resident._id,
+      userName: `${resident.first_name} ${resident.last_name}`,
+      description: `Resident '${resident.first_name} ${resident.last_name}' logged into the system.`,
+      action: "LOGIN",
+      entityType: "Resident",
+      entityId: resident._id.toString(),
+    })
+    // --- END AUDIT LOG ---
 
     res.json({ message: 'Password has been reset successfully. You can now log in with your new password.' });
 
@@ -640,6 +662,17 @@ app.post('/api/residents', async (req, res) => {
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
         });
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+          userId: resident._id,
+          userName: `${resident.first_name} ${resident.last_name}`,
+          description: `Resident '${resident.first_name} ${resident.last_name}' logged into the system.`,
+          action: "LOGIN",
+          entityType: "Resident",
+          entityId: resident._id.toString(),
+        })
+        // --- END AUDIT LOG ---
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending approval.',
@@ -1095,11 +1128,33 @@ app.get('/api/residents/:residentId/household-details', async (req, res) => {
 });
 
 // DELETE RESIDENT BY ID (DELETE)
-app.delete('/api/residents/:id', async (req, res) => {
-  const dab = await db();
-  const residentsCollection = dab.collection('residents');
-  await residentsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({message: 'Resident deleted successfully'});
+app.delete("/api/residents/:id", async (req, res) => {
+  const dab = await db()
+  const residentsCollection = dab.collection("residents")
+
+  try {
+    // Get resident details before deletion for audit log
+    const resident = await residentsCollection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!resident) {
+      return res.status(404).json({ error: "Resident not found" })
+    }
+
+    await residentsCollection.deleteOne({ _id: new ObjectId(req.params.id) })
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Resident '${resident.first_name} ${resident.last_name}' was deleted from the system.`,
+      action: "DELETE",
+      entityType: "Resident",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Resident deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting resident:", error)
+    res.status(500).json({ error: "Server error", message: "Could not delete resident." })
+  }
 })
 
 // UPDATE RESIDENT BY ID (PUT) - REVISED
@@ -1228,6 +1283,14 @@ app.put('/api/residents/:id', async (req, res) => {
   try {
     await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0 }});
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Resident '${updatedResident.first_name} ${updatedResident.last_name}' information was updated.`,
+      action: "UPDATE",
+      entityType: "Resident",
+      entityId: id,
+    })
+    // --- END AUDIT LOG ---
     res.json({ message: 'Resident updated successfully', resident: updatedResident });
   } catch (error) {
     console.error('Error updating resident:', error);
@@ -1423,6 +1486,15 @@ app.post('/api/documents', async (req, res) => {
   };
 
   await documentsCollection.insertOne(documentToInsert);
+
+  // --- ADD AUDIT LOG HERE ---
+  await createAuditLog({
+    description: `New document request created: ${req.body.type} for resident ID ${req.body.residentId}.`,
+    action: "CREATE",
+    entityType: "Document",
+    entityId: result.insertedId.toString(),
+  })
+  // --- END AUDIT LOG ---
   res.json({ message: 'Document added successfully' });
 });
 
@@ -1483,11 +1555,33 @@ app.get('/api/documents/:id', async (req, res) => {
 });
 
 // DELETE DOCUMENT BY ID (DELETE)
-app.delete('/api/documents/:id', async (req, res) => {
-  const dab = await db();
-  const documentsCollection = dab.collection('documents');
-  await documentsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({ message: 'Document deleted successfully' });
+app.delete("/api/documents/:id", async (req, res) => {
+  const dab = await db()
+  const documentsCollection = dab.collection("documents")
+
+  try {
+    // Get document details before deletion for audit log
+    const document = await documentsCollection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!document) {
+      return res.status(404).json({ error: "Document not found" })
+    }
+
+    await documentsCollection.deleteOne({ _id: new ObjectId(req.params.id) })
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Document request deleted: ${document.type} (ID: ${req.params.id}).`,
+      action: "DELETE",
+      entityType: "Document",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Document deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting document:", error)
+    res.status(500).json({ error: "Server error", message: "Could not delete document." })
+  }
 });
 
 // UPDATE DOCUMENT BY ID (PUT)
@@ -1503,6 +1597,15 @@ app.put('/api/documents/:id', async (req, res) => {
     { _id: new ObjectId(req.params.id) },
     { $set: updateData }
   );
+
+  // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Document request updated: ${currentDocument.type} (ID: ${req.params.id}).`,
+      action: "UPDATE",
+      entityType: "Document",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
 
   res.json({ message: 'Document updated successfully' });
 });
@@ -1607,20 +1710,39 @@ app.get('/api/admins/:id', async (req, res) => {
   res.json({admin});
 })
 
-// DELETE ADMIN BY ID (DELETE)
-app.delete('/api/admins/:id', async (req, res) => {
-  const dab = await db();
-  const adminsCollection = dab.collection('admins');
+/// DELETE ADMIN BY ID (DELETE)
+app.delete("/api/admins/:id", async (req, res) => {
+  const dab = await db()
+  const adminsCollection = dab.collection("admins")
 
+  try {
+    // Get admin details before deletion for audit log
+    const admin = await adminsCollection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!admin) {
+      return res.status(404).json({ error: "Admin not found" })
+    }
 
-  // check if admin is Technical Admin
-  const admin = await adminsCollection.findOne({ _id: new ObjectId(req.params.id) });
-  if (admin.role === 'Technical Admin') {
-      return res.status(200).json({ error: 'Cannot delete Technical Admin account.' });
+    // check if admin is Technical Admin
+    if (admin.role === "Technical Admin") {
+      return res.status(200).json({ error: "Cannot delete Technical Admin account." })
+    }
+
+    await adminsCollection.deleteOne({ _id: new ObjectId(req.params.id) })
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Admin account deleted: '${admin.username}' with role '${admin.role}'.`,
+      action: "DELETE",
+      entityType: "Admin",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Admin deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting admin:", error)
+    res.status(500).json({ error: "Server error", message: "Could not delete admin." })
   }
-
-  await adminsCollection.deleteOne({ _id: new ObjectId(req.params.id) });
-  res.json({message: 'Admin deleted successfully'});
 })
 
 // UPDATE ADMIN BY ID (PUT)
@@ -1665,6 +1787,15 @@ app.put('/api/admins/:id', async (req, res) => {
     { _id: new ObjectId(req.params.id) },
     { $set: data }
   );
+
+  // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Admin account updated: '${currentAdmin.username}' information was modified.`,
+      action: "UPDATE",
+      entityType: "Admin",
+      entityId: req.params.id,
+    })
+  // --- END AUDIT LOG ---
 
   res.json({message: 'Admin updated successfully'});
 })
@@ -1723,6 +1854,16 @@ app.post('/api/barangay-officials', async (req, res) => {
         };
 
         const result = await collection.insertOne(newOfficialDoc);
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+          description: `New barangay official added: '${first_name} ${last_name}' as ${position}.`,
+          action: "CREATE",
+          entityType: "BarangayOfficial",
+          entityId: result.insertedId.toString(),
+        })
+        // --- END AUDIT LOG ---
+
         res.status(201).json({ message: 'Barangay Official added successfully', officialId: result.insertedId });
     } catch (error) {
         console.error("Error adding official:", error);
@@ -1847,6 +1988,15 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
         const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
         if (result.matchedCount === 0) return res.status(404).json({ error: 'Official not found.' });
 
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+          description: `Barangay official updated: '${currentOfficial.first_name} ${currentOfficial.last_name}' (${currentOfficial.position}).`,
+          action: "UPDATE",
+          entityType: "BarangayOfficial",
+          entityId: id,
+        })
+        // --- END AUDIT LOG ---
+
         res.json({ message: 'Barangay Official updated successfully' });
     } catch (error) {
         console.error("Error updating official:", error);
@@ -1855,20 +2005,36 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
 });
 
 // 5. DELETE: DELETE /api/barangay-officials/:id
-app.delete('/api/barangay-officials/:id', async (req, res) => {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
-    
-    const dab = await db();
-    const collection = dab.collection('barangay_officials');
-    
-    try {
-        const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
-        if (result.deletedCount === 0) return res.status(404).json({ error: 'Official not found.' });
-        res.json({ message: 'Official deleted successfully' });
-    } catch (error) {
-        console.error("Error deleting official:", error);
-        res.status(500).json({ error: 'Failed to delete official.' });
+app.delete("/api/barangay-officials/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format." })
+
+  const dab = await db()
+  const collection = dab.collection("barangay_officials")
+
+  try {
+    // Get official details before deletion for audit log
+    const official = await collection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!official) {
+      return res.status(404).json({ error: "Official not found." })
     }
+
+    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) })
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Official not found." })
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Barangay official deleted: '${official.first_name} ${official.last_name}' (${official.position}).`,
+      action: "DELETE",
+      entityType: "BarangayOfficial",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Official deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting official:", error)
+    res.status(500).json({ error: "Failed to delete official." })
+  }
 });
 
 
@@ -2185,6 +2351,15 @@ app.post('/api/notifications', async (req, res) => {
         return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
     }
 
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `New notification created: '${name}' targeting ${target_audience === "All" ? "all residents" : `${recipient_ids.length} specific residents`}.`,
+      action: "CREATE",
+      entityType: "Notification",
+      entityId: createdNotification._id.toString(),
+    })
+    // --- END AUDIT LOG ---
+
     res.status(201).json({ message: 'Notification added successfully', notification: createdNotification });
   } catch (error) {
     // This catch is for unexpected errors not handled by createNotification itself (e.g., db connection issue)
@@ -2316,6 +2491,16 @@ app.put('/api/notifications/:id', async (req, res) => {
     }
     
     const updatedNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Notification updated: '${currentNotification.name}' was modified.`,
+      action: "UPDATE",
+      entityType: "Notification",
+      entityId: id,
+    })
+    // --- END AUDIT LOG ---
+
     res.json({ message: 'Notification updated successfully', notification: updatedNotification });
 
   } catch (error) {
@@ -2325,28 +2510,44 @@ app.put('/api/notifications/:id', async (req, res) => {
 });
 
 // DELETE NOTIFICATION BY ID (DELETE)
-app.delete('/api/notifications/:id', async (req, res) => {
-  const { id } = req.params;
+app.delete("/api/notifications/:id", async (req, res) => {
+  const { id } = req.params
 
   if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
+    return res.status(400).json({ error: "Invalid ID format" })
   }
 
   try {
-    const dab = await db();
-    const notificationsCollection = dab.collection('notifications');
-    const result = await notificationsCollection.deleteOne({ _id: new ObjectId(id) });
+    const dab = await db()
+    const notificationsCollection = dab.collection("notifications")
+
+    // Get notification details before deletion for audit log
+    const notification = await notificationsCollection.findOne({ _id: new ObjectId(id) })
+    if (!notification) {
+      return res.status(404).json({ error: "Not found", message: "Notification not found." })
+    }
+
+    const result = await notificationsCollection.deleteOne({ _id: new ObjectId(id) })
 
     if (result.deletedCount === 0) {
-      return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
+      return res.status(404).json({ error: "Not found", message: "Notification not found." })
     }
-    res.json({ message: 'Notification deleted successfully' });
-  } catch (error) {
-    console.error("Error deleting notification:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not delete notification.' });
-  }
-});
 
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Notification deleted: '${notification.name}' was removed from the system.`,
+      action: "DELETE",
+      entityType: "Notification",
+      entityId: id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Notification deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting notification:", error)
+    res.status(500).json({ error: "Database error", message: "Could not delete notification." })
+  }
+})
 
 
 
@@ -2445,6 +2646,17 @@ app.post('/api/borrowed-assets', async (req, res) => {
     };
     const result = await borrowedAssetsCollection.insertOne(newTransaction);
     const insertedDoc = await borrowedAssetsCollection.findOne({ _id: result.insertedId });
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      userId: new ObjectId(borrower_resident_id),
+      userName: borrower_display_name,
+      description: `New asset borrowing request: ${borrower_display_name} requested to borrow ${requestedQuantity} ${item_borrowed}.`,
+      action: "CREATE",
+      entityType: "BorrowedAsset",
+      entityId: result.insertedId.toString(),
+    })
+    // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Asset borrowing request submitted successfully', transaction: insertedDoc });
 
@@ -2589,6 +2801,7 @@ app.get('/api/borrowed-assets/:id', async (req, res) => {
   }
 });
 
+
 // 4. UPDATE TRANSACTION DETAILS (PUT)
 app.put('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
@@ -2596,6 +2809,7 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   const { borrow_datetime, item_borrowed, quantity_borrowed, expected_return_date, notes } = req.body;
+  
   const updateFields = {};
   if (borrow_datetime !== undefined) updateFields.borrow_datetime = new Date(borrow_datetime);
   if (item_borrowed !== undefined) updateFields.item_borrowed = String(item_borrowed);
@@ -2603,11 +2817,29 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
   if (expected_return_date !== undefined) updateFields.expected_return_date = new Date(expected_return_date);
   if (notes !== undefined) updateFields.notes = notes ? String(notes).trim() : null;
   if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update provided.' });
+  
   updateFields.updated_at = new Date();
+
   try {
+    const transactionToUpdate = await collection.findOne({ _id: new ObjectId(id) });
+    if (!transactionToUpdate) return res.status(404).json({ error: 'Transaction not found.' });
+
     const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Transaction not found.' });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Transaction not found during update.' });
+    
     const updatedDoc = await collection.findOne({ _id: new ObjectId(id) });
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Details updated for borrowed asset transaction: '${updatedDoc.item_borrowed}' (Borrower: ${updatedDoc.borrower_display_name}).`,
+      action: "UPDATE",
+      entityType: "BorrowTransaction",
+      entityId: id,
+      // In a real app, you'd get the admin's name from auth context
+      // userName: req.user.name 
+    });
+    // --- END AUDIT LOG ---
+
     res.json({ message: 'Transaction updated successfully', transaction: updatedDoc });
   } catch (error) {
     console.error('Error updating transaction:', error);
@@ -2621,22 +2853,44 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
   const { status: newStatus, notes } = req.body;
   if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid Transaction ID format' });
   if (!newStatus || !Object.values(STATUS).includes(newStatus)) return res.status(400).json({ error: `Status is required and must be one of: ${Object.values(STATUS).join(', ')}` });
+  
   try {
     const dab = await db();
     const borrowedAssetsCollection = dab.collection('borrowed_assets');
     const residentsCollection = dab.collection('residents');
+
     const transaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
     if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
+    const oldStatus = transaction.status;
+
+    // Only proceed if status is actually changing
+    if (oldStatus === newStatus) {
+        return res.json({ message: `Transaction status is already '${newStatus}'.`, transaction: transaction });
+    }
+
     const updateFields = { status: newStatus, updated_at: new Date() };
     if (notes) {
       updateFields.notes = transaction.notes ? `${transaction.notes}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}` : `[${new Date().toLocaleString()}] ${notes}`;
     }
+    
+    // Deactivate/Reactivate resident if item is lost/damaged or resolved
     if ([STATUS.LOST, STATUS.DAMAGED].includes(newStatus)) {
         await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Deactivated' } });
     } else if (newStatus === STATUS.RESOLVED && [STATUS.LOST, STATUS.DAMAGED].includes(transaction.status)) {
         await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Active' } });
     }
+
     await borrowedAssetsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Status for borrowed item '${transaction.item_borrowed}' (Borrower: ${transaction.borrower_display_name}) changed from '${oldStatus}' to '${newStatus}'.`,
+      action: "STATUS_CHANGE",
+      entityType: "BorrowTransaction",
+      entityId: id,
+    });
+    // --- END AUDIT LOG ---
+
     const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
     res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
   } catch (error) {
@@ -2648,9 +2902,7 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
 // 6. PROCESS ITEM RETURN (PATCH) - UPDATED FOR BASE64
 app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
     const { id } = req.params;
-    // Expect the Base64 string from the frontend
     const { return_proof_image_base64, return_condition_notes } = req.body;
-
     if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid transaction ID format.' });
 
     try {
@@ -2659,7 +2911,6 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
 
         const transaction = await collection.findOne({ _id: new ObjectId(id) });
         if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
-
         if (![STATUS.APPROVED, STATUS.OVERDUE].includes(transaction.status)) {
           return res.status(400).json({ error: `Cannot return an item with status '${transaction.status}'.` });
         }
@@ -2667,15 +2918,23 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
         const updateFields = {
             status: STATUS.RETURNED,
             date_returned: new Date(),
-            // Store the received Base64 data URL directly.
             return_proof_image_url: return_proof_image_base64 || null,
             return_condition_notes: return_condition_notes || "Item returned.",
             updated_at: new Date(),
         };
 
         await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-        const updatedTransaction = await collection.findOne({ _id: new ObjectId(id) });
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+          description: `Item returned for transaction: ${transaction.quantity_borrowed}x '${transaction.item_borrowed}' by ${transaction.borrower_display_name}.`,
+          action: "STATUS_CHANGE",
+          entityType: "BorrowTransaction",
+          entityId: id,
+        });
+        // --- END AUDIT LOG ---
 
+        const updatedTransaction = await collection.findOne({ _id: new ObjectId(id) });
         res.json({ message: 'Item marked as returned successfully.', transaction: updatedTransaction });
     } catch (error) {
         console.error('Error marking item as returned:', error);
@@ -2683,19 +2942,41 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
     }
 });
 
+
 // 7. DELETE TRANSACTION (DELETE)
 app.delete('/api/borrowed-assets/:id', async (req, res) => {
-  const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
-  const dab = await db();
-  const collection = dab.collection('borrowed_assets');
+  if (!ObjectId.isValid(req.params.id)) {
+    return res.status(400).json({ error: "Invalid ID format." })
+  }
+
   try {
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) return res.status(404).json({ error: 'Transaction not found.' });
-    res.json({ message: 'Transaction deleted successfully' });
+    const dab = await db()
+    const collection = dab.collection("borrowed_assets")
+
+    // Get transaction details before deletion for audit log
+    const transaction = await collection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!transaction) {
+      return res.status(404).json({ error: "Transaction not found." })
+    }
+
+    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) })
+    if (result.deletedCount === 0) {
+      return res.status(404).json({ error: "Transaction not found." })
+    }
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      description: `Borrowed asset transaction deleted: ${transaction.item_borrowed} (ID: ${req.params.id}).`,
+      action: "DELETE",
+      entityType: "BorrowedAsset",
+      entityId: req.params.id,
+    })
+    // --- END AUDIT LOG ---
+
+    res.json({ message: "Transaction deleted successfully" })
   } catch (error) {
-    console.error('Error deleting transaction:', error);
-    res.status(500).json({ error: 'Error deleting transaction: ' + error.message });
+    console.error("Error deleting borrowed asset:", error)
+    res.status(500).json({ error: "Failed to delete transaction." })
   }
 });
 
@@ -2742,7 +3023,7 @@ app.get('/api/assets/inventory-status', async (req, res) => {
 
 
 
-// ================================== ASSETS CRUD ================================== //
+// ================================== ASSETS CRUD (WITH FULL AUDIT LOG) ================================== //
 
 // 1. CREATE: POST /api/assets
 app.post('/api/assets', async (req, res) => {
@@ -2769,6 +3050,17 @@ app.post('/api/assets', async (req, res) => {
         };
 
         const result = await collection.insertOne(newAssetDoc);
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Added new asset to inventory: ${quantity}x '${name}' (Category: ${category}).`,
+            action: "CREATE",
+            entityType: "Asset",
+            entityId: result.insertedId.toString(),
+            // userName: req.user.name // In a real app with auth
+        });
+        // --- END AUDIT LOG ---
+
         res.status(201).json({ message: 'Asset added successfully', assetId: result.insertedId });
     } catch (error) {
         console.error("Error adding asset:", error);
@@ -2858,6 +3150,9 @@ app.put('/api/assets/:id', async (req, res) => {
     }
 
     try {
+        const assetToUpdate = await collection.findOne({ _id: new ObjectId(id) });
+        if (!assetToUpdate) return res.status(404).json({ error: 'Asset not found.' });
+
         const updateFields = {
             name: String(name).trim(),
             total_quantity: quantity,
@@ -2866,7 +3161,17 @@ app.put('/api/assets/:id', async (req, res) => {
         };
 
         const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-        if (result.matchedCount === 0) return res.status(404).json({ error: 'Asset not found.' });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Asset not found during update.' });
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Updated asset details for '${assetToUpdate.name}'.`,
+            action: "UPDATE",
+            entityType: "Asset",
+            entityId: id,
+            // userName: req.user.name 
+        });
+        // --- END AUDIT LOG ---
 
         res.json({ message: 'Asset updated successfully' });
     } catch (error) {
@@ -2883,8 +3188,22 @@ app.delete('/api/assets/:id', async (req, res) => {
     const collection = dab.collection('assets');
     
     try {
+        const assetToDelete = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!assetToDelete) return res.status(404).json({ error: 'Asset not found.' });
+
         const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
-        if (result.deletedCount === 0) return res.status(404).json({ error: 'Asset not found.' });
+        if (result.deletedCount === 0) return res.status(404).json({ error: 'Asset not found during deletion.' });
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Deleted asset from inventory: '${assetToDelete.name}'.`,
+            action: "DELETE",
+            entityType: "Asset",
+            entityId: req.params.id,
+            // userName: req.user.name
+        });
+        // --- END AUDIT LOG ---
+
         res.json({ message: 'Asset deleted successfully' });
     } catch (error) {
         console.error("Error deleting asset:", error);
@@ -3247,7 +3566,9 @@ app.put('/api/complaints/:id', async (req, res) => {
   try {
     const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     if (result.matchedCount === 0) return res.status(404).json({ error: 'Complaint not found.' });
-    
+
+    // Need audit log
+
     // Fetch updated doc with lookups for consistent response
     const updatedComplaintResult = await collection.aggregate([
         { $match: { _id: new ObjectId(id) } },
@@ -3362,6 +3683,16 @@ app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add yo
       return res.status(500).json({ error: 'Failed to add the note.' });
     }
 
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+        description: `Added a new investigation note to complaint #${id.slice(-6)}.`,
+        action: "UPDATE",
+        entityType: "Complaint",
+        entityId: id,
+        // userName: req.user.name // Get acting admin's name from auth context
+    });
+    // --- END AUDIT LOG ---
+
     res.status(201).json({ message: 'Note added successfully', note: newNote });
 
   } catch (error) {
@@ -3423,20 +3754,43 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
   }
 });
 
+
 // DELETE COMPLAINT REQUEST BY ID (DELETE)
 app.delete('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
+  
   const dab = await db();
   const collection = dab.collection('complaints');
+  
   try {
+    // Step 1: Fetch the document BEFORE deleting it to get its details for logging.
+    const complaintToDelete = await collection.findOne({ _id: new ObjectId(id) });
+    if (!complaintToDelete) {
+        return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    
+    // Step 2: Perform the deletion.
     const result = await collection.deleteOne({ _id: new ObjectId(id) });
     if (result.deletedCount === 0) {
-      return res.status(404).json({ error: 'Complaint not found.' });
+      // This is a failsafe, but the findOne above should have already caught it.
+      return res.status(404).json({ error: 'Complaint not found during deletion process.' });
     }
+    
+    // Step 3: Create the audit log using the fetched data.
+    await createAuditLog({
+        description: `Deleted complaint #${id.slice(-6)} (Complainant: ${complaintToDelete.complainant_display_name}).`,
+        action: "DELETE",
+        entityType: "Complaint",
+        entityId: id,
+        // userName: req.user.name // In a real app with auth context
+    });
+
+    // Step 4: Send the success response.
     res.json({ message: 'Complaint deleted successfully' });
+
   } catch (error) {
     console.error('Error deleting complaint:', error);
     res.status(500).json({ error: 'Error deleting complaint: ' + error.message });
@@ -3459,7 +3813,9 @@ app.delete('/api/complaints/:id', async (req, res) => {
 
 
 
+
 // ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
+
 
 // POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object)
 app.post('/api/document-requests', async (req, res) => {
@@ -3480,6 +3836,12 @@ app.post('/api/document-requests', async (req, res) => {
   }
 
   try {
+    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
+    const residentsCollection = dab.collection('residents');
+    const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
+    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}` : 'An unknown resident';
+    // --- END FETCH ---
+
     const newRequest = {
       requestor_resident_id: new ObjectId(requestor_resident_id),
       request_type: String(request_type).trim(),
@@ -3489,14 +3851,28 @@ app.post('/api/document-requests', async (req, res) => {
       created_at: new Date(),
       updated_at: new Date(),
     };
+    
     const collection = dab.collection('document_requests');
     const result = await collection.insertOne(newRequest);
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+        description: `New document request for '${request_type}' submitted by ${requestorName}.`,
+        action: "CREATE",
+        entityType: "DocumentRequest",
+        entityId: result.insertedId.toString(),
+        userId: requestor ? requestor._id : null,
+        userName: requestorName,
+    });
+    // --- END AUDIT LOG ---
+
     res.status(201).json({ message: 'Document request added successfully', requestId: result.insertedId });
   } catch (error) {
     console.error('Error adding document request:', error);
     res.status(500).json({ error: 'Error adding document request.' });
   }
 });
+
 
 // GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Revised for all filters)
 app.get('/api/document-requests', async (req, res) => {
@@ -3624,25 +4000,58 @@ app.get('/api/document-requests/:id', async (req, res) => {
 // PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (Handles new 'details' object)
 app.put('/api/document-requests/:id', async (req, res) => {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+    
     const dab = await db();
     const collection = dab.collection('document_requests');
     const { requestor_resident_id, request_type, purpose, details } = req.body;
 
+    // Basic validation on the payload
+    if (!requestor_resident_id || !request_type || !purpose) {
+        return res.status(400).json({ error: 'Missing required fields for update.' });
+    }
+
     const updateFields = {
         requestor_resident_id: new ObjectId(requestor_resident_id),
-        request_type, purpose, details,
+        request_type, 
+        purpose, 
+        details,
         updated_at: new Date()
     };
 
     try {
+        // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
+        const originalRequest = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!originalRequest) {
+            return res.status(404).json({ error: 'Document request not found.' });
+        }
+        // --- END FETCH ---
+
         const result = await collection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updateFields });
-        if (result.matchedCount === 0) return res.status(404).json({ error: 'Document request not found.' });
+        if (result.matchedCount === 0) {
+            // This is a failsafe; the findOne above should catch this.
+            return res.status(404).json({ error: 'Document request not found during update process.' });
+        }
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Updated details for document request '${originalRequest.request_type}' (#${req.params.id.slice(-6)}).`,
+            action: "UPDATE",
+            entityType: "DocumentRequest",
+            entityId: req.params.id,
+            // In a real app with auth, get the admin's name from the request context
+            // userName: req.user.name 
+        });
+        // --- END AUDIT LOG ---
+
         res.json({ message: 'Document request updated successfully' });
-    } catch (error) { console.error('Error updating request:', error); res.status(500).json({ error: 'Error updating request.' }); }
+
+    } catch (error) { 
+        console.error('Error updating request:', error); 
+        res.status(500).json({ error: 'Error updating request.' }); 
+    }
 });
 
-
-// PATCH /api/document-requests/:id/status - UPDATE STATUS (This remains largely the same)
+// PATCH /api/document-requests/:id/status - UPDATE STATUS
 app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status: newStatus } = req.body;
@@ -3656,14 +4065,43 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
   try {
     const dab = await db();
     const collection = dab.collection('document_requests');
+
+    // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
+    const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+    if (!originalRequest) {
+        return res.status(404).json({ error: 'Request not found.' });
+    }
+    const oldStatus = originalRequest.document_status;
+    // --- END FETCH ---
+
+    // Only perform an update and log if the status is actually changing
+    if (oldStatus === newStatus) {
+        return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
+    }
+
     const result = await collection.updateOne(
       { _id: new ObjectId(id) },
       { $set: { document_status: newStatus, updated_at: new Date() } }
     );
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Request not found.' });
+    if (result.matchedCount === 0) return res.status(404).json({ error: 'Request not found during update.' });
+    
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+        description: `Status for document request '${originalRequest.request_type}' (#${id.slice(-6)}) changed from '${oldStatus}' to '${newStatus}'.`,
+        action: "STATUS_CHANGE",
+        entityType: "DocumentRequest",
+        entityId: id,
+        // userName: req.user.name // In a real app with auth context
+    });
+    // --- END AUDIT LOG ---
+
     // TODO: Send notification to user
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
-  } catch (error) { console.error("Error updating status:", error); res.status(500).json({ error: 'Could not update status.' }); }
+
+  } catch (error) { 
+    console.error("Error updating status:", error); 
+    res.status(500).json({ error: 'Could not update status.' }); 
+  }
 });
 
 
@@ -3723,6 +4161,7 @@ app.patch('/api/document-requests/:id/approve', async (req, res) => {
       return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
     }
     
+
     // TODO: Send notification to user
     res.json({ message: 'Request approved successfully.', request: result });
   } catch (error) {
@@ -3787,6 +4226,7 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
         res.status(500).json({ error: 'Could not decline request.' });
     }
 });
+
 
 
 

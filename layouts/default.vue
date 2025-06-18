@@ -78,6 +78,7 @@ const items = [
     { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
+    { to: '/audit-logs', text: 'Audit Log', icon: 'mdi-file-chart-outline' },
     { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
   ]
 
