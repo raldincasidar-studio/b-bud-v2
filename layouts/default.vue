@@ -79,6 +79,7 @@ const items = [
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
     { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
+    { to: '/audit-logs', text: 'Audit log', icon: 'mdi-file-document-outline', superAdmin: true },
   ]
 
   const router = useRouter();
