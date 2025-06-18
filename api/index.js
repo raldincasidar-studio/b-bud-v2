@@ -115,6 +115,16 @@ app.post('/api/login', async (req, res) => {
       }
   }
 
+ // --- ADD AUDIT LOG HERE ---
+  await createAuditLog({
+    userId: user._id,
+    userName: user.name,
+    description: `Admin '${user.name}' logged into the system.`,
+    action: 'LOGIN',
+    entityType: 'Admin',
+    entityId: user._id.toString()
+  });
+  // --- END AUDIT LOG ---
 
   const token = generateToken();
 
@@ -1261,6 +1271,17 @@ app.patch('/api/residents/:id/status', async (req, res) => {
     const result = await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     if (result.matchedCount === 0) return res.status(404).json({ error: 'Resident not found.' });
 
+     // --- ADD AUDIT LOG HERE ---
+    if (oldStatus !== status) { // Only log if status actually changed
+      await createAuditLog({
+        // TODO: Get acting admin's name from auth middleware
+        description: `Status for resident '${residentName}' was changed from '${oldStatus}' to '${status}'.`,
+        action: 'STATUS_CHANGE',
+        entityType: 'Resident',
+        entityId: id
+      });
+    }
+    // --- END AUDIT LOG ---
     
     if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
         // Fetch current status to confirm it's indeed the same
@@ -1520,6 +1541,16 @@ app.post('/api/admins', async (req, res) => {
   }
 
   await adminsCollection.insertOne({...req.body, password: md5(req.body.password)});
+
+   // --- ADD AUDIT LOG HERE ---
+  // TODO: In a real app with auth middleware, you'd know which admin created this one.
+  await createAuditLog({
+    description: `A new admin account was created: '${req.body.username}'.`,
+    action: 'CREATE',
+    entityType: 'Admin'
+    // We don't have the new ID here, but you could fetch it if needed.
+  });
+  // --- END AUDIT LOG ---
 
   res.json({message: 'Admin added successfully'});
 })
@@ -2917,6 +2948,18 @@ app.post('/api/complaints', async (req, res) => {
     const collection = dab.collection('complaints');
     const result = await collection.insertOne(newComplaint);
     const insertedDoc = await collection.findOne({ _id: result.insertedId });
+
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+      userId: newComplaint.complainant_resident_id, // The complainant is the user in this context
+      userName: newComplaint.complainant_display_name,
+      description: `New complaint filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
+      action: 'CREATE',
+      entityType: 'Complaint',
+      entityId: result.insertedId.toString()
+    });
+    // --- END AUDIT LOG ---
+
     res.status(201).json({ message: 'Complaint request added successfully', complaint: insertedDoc });
   } catch (error) {
     console.error('Error adding complaint request:', error);
@@ -4032,10 +4075,99 @@ app.get('/api/dashboard/age-distribution', async (req, res) => {
 
 
 
+// =================== AUDIT LOG HELPER =================== //
+
+/**
+ * Creates an audit log entry in the database.
+ * @param {object} logData - The data for the audit log.
+ * @param {ObjectId} [logData.userId] - The ID of the user performing the action (optional).
+ * @param {string} [logData.userName] - The name of the user performing the action (optional).
+ * @param {string} logData.description - The human-readable log message.
+ * @param {'CREATE'|'UPDATE'|'DELETE'|'LOGIN'|'LOGOUT'|'APPROVE'|'REJECT'|'STATUS_CHANGE'|'GENERATE'} logData.action - The type of action.
+ * @param {string} [logData.entityType] - The name of the entity being affected (e.g., 'Resident').
+ * @param {string} [logData.entityId] - The ID of the document/record being affected.
+ */
+async function createAuditLog(logData) {
+  try {
+    const dab = await db(); // Get DB instance
+    const auditLogsCollection = dab.collection('audit_logs');
+    
+    const logDocument = {
+      user_id: logData.userId || null,
+      user_name: logData.userName || 'System', // Default to 'System' if no user is provided
+      description: logData.description,
+      action: logData.action,
+      entityType: logData.entityType || null,
+      entityId: logData.entityId || null,
+      createdAt: new Date(),
+    };
+    
+    await auditLogsCollection.insertOne(logDocument);
+    // console.log('Audit log created:', logData.description); // Optional: for debugging
+
+  } catch (error) {
+    // An audit log failure should not crash the main request.
+    console.error('FATAL: Could not create audit log.', error);
+  }
+}
 
 
+// ======================= AUDIT LOGS ======================= //
 
+// GET /api/audit-logs
+app.get('/api/audit-logs', async (req, res) => {
+  try {
+    const {
+      search,
+      page = 1,
+      itemsPerPage = 10,
+      sortBy,
+      sortOrder
+    } = req.query;
 
+    const skip = (parseInt(page) - 1) * parseInt(itemsPerPage);
+    const limit = parseInt(itemsPerPage);
+
+    const dab = await db();
+    const collection = dab.collection('audit_logs');
+
+    let query = {};
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      query = {
+        $or: [
+          { description: searchRegex },
+          { user_name: searchRegex },
+          { action: searchRegex },
+          { entityType: searchRegex }
+        ]
+      };
+    }
+
+    let sortOptions = { createdAt: -1 }; // Default sort: newest first
+    if (sortBy) {
+        // Map frontend keys to backend fields if necessary
+        const sortField = sortBy === 'description' ? 'description' : 'createdAt';
+        sortOptions = { [sortField]: sortOrder === 'desc' ? -1 : 1 };
+    }
+
+    const logs = await collection.find(query)
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(limit)
+      .toArray();
+
+    const totalLogs = await collection.countDocuments(query);
+
+    res.json({
+      logs: logs,
+      total: totalLogs,
+    });
+  } catch (error) {
+    console.error("Error fetching audit logs:", error);
+    res.status(500).json({ error: "Failed to fetch audit logs", message: error.message });
+  }
+});
 
 
 // Server
