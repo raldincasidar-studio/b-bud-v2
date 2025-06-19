@@ -665,12 +665,12 @@ app.post('/api/residents', async (req, res) => {
 
         // --- ADD AUDIT LOG HERE ---
         await createAuditLog({
-          userId: resident._id,
-          userName: `${resident.first_name} ${resident.last_name}`,
-          description: `Resident '${resident.first_name} ${resident.last_name}' logged into the system.`,
-          action: "LOGIN",
+          userId: newHouseholdHead._id.toString(),
+          userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
+          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`,
+          action: "REGISTER",
           entityType: "Resident",
-          entityId: resident._id.toString(),
+          entityId: newHouseholdHead._id.toString(),
         })
         // --- END AUDIT LOG ---
 
@@ -1334,16 +1334,13 @@ app.patch('/api/residents/:id/status', async (req, res) => {
     const result = await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     if (result.matchedCount === 0) return res.status(404).json({ error: 'Resident not found.' });
 
-     // --- ADD AUDIT LOG HERE ---
-    if (oldStatus !== status) { // Only log if status actually changed
-      await createAuditLog({
+     await createAuditLog({
         // TODO: Get acting admin's name from auth middleware
-        description: `Status for resident '${residentName}' was changed from '${oldStatus}' to '${status}'.`,
+        description: `Status for resident with ID ${id} was changed to '${status}'.`,
         action: 'STATUS_CHANGE',
         entityType: 'Resident',
         entityId: id
       });
-    }
     // --- END AUDIT LOG ---
     
     if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
@@ -2674,7 +2671,8 @@ app.get('/api/borrowed-assets', async (req, res) => {
       search,
       status, // Can be a comma-separated string like "Borrowed,Overdue"
       sortBy,
-      sortOrder
+      sortOrder,
+      byResidentId = '',
     } = req.query;
 
     const page = parseInt(req.query.page) || 1;
@@ -2703,6 +2701,10 @@ app.get('/api/borrowed-assets', async (req, res) => {
           { "current_status": searchRegex },
         ]
       });
+    }
+
+    if (byResidentId && byResidentId.trim() !== '') {
+      matchConditions.push({ borrower_resident_id: new ObjectId(byResidentId) });
     }
 
     // Add status filter if it exists. Handles single or multiple statuses.
@@ -3828,7 +3830,7 @@ app.post('/api/document-requests', async (req, res) => {
   } = req.body;
 
   // Validation
-  if (!requestor_resident_id || !request_type || !purpose) {
+  if (!requestor_resident_id || !request_type) {
     return res.status(400).json({ error: 'Missing required fields: requestor, type, and purpose are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
@@ -3882,8 +3884,9 @@ app.get('/api/document-requests', async (req, res) => {
       search,
       status, // The new status filter from the dashboard and local UI
       sortBy,
-      sortOrder
-    } = req.query;
+      sortOrder,
+      byResidentId = '',
+    } = req.query; 
 
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
@@ -3891,6 +3894,8 @@ app.get('/api/document-requests', async (req, res) => {
 
     const dab = await db();
     const collection = dab.collection('document_requests');
+
+    console.log('req, id', byResidentId);
 
     // --- 2. Build the MongoDB Match Conditions Dynamically ---
     const matchConditions = [];
@@ -3905,8 +3910,12 @@ app.get('/api/document-requests', async (req, res) => {
           { "requestor_details.last_name": { $regex: searchRegex } },
           { purpose: { $regex: searchRegex } },
           { document_status: { $regex: searchRegex } },
-        ],
+        ]
       });
+    }
+
+    if (byResidentId && byResidentId.trim() !== '') {
+      matchConditions.push({ requestor_resident_id: new ObjectId(byResidentId) });
     }
 
     // Add status filter if it exists
@@ -4229,11 +4238,11 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
 
 
 
-
+const isDebug = !true;
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
-const puppeteer = require('puppeteer-core'); // ✅ use puppeteer-core
+const puppeteer = isDebug ? require('puppeteer-core') : require('puppeteer');
 
 const fs = require('fs').promises; // Use promise-based fs
 
@@ -4263,7 +4272,10 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
       'Certificate of Good Moral': 'good_moral.html',
       'Barangay Clearance': 'clearance.html',
       'Barangay Business Clearance': 'business_clearance.html',
-      'Barangay Certification (First Time Jobseeker)': 'jobseeker.html'
+      'Barangay Certification (First Time Jobseeker)': 'jobseeker.html',
+      'Certificate of Indigency': 'indigency.html',
+      'Certificate of Solo Parent': 'solo_parent.html',
+      'Barangay Permit (for installations)': 'permit.html',
     };
     templatePath = path.join(__dirname, 'templates', templateMap[request.request_type]);
     if (!templatePath) return res.status(400).json({ error: 'No template available for this document type.' });
@@ -4310,6 +4322,16 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         '[NUMBER OF YEARS]': request.details.years_lived || '',
         '[NUMBER OF MONTHS]': request.details.months_lived || '',
         '[NEXT YEAR]': today.getFullYear() + 1,
+
+        // -- Indigency --
+        '[NEXT YEAR]': today.getFullYear() + 1,
+        '[civil status]': requestor.civil_status || '',
+        '[Full Address]': fullAddress,
+        '[medical/educational/financial]': request.details.medical_educational_financial || '',
+
+        // -- permit --
+        '[installation/construction/repair]': request.details.installation_construction_repair || '',
+        '[Project Site]': request.details.project_site || '',
     };
 
     for (const placeholder in replacements) {
@@ -4319,12 +4341,13 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     console.log('executiable path: ', chromium);
 
     // 4. Generate PDF using Puppeteer
-    const browser = await puppeteer.launch({
+    const browser = isDebug ? 
+    await puppeteer.launch({
       args: chromium.args,
       executablePath: await chromium.executablePath(),
       headless: await chromium.headless,
       defaultViewport: chromium.defaultViewport,
-    }); // Options for server environments
+    }) : await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] }); 
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: 'networkidle0' });
     const pdfBuffer = await page.pdf({ format: 'Legal', printBackground: true });
