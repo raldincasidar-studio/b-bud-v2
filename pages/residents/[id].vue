@@ -62,7 +62,8 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.proof_of_residency_file" label="Upload to Replace Proof of Residency" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded Proof of Residency</label>
-                <v-img v-if="form.proof_of_residency_base64" :src="form.proof_of_residency_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                <!-- MODIFICATION: Made image clickable -->
+                <v-img v-if="form.proof_of_residency_base64" :src="form.proof_of_residency_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('proof_of_residency')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -80,7 +81,8 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.voter_id_file" label="Upload to Replace Voter's ID" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded Voter's ID</label>
-                <v-img v-if="form.voter_registration_proof_base64" :src="form.voter_registration_proof_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                <!-- MODIFICATION: Made image clickable -->
+                <v-img v-if="form.voter_registration_proof_base64" :src="form.voter_registration_proof_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('voter_id')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -98,7 +100,8 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.pwd_card_file" label="Upload to Replace PWD ID Card" variant="outlined" accept="image/*" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded PWD ID Card</label>
-                <v-img v-if="form.pwd_card_base64" :src="form.pwd_card_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                <!-- MODIFICATION: Made image clickable -->
+                <v-img v-if="form.pwd_card_base64" :src="form.pwd_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('pwd_card')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -112,7 +115,8 @@
               <v-col cols="12" md="6">
                 <v-file-input v-if="editMode" v-model="form.senior_citizen_card_file" label="Upload to Replace Senior ID" variant="outlined" accept="image/*" clearable></v-file-input>
                 <div v-else><label class="v-label mb-1">Uploaded Senior Citizen ID</label>
-                  <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1"></v-img>
+                  <!-- MODIFICATION: Made image clickable -->
+                  <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('senior_card')"></v-img>
                   <p v-else class="text-grey mt-2">No file uploaded.</p>
                 </div>
               </v-col>
@@ -156,6 +160,24 @@
           </div>
         </v-card-text>
       </v-card>
+
+      <!-- NEW: Image Gallery Dialog -->
+      <v-dialog v-model="galleryDialog" max-width="1000px" scrollable>
+        <v-card class="d-flex flex-column">
+          <v-toolbar color="primary" density="compact">
+            <v-toolbar-title class="text-h6">{{ imageGallerySource[currentGalleryIndex]?.title }}</v-toolbar-title>
+            <v-spacer></v-spacer>
+            <v-btn icon="mdi-close" @click="galleryDialog = false"></v-btn>
+          </v-toolbar>
+          <v-card-text class="pa-0 flex-grow-1 d-flex align-center justify-center" style="background-color: rgba(0,0,0,0.85);">
+            <v-carousel v-model="currentGalleryIndex" height="100%" hide-delimiters :show-arrows="imageGallerySource.length > 1 ? 'hover' : false" style="min-height: 50vh;">
+              <v-carousel-item v-for="(item, i) in imageGallerySource" :key="i">
+                <v-img :src="item.src" contain max-height="80vh"></v-img>
+              </v-carousel-item>
+            </v-carousel>
+          </v-card-text>
+        </v-card>
+      </v-dialog>
 
       <v-dialog v-model="confirmDeleteDialog" persistent max-width="500px">
         <v-card>
@@ -217,6 +239,10 @@ const householdMemberSearchQuery = ref('');
 const eligibleMemberSearchResults = ref([]);
 const isLoadingEligibleMembers = ref(false);
 
+// NEW: State for the image gallery
+const galleryDialog = ref(false);
+const currentGalleryIndex = ref(0);
+
 const calculatedAge = computed(() => {
   if (!form.date_of_birth) return null;
   const birthDate = new Date(form.date_of_birth); if (isNaN(birthDate.getTime())) return null;
@@ -226,6 +252,33 @@ const calculatedAge = computed(() => {
   return age >= 0 ? age : null;
 });
 const isSenior = computed(() => calculatedAge.value !== null && calculatedAge.value >= 60);
+
+// NEW: Computed property to aggregate all available images for the gallery
+const imageGallerySource = computed(() => {
+  const items = [];
+  if (form.proof_of_residency_base64) {
+    items.push({ id: 'proof_of_residency', src: form.proof_of_residency_base64, title: 'Proof of Residency' });
+  }
+  if (form.voter_registration_proof_base64) {
+    items.push({ id: 'voter_id', src: form.voter_registration_proof_base64, title: "Uploaded Voter's ID" });
+  }
+  if (form.pwd_card_base64) {
+    items.push({ id: 'pwd_card', src: form.pwd_card_base64, title: 'Uploaded PWD ID Card' });
+  }
+  if (form.senior_citizen_card_base64) {
+    items.push({ id: 'senior_card', src: form.senior_citizen_card_base64, title: 'Uploaded Senior Citizen ID' });
+  }
+  return items;
+});
+
+// NEW: Function to open the gallery at a specific image
+function openGallery(id) {
+  const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
+  if (foundIndex > -1) {
+    currentGalleryIndex.value = foundIndex;
+    galleryDialog.value = true;
+  }
+}
 
 // REVISION: Updated validation rules to match new.vue
 const rules = {

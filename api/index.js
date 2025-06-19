@@ -66,6 +66,71 @@ app.get("/", (req, res) => {
 
 
 
+
+// ====================== HELPER TO CREATE CUSTOM ID ========================= //
+
+/**
+ * Generates a custom, sequential, 5-digit, zero-padded control ID for a MongoDB collection,
+ * ensuring the ID is unique.
+ *
+ * @param {import('mongodb').Collection} collection - The MongoDB collection instance to work with.
+ * @param {string} [last_id=null] - An optional starting ID (e.g., '00045'). If not provided,
+ *   the function will find the highest existing ID in the collection.
+ * @returns {Promise<string>} A promise that resolves to the next available, non-duplicate, 5-digit string ID.
+ * @throws {Error} If the ID space (up to '99999') is exhausted.
+ */
+async function custom_control_id(collection, last_id = null) {
+  let base_numeric_id = 0;
+
+  // 1. Determine the starting point for our search.
+  if (last_id) {
+    // If a last_id is provided, use it as the base.
+    const parsed_id = parseInt(last_id, 10);
+    if (!isNaN(parsed_id)) {
+      base_numeric_id = parsed_id;
+    }
+  } else {
+    // If no last_id, find the document with the highest ID in the collection.
+    // We sort by `_id` in descending order and take the first one.
+    // NOTE: This assumes your custom ID is stored in the `_id` field.
+    // If using a different field, change `{ _id: -1 }` to `{ yourField: -1 }`.
+    const latest_doc = await collection.findOne({}, { sort: { control_id: -1 } });
+
+    if (latest_doc && latest_doc._id) {
+      const parsed_latest = parseInt(latest_doc.control_id, 10);
+      if (!isNaN(parsed_latest)) {
+        base_numeric_id = parsed_latest;
+      }
+    }
+  }
+
+  // 2. Start incrementing from the base ID to find the next available slot.
+  let next_numeric_id = base_numeric_id + 1;
+
+  while (true) {
+    // 3. Format the number as a 5-digit string with leading zeros.
+    const candidate_id = String(next_numeric_id).padStart(5, '0');
+
+    // Safety check to prevent infinite loops and handle exhausted ID space.
+    if (next_numeric_id > 99999) {
+      throw new Error("ID space exhausted. Cannot generate an ID greater than 99999.");
+    }
+
+    // 4. Check if a document with this candidate ID already exists.
+    // We only need to know if it exists, so we project only the _id field for efficiency.
+    const doc_exists = await collection.findOne({ control_id: candidate_id }, { projection: { control_id: 1 } });
+
+    if (!doc_exists) {
+      // 5. If it doesn't exist, we've found our ID. Return it.
+      return candidate_id;
+    } else {
+      // If it exists, increment and the loop will try the next number.
+      next_numeric_id++;
+    }
+  }
+}
+
+
 // ======================= EMPLOYEES ======================== //
 
 app.post('/api/login', async (req, res) => {

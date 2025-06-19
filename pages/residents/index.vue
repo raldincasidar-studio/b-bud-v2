@@ -2,7 +2,7 @@
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
       <v-col>
-        <h2 class="text-h4 font-weight-bold">Resident Management</h2>
+        <h2 class="text-h4 font-weight-bold">Residents Profile</h2>
         <p class="text-grey-darken-1">Approve, manage, and view all registered residents.</p>
       </v-col>
       <v-col class="text-right">
@@ -66,7 +66,7 @@
         <template v-slot:item.action="{ item }">
           <div class="d-flex align-center justify-center">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-1">View</v-btn>
-            <v-menu offset-y>
+            <!-- <v-menu offset-y>
               <template v-slot:activator="{ props }">
                 <v-btn
                   icon="mdi-dots-vertical" size="small" variant="text" v-bind="props"
@@ -83,7 +83,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu>
+            </v-menu> -->
           </div>
         </template>
 
