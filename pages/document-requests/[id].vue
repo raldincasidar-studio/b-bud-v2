@@ -36,10 +36,10 @@
                 readonly
               ></v-text-field>
             </v-col>
-            <v-col cols="12" md="6">
+            <!-- <v-col cols="12" md="6">
               <label class="v-label mb-1">Purpose of Request</label>
               <v-text-field :model-value="request.purpose" variant="outlined" readonly></v-text-field>
-            </v-col>
+            </v-col> -->
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Document Type</label>
               <v-text-field :model-value="request.request_type" variant="outlined" readonly></v-text-field>

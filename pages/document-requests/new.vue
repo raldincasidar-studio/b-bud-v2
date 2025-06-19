@@ -17,7 +17,7 @@
         <!-- Step 1: General Information -->
         <h3 class="text-h6 mb-4">Requestor Information</h3>
         <v-row>
-          <v-col cols="12" md="6">
+          <v-col cols="12">
             <label class="v-label mb-1">Requestor (Resident) <span class="text-red">*</span></label>
             <v-autocomplete
               v-model="form.requestor_resident_id"
@@ -29,14 +29,6 @@
             >
               <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
             </v-autocomplete>
-          </v-col>
-          <v-col cols="12" md="6">
-            <label class="v-label mb-1">Purpose of Request <span class="text-red">*</span></label>
-            <v-text-field
-              v-model="form.purpose" variant="outlined"
-              :error-messages="v$.purpose.$errors.map(e => e.$message)"
-              @blur="v$.purpose.$touch"
-            ></v-text-field>
           </v-col>
         </v-row>
 
@@ -97,8 +89,44 @@
               <v-col cols="12" md="6"><v-text-field v-model="form.details.months_lived" label="Number of Months at Address" type="number" variant="outlined"></v-text-field></v-col>
             </v-row>
           </div>
+
+          <!-- Indigency -->
+          <div v-if="form.request_type === 'Certificate of Indigency'">
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-select
+                  v-model="form.details.medical_educational_financial"
+                  :items="['Medical', 'Educational', 'Financial']"
+                  label="Medical/Educational/Financial"
+                  variant="outlined"
+                ></v-select>
+              </v-col>
+            </v-row>
+          </div>
+
+          <!-- Permit -->
+          <div v-if="form.request_type === 'Barangay Permit (for installations)'">
+            <v-row>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="form.details.installation_construction_repair"
+                  label="Installation/Construction/Repair"
+                  variant="outlined"
+                ></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <v-text-field
+                  v-model="form.details.project_site"
+                  label="Project Site"
+                  variant="outlined"
+                ></v-text-field>
+              </v-col>
+            </v-row>
+          </div>
           
           <!-- Certificate of Good Moral has no extra fields, so no section is needed -->
+
+
 
         </div>
       </v-card-text>
@@ -121,14 +149,17 @@ const router = useRouter();
 const documentTypes = [
   'Certificate of Cohabitation',
   'Certificate of Good Moral',
+  'Certificate of Residency',
+  'Certificate of Solo Parent',
+  'Certificate of Indigency',
   'Barangay Clearance',
+  'Barangay Permit (for installations)',
   'Barangay Business Clearance',
   'Barangay Certification (First Time Jobseeker)',
 ];
 
 const form = reactive({
   requestor_resident_id: null,
-  purpose: '',
   request_type: null,
   details: {} // This object will hold the dynamic fields
 });
@@ -141,7 +172,6 @@ const isLoadingRequestors = ref(false);
 // --- Vuelidate Rules ---
 const rules = {
     requestor_resident_id: { required: helpers.withMessage('A requestor must be selected.', required) },
-    purpose: { required },
     request_type: { required },
 };
 const v$ = useVuelidate(rules, form);
