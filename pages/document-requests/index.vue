@@ -112,7 +112,6 @@ const headers = ref([
   { title: 'Request Type', key: 'request_type', sortable: true },
   { title: 'Requestor', key: 'requestor_name', sortable: true },
   { title: 'Date of Request', key: 'date_of_request', sortable: true },
-  { title: 'Purpose', key: 'purpose_of_request', sortable: false },
   { title: 'Status', key: 'document_status', sortable: true, align: 'center' },
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);
