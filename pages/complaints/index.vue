@@ -28,6 +28,24 @@
       </v-card-title>
       <v-divider></v-divider>
 
+      <div class="pa-4">
+        <v-chip-group
+          v-model="selectedStatus"
+          selected-class="text-primary"
+          mandatory
+        >
+          <v-chip
+            v-for="status in statusFilterItems"
+            :key="status"
+            :value="status"
+            label
+            size="large"
+          >
+            {{ status }}
+          </v-chip>
+        </v-chip-group>
+      </div>
+
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
         :headers="headers"
@@ -79,6 +97,7 @@ import { useNuxtApp } from '#app';
 const { $toast } = useNuxtApp();
 
 const searchKey = ref('');
+const selectedStatus = ref('All');
 const totalItems = ref(0);
 const complaints = ref([]);
 const loading = ref(true);
@@ -87,6 +106,7 @@ const updatingStatusFor = ref(null);
 
 // This is no longer used for the UI, but it defines our master list of statuses
 const ALL_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+const statusFilterItems = ['All', ...ALL_STATUSES];
 
 const headers = ref([
   { title: 'Ref #', key: 'reference_number', sortable: false, width: '150px' },
@@ -120,10 +140,23 @@ watch(searchKey, () => {
   }, 500);
 });
 
+watch(selectedStatus, () => {
+  // When status filter changes, reload data from the first page
+  loadComplaints({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+});
+
 async function loadComplaints(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
-  const queryParams = { search: searchKey.value, page: page, itemsPerPage: rpp };
+  const queryParams = {
+    search: searchKey.value,
+    page: page,
+    itemsPerPage: rpp,
+  };
+
+  if (selectedStatus.value && selectedStatus.value !== 'All') {
+    queryParams.status = selectedStatus.value;
+  }
 
   try {
     const { data, error } = await useMyFetch('/api/complaints', { query: queryParams });

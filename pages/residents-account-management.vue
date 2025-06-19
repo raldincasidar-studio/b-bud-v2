@@ -2,20 +2,15 @@
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
       <v-col>
-        <h2 class="text-h4 font-weight-bold">Resident Management</h2>
-        <p class="text-grey-darken-1">Approve, manage, and view all registered residents.</p>
-      </v-col>
-      <v-col class="text-right">
-        <v-btn size="large" to="/residents/new" prepend-icon="mdi-account-plus" color="primary">
-          New Resident
-        </v-btn>
+        <h2 class="text-h4 font-weight-bold">Resident Account Management</h2>
+        <p class="text-grey-darken-1">Activate, deactivate, and view resident accounts.</p>
       </v-col>
     </v-row>
 
     <v-card class="mt-4" flat border>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-account-search-outline" class="mr-2"></v-icon>
-        Find Residents
+        Find Resident Accounts
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey" density="compact" label="Search by name, email, etc..."
@@ -25,7 +20,7 @@
       </v-card-title>
       <v-divider></v-divider>
 
-      <!-- Filter Chip Group remains unchanged and will be synced with the URL -->
+      <!-- Filter Chip Group -->
       <v-card-text>
         <v-chip-group
           v-model="statusFilter"
@@ -40,7 +35,7 @@
       </v-card-text>
       <v-divider></v-divider>
 
-      <!-- The data table will now fetch data based on URL and local filters -->
+      <!-- REVISED: Data table for Account Management -->
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
         :headers="headers"
@@ -53,19 +48,15 @@
         <template v-slot:item.full_name="{ item }">
           {{ item.first_name }} {{ item.last_name }}
         </template>
-        <template v-slot:item.address="{ item }">
-          <div class="text-truncate" style="max-width: 250px;">
-            {{ item.address_house_number }} {{ item.address_street }}, {{ item.address_subdivision_zone }}
-          </div>
-        </template>
-        <template v-slot:item.household_role="{ item }">
-          <v-chip :color="item.is_household_head ? 'blue' : 'grey'" label size="small">{{ item.is_household_head ? 'Head' : 'Member' }}</v-chip>
-        </template>
-        <template v-slot:item.created_at="{ item }">{{ formatDate(item.created_at) }}</template>
 
-        <template v-slot:item.action="{ item }">
-          <div class="d-flex align-center justify-center">
-            <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-1">View</v-btn>
+        <template v-slot:item.status="{ item }">
+          <v-chip :color="getStatusColor(item.status)" label size="small">
+            {{ item.status }}
+          </v-chip>
+        </template>
+
+        <template v-slot:item.actions="{ item }">
+            <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
             <v-menu offset-y>
               <template v-slot:activator="{ props }">
                 <v-btn
@@ -84,11 +75,10 @@
                 </v-list-item>
               </v-list>
             </v-menu>
-          </div>
         </template>
 
         <template v-slot:no-data>
-          <v-alert type="info" class="ma-4">No residents found for the selected filters.</v-alert>
+          <v-alert type="info" class="ma-4">No resident accounts found for the selected filters.</v-alert>
         </template>
       </v-data-table-server>
     </v-card>
@@ -121,16 +111,14 @@
 
 <script setup>
 import { ref, watch } from 'vue';
-import { useRoute } from 'vue-router'; // <-- ADDED: To access URL query parameters
+import { useRoute } from 'vue-router';
 import { useMyFetch } from '~/composables/useMyFetch';
 const { $toast } = useNuxtApp();
 
-// --- NEW: Route Handling ---
 const route = useRoute();
 
 // --- State Definitions ---
 const searchKey = ref('');
-// --- MODIFIED: Initialize statusFilter from URL query, default to 'All'
 const statusFilter = ref(route.query.status || 'All');
 const totalItems = ref(0);
 const residents = ref([]);
@@ -143,14 +131,13 @@ const declineDialog = ref(false);
 const residentToDecline = ref(null);
 const declineReason = ref('');
 
-// Table Headers (MODIFIED: "Status" column removed, "Details" renamed to "Actions")
+// REVISED: Table Headers for Account Management
 const headers = ref([
-  { title: 'Full Name', key: 'full_name', sortable: false },
+  { title: 'Resident Name', key: 'full_name', sortable: false },
   { title: 'Email', key: 'email', sortable: true },
-  { title: 'Contact No.', key: 'contact_number', sortable: false },
-  { title: 'Household Role', key: 'household_role', sortable: true, align: 'center' },
-  { title: 'Date Registered', key: 'created_at', sortable: true },
-  { title: 'Actions', key: 'action', sortable: false, align: 'center' },
+  { title: 'Phone Number', key: 'contact_number', sortable: false },
+  { title: 'Account Status', key: 'status', sortable: true, align: 'center' },
+  { title: 'Actions', key: 'actions', sortable: false, align: 'center', width: '150px' },
 ]);
 
 // Action Handlers (unchanged)
@@ -214,17 +201,13 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
   }
 }
 
-// --- REVISED: Data Loading Function ---
-// This function now intelligently combines filters from the URL and the local UI.
+// Data Loading Function (unchanged)
 async function loadResidents(options) {
   loading.value = true;
-  const { page, itemsPerPage: rpp, sortBy } = options; // sortBy is an array in Vuetify 3
+  const { page, itemsPerPage: rpp, sortBy } = options;
   
   try {
-    // 1. Start with filters from the URL (e.g., is_voter=true, minAge=60)
     const queryFromUrl = { ...route.query };
-    
-    // 2. Build query from local UI state. These will override URL params if keys are the same.
     const queryFromUi = {
       search: searchKey.value,
       page,
@@ -232,19 +215,14 @@ async function loadResidents(options) {
       status: statusFilter.value === 'All' ? undefined : statusFilter.value,
     };
 
-    // Add sorting info from the data table options
     if (sortBy && sortBy.length > 0) {
       queryFromUi.sortBy = sortBy[0].key;
       queryFromUi.sortOrder = sortBy[0].order;
     }
 
-    // 3. Merge, giving local UI filters precedence over URL filters
     const finalQuery = { ...queryFromUrl, ...queryFromUi };
-    
-    // Clean up empty/null/undefined values before sending to API
     Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
 
-    // 4. Make the API call with the combined filters
     const { data, error } = await useMyFetch('/api/residents', { query: finalQuery });
 
     if (error.value) throw new Error('Failed to load residents.');
@@ -260,40 +238,33 @@ async function loadResidents(options) {
   }
 }
 
-// --- Watchers for Local UI Filters (Largely unchanged) ---
+// Watchers for Local UI Filters (unchanged)
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    // When search changes, go back to page 1
     loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
   }, 500);
 });
 
 watch(statusFilter, () => {
-  // When status chip changes, go back to page 1
   loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
 
-// --- NEW: Watcher for URL changes ---
-// This ensures the table reacts to browser back/forward or new links from the dashboard.
+// Watcher for URL changes (unchanged)
 watch(() => route.fullPath, (newPath, oldPath) => {
     if (newPath === oldPath) return;
 
-    // A. Sync the local status filter UI with the URL's status parameter
     const newStatus = route.query.status || 'All';
     if (newStatus !== statusFilter.value) {
-        // This will update the chip group. The `watch(statusFilter)` above will then trigger the reload.
         statusFilter.value = newStatus;
     } else {
-        // B. If status didn't change but other params did (e.g. ?is_voter=true), trigger reload manually.
         loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
     }
 }, { deep: true });
 
 
-// --- Helper Functions (unchanged) ---
-const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
+// Helper Functions (unchanged)
 const getStatusColor = (s) => ({ 'Approved': 'success', 'Pending': 'warning', 'Declined': 'error', 'Deactivated': 'grey' }[s] || 'default');
 </script>
 

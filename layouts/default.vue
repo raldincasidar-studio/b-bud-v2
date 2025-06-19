@@ -69,7 +69,8 @@ console.log(userData);
 const drawer = ref(false);
 const items = [
     { to: '/dashboard', text: 'Dashboard', icon: 'mdi-speedometer' },
-    { to: '/residents', text: 'Residents', icon: 'mdi-account-group' },
+    { to: '/residents-account-management', text: 'Residents Account Management', icon: 'mdi-account-cog-outline' },
+    { to: '/residents', text: 'Residents Profile', icon: 'mdi-account-group' },
     { to: '/households', text: 'Households', icon: 'mdi-home-group' },
     { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', superAdmin: true },
     { to: '/document-requests', text: 'Document Requests', icon: 'mdi-file-document' },
@@ -78,7 +79,6 @@ const items = [
     { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
-    { to: '/audit-logs', text: 'Audit Log', icon: 'mdi-file-chart-outline' },
     { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
     { to: '/audit-logs', text: 'Audit log', icon: 'mdi-file-document-outline', superAdmin: true },
   ]
