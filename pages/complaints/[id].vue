@@ -103,7 +103,7 @@
       </v-card>
 
       <!-- START: ADDED NOTES SECTION -->
-      <v-card v-if="form.status === 'Under Investigation'" class="mt-4" flat border>
+      <v-card v-if="form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed'" class="mt-4" flat border>
         <v-card-title>Investigation Notes</v-card-title>
         <v-divider></v-divider>
         <v-card-text>

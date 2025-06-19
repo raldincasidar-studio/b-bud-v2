@@ -54,7 +54,10 @@ async function db() {
 }
 
 // Middleware
-app.use(cors()); // Enable CORS for all routes
+app.use(cors({
+  credentials: true,
+  origin: ['http://localhost:3000', 'https://b-bud-new.vercel.app']
+})); // Enable CORS for multiple origins
 app.use(express.json({ limit: '10mb' })); // Parse JSON bodies
 // Serve static files from the 'public' folder
 app.use(express.static(path.join(__dirname, 'public')));
@@ -424,7 +427,7 @@ app.post('/api/residents/login/verify-otp', async (req, res) => {
       action: "LOGIN",
       entityType: "Resident",
       entityId: resident._id.toString(),
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     // Prepare resident data to return (excluding sensitive fields)
@@ -556,7 +559,7 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
       action: "LOGIN",
       entityType: "Resident",
       entityId: resident._id.toString(),
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: 'Password has been reset successfully. You can now log in with your new password.' });
@@ -736,7 +739,7 @@ app.post('/api/residents', async (req, res) => {
           action: "REGISTER",
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
-        })
+        }, req)
         // --- END AUDIT LOG ---
 
         res.status(201).json({
@@ -1212,7 +1215,7 @@ app.delete("/api/residents/:id", async (req, res) => {
       action: "DELETE",
       entityType: "Resident",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Resident deleted successfully" })
@@ -1354,7 +1357,7 @@ app.put('/api/residents/:id', async (req, res) => {
       action: "UPDATE",
       entityType: "Resident",
       entityId: id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
     res.json({ message: 'Resident updated successfully', resident: updatedResident });
   } catch (error) {
@@ -1405,7 +1408,7 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         action: 'STATUS_CHANGE',
         entityType: 'Resident',
         entityId: id
-      });
+      }, req);
     // --- END AUDIT LOG ---
     
     if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
@@ -1555,7 +1558,7 @@ app.post('/api/documents', async (req, res) => {
     action: "CREATE",
     entityType: "Document",
     entityId: result.insertedId.toString(),
-  })
+  }, req)
   // --- END AUDIT LOG ---
   res.json({ message: 'Document added successfully' });
 });
@@ -1636,7 +1639,7 @@ app.delete("/api/documents/:id", async (req, res) => {
       action: "DELETE",
       entityType: "Document",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Document deleted successfully" })
@@ -1666,7 +1669,7 @@ app.put('/api/documents/:id', async (req, res) => {
       action: "UPDATE",
       entityType: "Document",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
   res.json({ message: 'Document updated successfully' });
@@ -1714,7 +1717,7 @@ app.post('/api/admins', async (req, res) => {
     action: 'CREATE',
     entityType: 'Admin'
     // We don't have the new ID here, but you could fetch it if needed.
-  });
+  }, req);
   // --- END AUDIT LOG ---
 
   res.json({message: 'Admin added successfully'});
@@ -1797,7 +1800,7 @@ app.delete("/api/admins/:id", async (req, res) => {
       action: "DELETE",
       entityType: "Admin",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Admin deleted successfully" })
@@ -1856,7 +1859,7 @@ app.put('/api/admins/:id', async (req, res) => {
       action: "UPDATE",
       entityType: "Admin",
       entityId: req.params.id,
-    })
+    }, req)
   // --- END AUDIT LOG ---
 
   res.json({message: 'Admin updated successfully'});
@@ -1923,7 +1926,7 @@ app.post('/api/barangay-officials', async (req, res) => {
           action: "CREATE",
           entityType: "BarangayOfficial",
           entityId: result.insertedId.toString(),
-        })
+        }, req)
         // --- END AUDIT LOG ---
 
         res.status(201).json({ message: 'Barangay Official added successfully', officialId: result.insertedId });
@@ -2056,7 +2059,7 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
           action: "UPDATE",
           entityType: "BarangayOfficial",
           entityId: id,
-        })
+        }, req)
         // --- END AUDIT LOG ---
 
         res.json({ message: 'Barangay Official updated successfully' });
@@ -2089,7 +2092,7 @@ app.delete("/api/barangay-officials/:id", async (req, res) => {
       action: "DELETE",
       entityType: "BarangayOfficial",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Official deleted successfully" })
@@ -2419,7 +2422,7 @@ app.post('/api/notifications', async (req, res) => {
       action: "CREATE",
       entityType: "Notification",
       entityId: createdNotification._id.toString(),
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Notification added successfully', notification: createdNotification });
@@ -2560,7 +2563,7 @@ app.put('/api/notifications/:id', async (req, res) => {
       action: "UPDATE",
       entityType: "Notification",
       entityId: id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: 'Notification updated successfully', notification: updatedNotification });
@@ -2601,7 +2604,7 @@ app.delete("/api/notifications/:id", async (req, res) => {
       action: "DELETE",
       entityType: "Notification",
       entityId: id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Notification deleted successfully" })
@@ -2717,7 +2720,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
       action: "CREATE",
       entityType: "BorrowedAsset",
       entityId: result.insertedId.toString(),
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Asset borrowing request submitted successfully', transaction: insertedDoc });
@@ -2904,7 +2907,7 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
       entityId: id,
       // In a real app, you'd get the admin's name from auth context
       // userName: req.user.name 
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     res.json({ message: 'Transaction updated successfully', transaction: updatedDoc });
@@ -2955,7 +2958,7 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
       action: "STATUS_CHANGE",
       entityType: "BorrowTransaction",
       entityId: id,
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
@@ -2998,7 +3001,7 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
           action: "STATUS_CHANGE",
           entityType: "BorrowTransaction",
           entityId: id,
-        });
+        }, req);
         // --- END AUDIT LOG ---
 
         const updatedTransaction = await collection.findOne({ _id: new ObjectId(id) });
@@ -3037,7 +3040,7 @@ app.delete('/api/borrowed-assets/:id', async (req, res) => {
       action: "DELETE",
       entityType: "BorrowedAsset",
       entityId: req.params.id,
-    })
+    }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Transaction deleted successfully" })
@@ -3125,7 +3128,7 @@ app.post('/api/assets', async (req, res) => {
             entityType: "Asset",
             entityId: result.insertedId.toString(),
             // userName: req.user.name // In a real app with auth
-        });
+        }, req);
         // --- END AUDIT LOG ---
 
         res.status(201).json({ message: 'Asset added successfully', assetId: result.insertedId });
@@ -3237,7 +3240,7 @@ app.put('/api/assets/:id', async (req, res) => {
             entityType: "Asset",
             entityId: id,
             // userName: req.user.name 
-        });
+        }, req);
         // --- END AUDIT LOG ---
 
         res.json({ message: 'Asset updated successfully' });
@@ -3268,7 +3271,7 @@ app.delete('/api/assets/:id', async (req, res) => {
             entityType: "Asset",
             entityId: req.params.id,
             // userName: req.user.name
-        });
+        }, req);
         // --- END AUDIT LOG ---
 
         res.json({ message: 'Asset deleted successfully' });
@@ -3343,7 +3346,7 @@ app.post('/api/complaints', async (req, res) => {
       action: 'CREATE',
       entityType: 'Complaint',
       entityId: result.insertedId.toString()
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Complaint request added successfully', complaint: insertedDoc });
@@ -3765,7 +3768,7 @@ app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add yo
         entityType: "Complaint",
         entityId: id,
         // userName: req.user.name // Get acting admin's name from auth context
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Note added successfully', note: newNote });
@@ -3861,7 +3864,7 @@ app.delete('/api/complaints/:id', async (req, res) => {
         entityType: "Complaint",
         entityId: id,
         // userName: req.user.name // In a real app with auth context
-    });
+    }, req);
 
     // Step 4: Send the success response.
     res.json({ message: 'Complaint deleted successfully' });
@@ -3938,7 +3941,7 @@ app.post('/api/document-requests', async (req, res) => {
         entityId: result.insertedId.toString(),
         userId: requestor ? requestor._id : null,
         userName: requestorName,
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Document request added successfully', requestId: result.insertedId });
@@ -4122,7 +4125,7 @@ app.put('/api/document-requests/:id', async (req, res) => {
             entityId: req.params.id,
             // In a real app with auth, get the admin's name from the request context
             // userName: req.user.name 
-        });
+        }, req);
         // --- END AUDIT LOG ---
 
         res.json({ message: 'Document request updated successfully' });
@@ -4174,7 +4177,7 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
         entityType: "DocumentRequest",
         entityId: id,
         // userName: req.user.name // In a real app with auth context
-    });
+    }, req);
     // --- END AUDIT LOG ---
 
     // TODO: Send notification to user
@@ -4306,6 +4309,67 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
     } catch (error) {
         console.error("Error declining request:", error);
         res.status(500).json({ error: 'Could not decline request.' });
+    }
+});
+
+/**
+ * ACTION 5: Release a "Ready for Pickup" Request
+ * Called when the admin clicks the "Release" button after uploading proof.
+ */
+app.patch('/api/document-requests/:id/release', async (req, res) => {
+    const { id } = req.params;
+    const { proof_of_release } = req.body; // Expecting a Base64 string
+
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    if (!proof_of_release || !proof_of_release.startsWith('data:image/')) {
+        return res.status(400).json({ error: 'Valid proof of release photo is required.' });
+    }
+
+    try {
+        const dab = await db();
+        const collection = dab.collection('document_requests');
+        
+        // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
+        const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+        if (!originalRequest) {
+            return res.status(404).json({ error: 'Request not found.' });
+        }
+        if (originalRequest.document_status !== 'Ready for Pickup') {
+            return res.status(409).json({ error: `Request is not in "Ready for Pickup" state. Current status: ${originalRequest.document_status}` });
+        }
+        // --- END FETCH ---
+
+        const result = await collection.findOneAndUpdate(
+            { _id: new ObjectId(id), document_status: 'Ready for Pickup' }, // Condition
+            { 
+                $set: { 
+                    document_status: 'Released', 
+                    proof_of_release_photo: proof_of_release, // Save the Base64 string
+                    released_at: new Date(), // Add a timestamp for when it was released
+                    updated_at: new Date() 
+                } 
+            },
+            { returnDocument: 'after' } // Return the updated document
+        );
+
+        if (!result) {
+            // This case might happen in a race condition, but the pre-check should mostly prevent it.
+            return res.status(404).json({ error: 'Request not found or was already updated.' });
+        }
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Document request '${result.request_type}' (#${id.slice(-6)}) was released.`,
+            action: "RELEASE",
+            entityType: "DocumentRequest",
+            entityId: id,
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.json({ message: 'Request has been released successfully.', request: result });
+    } catch (error) {
+        console.error("Error releasing request:", error);
+        res.status(500).json({ error: 'Could not release request.' });
     }
 });
 
@@ -4623,14 +4687,24 @@ app.get('/api/dashboard/age-distribution', async (req, res) => {
  * @param {string} [logData.entityType] - The name of the entity being affected (e.g., 'Resident').
  * @param {string} [logData.entityId] - The ID of the document/record being affected.
  */
-async function createAuditLog(logData) {
+async function createAuditLog(logData, req = null) {
   try {
     const dab = await db(); // Get DB instance
     const auditLogsCollection = dab.collection('audit_logs');
     
+    let userData = {};
+    if (req) { 
+      // console.log("Cookie:", req?.headers?.cookie);
+      const cookieArray = req.headers.cookie.split(";").map(c => c.trim());
+      const userDataCookie = cookieArray.find(c => c.startsWith('userData='));
+      userData = userDataCookie ? JSON.parse(decodeURIComponent(userDataCookie.split('=')[1])) : null;
+
+      console.log('user data: ', userData);
+    }
+
     const logDocument = {
       user_id: logData.userId || null,
-      user_name: logData.userName || 'System', // Default to 'System' if no user is provided
+      user_name: logData.userName || userData?.name || 'System', // Default to 'System' if no user is provided
       description: logData.description,
       action: logData.action,
       entityType: logData.entityType || null,

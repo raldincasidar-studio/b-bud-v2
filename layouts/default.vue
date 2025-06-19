@@ -7,13 +7,13 @@
                     :subtitle="userData?.role"
                     :title="userData?.name"
                 >
-                    <template v-slot:append>
+                    <!-- <template v-slot:append>
                     <v-btn
                         icon="mdi-menu-down"
                         size="medium"
                         variant="text"
                     ></v-btn>
-                    </template>
+                    </template> -->
                 </v-list-item>
                 </v-list>
 

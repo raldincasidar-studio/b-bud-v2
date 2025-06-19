@@ -60,6 +60,14 @@
         @update:options="loadAssets"
         item-value="_id"
       >
+        <!-- The 'name' key now serves as the "Item Name / Description" -->
+        <template v-slot:item.name="{ item }">
+          <div>
+            <div class="font-weight-bold">{{ item.name }}</div>
+            <div class="text-caption text-grey-darken-1">{{ item.category }}</div>
+          </div>
+        </template>
+        
         <template v-slot:item.action="{ item }">
           <v-btn
             variant="tonal"
@@ -93,10 +101,12 @@ const assets = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 
+// REVISED: Updated headers to display new information
 const headers = ref([
-  { title: 'Asset Name', key: 'name', sortable: true },
-  { title: 'Category', key: 'category', sortable: true },
-  { title: 'Total Quantity', key: 'total_quantity', sortable: true, align: 'center' },
+  { title: 'Item Name / Description', key: 'name', sortable: true, width: '45%' },
+  { title: 'Available', key: 'available', sortable: false, align: 'center' },
+  { title: 'Borrowed', key: 'borrowed', sortable: false, align: 'center' },
+  { title: 'Total Quantity', key: 'total_quantity', sortable: false, align: 'center' },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 
@@ -114,6 +124,7 @@ watch(categoryFilter, () => {
 });
 
 // --- DATA LOADING ---
+// REVISED: Modified to fetch from both endpoints and merge the data
 async function loadAssets(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp } = options;
@@ -126,13 +137,44 @@ async function loadAssets(options) {
   };
   
   try {
-    const { data, error } = await useMyFetch('/api/assets', { query: queryParams });
-    if (error.value) throw new Error('Failed to load assets.');
-    
-    assets.value = data.value?.assets || [];
-    totalAssets.value = data.value?.totalAssets || 0;
+    // Step 1: Fetch the paginated/filtered list of assets to determine the current page's items
+    const assetsPromise = useMyFetch('/api/assets', { query: queryParams });
+
+    // Step 2: Fetch the full inventory status to get borrowed/available counts for all items
+    const inventoryPromise = useMyFetch('/api/assets/inventory-status');
+
+    // Await both promises concurrently for better performance
+    const [assetsResponse, inventoryResponse] = await Promise.all([assetsPromise, inventoryPromise]);
+
+    // Error handling for both requests
+    if (assetsResponse.error.value) throw new Error('Failed to load assets list.');
+    if (inventoryResponse.error.value) throw new Error('Failed to load inventory status.');
+
+    const paginatedAssets = assetsResponse.data.value?.assets || [];
+    const inventoryStatusList = inventoryResponse.data.value?.inventory || [];
+
+    // Create a lookup map for efficient merging (Key: asset name, Value: { borrowed, available })
+    const inventoryMap = new Map(
+      inventoryStatusList.map(item => [item.name, { borrowed: item.borrowed, available: item.available }])
+    );
+
+    // Step 3: Merge the two datasets
+    const enrichedAssets = paginatedAssets.map(asset => {
+      const status = inventoryMap.get(asset.name);
+      return {
+        ...asset,
+        // Use status data if available, otherwise fallback to prevent errors
+        available: status ? status.available : asset.total_quantity,
+        borrowed: status ? status.borrowed : 0,
+      };
+    });
+
+    assets.value = enrichedAssets;
+    totalAssets.value = assetsResponse.data.value?.totalAssets || 0;
+
   } catch (e) {
-    $toast.fire({ title: e.message, icon: 'error' });
+    console.error("Data loading error:", e);
+    $toast.fire({ title: e.message || 'An unexpected error occurred.', icon: 'error' });
     assets.value = [];
     totalAssets.value = 0;
   } finally {

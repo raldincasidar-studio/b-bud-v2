@@ -57,7 +57,7 @@
 
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <v-menu offset-y>
+            <!-- <v-menu offset-y>
               <template v-slot:activator="{ props }">
                 <v-btn
                   icon="mdi-dots-vertical" size="small" variant="text" v-bind="props"
@@ -74,7 +74,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu>
+            </v-menu> -->
         </template>
 
         <template v-slot:no-data>

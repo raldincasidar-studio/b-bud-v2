@@ -7,6 +7,7 @@ export function useMyFetch<T>(url: string | (() => string), options: UseFetchOpt
   const config = useRuntimeConfig();
   return useFetch<T>(url, {
     baseURL: process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001',
+    credentials: 'include',
     ...options,
 
     onResponseError: (response) => {
@@ -21,3 +22,4 @@ export function useMyFetch<T>(url: string | (() => string), options: UseFetchOpt
     }
   });
 }
+

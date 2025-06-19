@@ -103,6 +103,7 @@
           <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
           <v-col cols="12" md="6">
             <v-select
+              readonly
               v-model="form.role"
               :items="['Admin', 'Technical Admin']"
               label="Role"

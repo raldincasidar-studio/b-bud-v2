@@ -27,7 +27,6 @@
       <v-card class="mt-4" flat border>
         <v-card-text class="py-6">
           <v-row>
-            <!-- REVISION: This section is now fixed -->
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Requestor</label>
               <v-text-field
@@ -36,10 +35,6 @@
                 readonly
               ></v-text-field>
             </v-col>
-            <!-- <v-col cols="12" md="6">
-              <label class="v-label mb-1">Purpose of Request</label>
-              <v-text-field :model-value="request.purpose" variant="outlined" readonly></v-text-field>
-            </v-col> -->
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Document Type</label>
               <v-text-field :model-value="request.request_type" variant="outlined" readonly></v-text-field>
@@ -81,11 +76,13 @@
       <v-card class="mt-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Actions</v-card-title>
 
+        <!-- State: Auto-Processing -->
         <div v-if="isAutoProcessing" class="text-center pa-6">
           <v-progress-circular indeterminate color="primary"></v-progress-circular>
           <p class="mt-3 text-grey-darken-1">Moving request to "Processing"...</p>
         </div>
 
+        <!-- State: Processing -> Approve/Decline -->
         <div v-else-if="request.document_status === 'Processing'">
           <v-card-text>Review the information above. Once verified, you can approve the request.</v-card-text>
           <v-card-actions class="pa-4">
@@ -94,20 +91,71 @@
           </v-card-actions>
         </div>
 
+        <!-- State: Approved -> Generate & Set to Pickup -->
         <div v-else-if="request.document_status === 'Approved' || request.document_status === 'Ready for Pickup'">
           <v-card-text>The request is approved. Generate the document for printing and pickup.</v-card-text>
           <v-card-actions class="pa-4">
             <v-btn size="large" color="primary" @click="generateAndSetToPickup" :loading="isActing" prepend-icon="mdi-printer-outline">Generate & Set to "Ready for Pickup"</v-btn>
           </v-card-actions>
         </div>
+        
+        <!-- ✨ NEW: State: Ready for Pickup -> Release Document -->
+        <div v-if="request.document_status === 'Ready for Pickup'">
+          <v-card-text>
+            <p class="mb-4">The document is ready. To release it to the requestor, please upload a proof of release (e.g., a photo of the signed acknowledgement receipt).</p>
+            
+            <v-file-input
+              v-model="proofOfReleaseFile"
+              label="Upload Proof of Release Photo"
+              accept="image/*"
+              variant="outlined"
+              prepend-icon="mdi-camera"
+              :disabled="isActing"
+              clearable
+              show-size
+            ></v-file-input>
 
-        <div v-else-if="request.document_status === 'Ready for Pickup'">
-          <v-card-text class="d-flex align-center">
-            <v-icon color="teal" class="mr-2">mdi-package-variant-closed</v-icon>
-            Document is ready for the resident to claim.
+            <v-img
+              v-if="proofOfReleaseBase64"
+              :src="proofOfReleaseBase64"
+              max-height="300"
+              contain
+              class="mt-4 border rounded"
+              alt="Proof of release preview"
+            ></v-img>
+          </v-card-text>
+          <v-card-actions class="pa-4">
+            <v-btn 
+              size="large" 
+              color="success" 
+              @click="releaseRequest" 
+              :loading="isActing" 
+              :disabled="!proofOfReleaseBase64"
+              prepend-icon="mdi-check-decagram-outline"
+            >
+              Release Document
+            </v-btn>
+          </v-card-actions>
+        </div>
+
+        <!-- ✨ NEW: State: Released -> Show Proof of Release -->
+        <div v-else-if="request.document_status === 'Released'">
+          <v-card-text>
+              <p>This document was successfully released on <strong>{{ formatTimestamp(request.released_at) }}</strong>.</p>
+              <div v-if="request.proof_of_release_photo" class="mt-4">
+                  <h4 class="mb-2 text-subtitle-1 font-weight-medium">Proof of Release</h4>
+                  <v-img
+                      :src="request.proof_of_release_photo"
+                      max-height="400"
+                      contain
+                      class="border rounded"
+                      alt="Proof of release photo"
+                  ></v-img>
+              </div>
           </v-card-text>
         </div>
         
+        <!-- Fallback State -->
         <div v-else>
            <v-card-text>No further actions are required for this request.</v-card-text>
         </div>
@@ -117,7 +165,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue';
+import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
@@ -132,14 +180,15 @@ const loading = ref(true);
 const isActing = ref(false);
 const isAutoProcessing = ref(false);
 
+// ✨ NEW STATE for Release Action
+const proofOfReleaseFile = ref([]); // v-file-input model is an array
+const proofOfReleaseBase64 = ref('');
+
 // --- COMPUTED PROPERTIES ---
-// REVISION: This computed property solves the display issue.
 const requestorName = computed(() => {
-  console.log(request.value);
   if (request.value && request.value.requestor_details) {
     return `${request.value.requestor_details.first_name} ${request.value.requestor_details.last_name}`;
   }
-
   return '...';
 });
 
@@ -159,8 +208,6 @@ async function fetchRequest(showLoading = true) {
             const { data: processedData, error: processError } = await useMyFetch(`/api/document-requests/${requestId}/process`, { method: 'PATCH' });
             if (processError.value) throw new Error('Could not auto-update status to Processing.');
             request.value = processedData.value.request;
-
-            
         }
         
     } catch (e) { 
@@ -170,6 +217,36 @@ async function fetchRequest(showLoading = true) {
       isAutoProcessing.value = false;
     }
 }
+
+// ✨ NEW: Watch for file input changes to create Base64 preview
+watch(proofOfReleaseFile, (newFiles) => {
+  console.log(newFiles);
+  const file = newFiles;
+  if (!file) {
+    proofOfReleaseBase64.value = '';
+    return;
+  }
+  
+  // Basic validation
+  if (file.size > 5 * 1024 * 1024) { // 5MB limit
+    $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
+    proofOfReleaseFile.value = [];
+    proofOfReleaseBase64.value = '';
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    proofOfReleaseBase64.value = e.target.result;
+  };
+  reader.onerror = (e) => {
+    console.error("FileReader error:", e);
+    $toast.fire({ title: 'Could not read the file.', icon: 'error' });
+    proofOfReleaseBase64.value = '';
+  };
+  reader.readAsDataURL(file);
+});
+
 
 // --- ACTION HANDLERS ---
 async function approveRequest() {
@@ -193,10 +270,9 @@ async function generateAndSetToPickup() {
       const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/generate`, { method: 'PATCH' });
       if (error.value) throw new Error('Failed to update status to "Ready for Pickup".');
       request.value = data.value.request;
-  
     }
-    const baseUrl =process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001/'
-    window.open(`${baseUrl}api/document-requests/${requestId}/generate`, '_blank');
+    const baseUrl = process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001/'
+    window.open(`${baseUrl}api/document-requests/${requestId}/generate`, '_blank'); // Assuming endpoint is generate-pdf
 
     $toast.fire({ title: 'Document is now Ready for Pickup!', icon: 'success' });
   } catch (e) {
@@ -220,10 +296,44 @@ async function declineRequest() {
     }
 }
 
+// ✨ NEW: Release Request Action Handler
+async function releaseRequest() {
+  if (!proofOfReleaseBase64.value) {
+    $toast.fire({ title: 'Please upload a proof of release photo.', icon: 'warning' });
+    return;
+  }
+
+  isActing.value = true;
+  try {
+    const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/release`, {
+      method: 'PATCH',
+      body: {
+        proof_of_release: proofOfReleaseBase64.value
+      }
+    });
+
+    if (error.value) {
+      throw new Error(error.value.data?.error || 'Failed to release the document.');
+    }
+
+    request.value = data.value.request;
+    $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
+    
+    // Clean up state
+    proofOfReleaseBase64.value = '';
+    proofOfReleaseFile.value = [];
+
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    isActing.value = false;
+  }
+}
+
 // --- HELPER FUNCTIONS ---
 const getStatusColor = (status) => ({
     "Pending": 'orange-darken-1', "Processing": 'blue-darken-1', "Approved": 'teal-darken-1',
-    "Ready for Pickup": 'green-darken-1', "Released": 'success', "Declined": 'red-darken-2'
+    "Ready for Pickup": 'green-darken-1', "Released": 'success', "Denied": 'red-darken-2'
   }[status] || 'grey');
 
 const formatTimestamp = (dateString) => {

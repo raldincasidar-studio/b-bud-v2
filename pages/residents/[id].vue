@@ -15,10 +15,31 @@
     <div v-else>
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
-          <h2 class="text-h4 font-weight-bold">Resident Details</h2>
+          <div class="d-flex align-center">
+            <h2 class="text-h4 font-weight-bold me-4">Resident Details</h2>
+            <!-- NEW: Status Chip -->
+            <v-chip v-if="form.status" :color="getStatusColor(form.status)" label>
+              Status: {{ form.status }}
+            </v-chip>
+          </div>
           <p class="text-grey-darken-1">{{ form.first_name }} {{ form.last_name }}</p>
         </v-col>
-        <v-col class="text-right">
+        <v-col class="text-right" cols="auto">
+          <!-- NEW: Status Action Buttons -->
+          <div v-if="!editMode" class="d-inline-block me-3">
+            <template v-if="form.status === 'Pending'">
+              <v-btn color="success" class="me-2" @click="updateResidentStatus('Approved')" :loading="updatingStatus" prepend-icon="mdi-check-circle-outline">Approve</v-btn>
+              <v-btn color="error" @click="openDeclineDialog" :loading="updatingStatus" prepend-icon="mdi-close-circle-outline">Decline</v-btn>
+            </template>
+            <template v-if="form.status === 'Approved'">
+              <v-btn color="grey-darken-1" variant="tonal" @click="updateResidentStatus('Deactivated')" :loading="updatingStatus" prepend-icon="mdi-account-off-outline">Deactivate</v-btn>
+            </template>
+            <template v-if="form.status === 'Declined' || form.status === 'Deactivated'">
+              <v-btn color="orange" @click="updateResidentStatus('Pending')" :loading="updatingStatus" prepend-icon="mdi-account-reactivate-outline">Reactivate</v-btn>
+            </template>
+          </div>
+          
+          <!-- Existing Action Buttons -->
           <v-btn v-if="!editMode" color="primary" @click="editMode = true" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn>
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving">Save Changes</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2">Cancel</v-btn>
@@ -37,11 +58,8 @@
             <v-col cols="12" md="3"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" :readonly="!editMode" variant="outlined" placeholder="Select Sex" :error-messages="v$.sex.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="3"><v-text-field v-model="form.date_of_birth" label="Date of Birth*" type="date" :readonly="!editMode" variant="outlined" :error-messages="v$.date_of_birth.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="2"><v-text-field :model-value="calculatedAge" label="Age" readonly variant="outlined" hint="Auto-calculated" persistent-hint></v-text-field></v-col>
-            <!-- REVISION: Updated civil status options -->
             <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" :readonly="!editMode" variant="outlined" placeholder="Select Civil Status" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
-            <!-- REVISION: Added Citizenship field -->
             <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" :readonly="!editMode" variant="outlined" placeholder="Select Citizenship" :error-messages="v$.citizenship.$errors.map(e => e.$message)"></v-select></v-col>
-            <!-- REVISION: Updated occupation status options -->
             <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly="!editMode" variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
@@ -49,7 +67,7 @@
         </v-card-text>
       </v-card>
 
-      <!-- REVISION: Added Address Information Card -->
+      <!-- Address Information Card -->
       <v-card class="mb-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Address Information</v-card-title>
         <v-card-text class="pt-4">
@@ -62,7 +80,6 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.proof_of_residency_file" label="Upload to Replace Proof of Residency" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded Proof of Residency</label>
-                <!-- MODIFICATION: Made image clickable -->
                 <v-img v-if="form.proof_of_residency_base64" :src="form.proof_of_residency_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('proof_of_residency')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
@@ -71,17 +88,17 @@
         </v-card-text>
       </v-card>
 
+      <!-- (Rest of the template remains unchanged...) -->
       <!-- Voter Information Card -->
       <v-card class="mb-6" flat border v-if="calculatedAge >= 18">
         <v-card-title class="text-h6 font-weight-medium">Voter Information</v-card-title>
         <v-card-text class="pt-2">
           <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="form.is_voter" inline :readonly="!editMode"><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
           <v-row v-if="form.is_voter">
-            <v-col cols="12" md="6"><v-text-field v-model="form.voter_id_number" label="Voter's ID Number" :readonly="!editMode" variant="outlined" :error-messages="v$.voter_id_number.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.voter_id_number" label="Voter's ID Number" :readonly="!editMode" variant="outlined" :error-messages="v$.voter_id_number.$errors.map(e => e.$message)" hint="Required if no ID is uploaded" persistent-hint></v-text-field></v-col>
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.voter_id_file" label="Upload to Replace Voter's ID" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded Voter's ID</label>
-                <!-- MODIFICATION: Made image clickable -->
                 <v-img v-if="form.voter_registration_proof_base64" :src="form.voter_registration_proof_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('voter_id')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
@@ -96,26 +113,23 @@
         <v-card-text class="pt-2">
           <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Person with Disability (PWD)?</label><v-radio-group v-model="form.is_pwd" inline :readonly="!editMode"><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
           <v-row v-if="form.is_pwd">
-            <v-col cols="12" md="6"><v-text-field v-model="form.pwd_id" label="PWD ID Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.pwd_id.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.pwd_id" label="PWD ID Number" :readonly="!editMode" variant="outlined" :error-messages="v$.pwd_id.$errors.map(e => e.$message)" hint="Required if no ID card is uploaded" persistent-hint></v-text-field></v-col>
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.pwd_card_file" label="Upload to Replace PWD ID Card" variant="outlined" accept="image/*" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded PWD ID Card</label>
-                <!-- MODIFICATION: Made image clickable -->
                 <v-img v-if="form.pwd_card_base64" :src="form.pwd_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('pwd_card')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
           </v-row>
-          <!-- REVISION: Updated Senior Citizen logic -->
           <v-row v-if="isSenior">
             <v-divider class="my-4"></v-divider>
             <v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label><v-radio-group v-model="form.is_senior_citizen" inline :readonly="!editMode"><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col>
             <template v-if="form.is_senior_citizen">
-              <v-col cols="12" md="6"><v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number*" :readonly="!editMode" variant="outlined" :error-messages="v$.senior_citizen_id.$errors.map(e => e.$message)"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number" :readonly="!editMode" variant="outlined" :error-messages="v$.senior_citizen_id.$errors.map(e => e.$message)" hint="Required if no ID card is uploaded" persistent-hint></v-text-field></v-col>
               <v-col cols="12" md="6">
                 <v-file-input v-if="editMode" v-model="form.senior_citizen_card_file" label="Upload to Replace Senior ID" variant="outlined" accept="image/*" clearable></v-file-input>
                 <div v-else><label class="v-label mb-1">Uploaded Senior Citizen ID</label>
-                  <!-- MODIFICATION: Made image clickable -->
                   <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('senior_card')"></v-img>
                   <p v-else class="text-grey mt-2">No file uploaded.</p>
                 </div>
@@ -125,7 +139,7 @@
         </v-card-text>
       </v-card>
 
-      <!-- REVISION: Added Change Password Card, only shows in edit mode -->
+      <!-- Change Password Card -->
       <v-card v-if="editMode" class="mb-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Change Password</v-card-title>
         <v-card-text class="pt-4">
@@ -161,7 +175,7 @@
         </v-card-text>
       </v-card>
 
-      <!-- NEW: Image Gallery Dialog -->
+      <!-- Image Gallery Dialog -->
       <v-dialog v-model="galleryDialog" max-width="1000px" scrollable>
         <v-card class="d-flex flex-column">
           <v-toolbar color="primary" density="compact">
@@ -178,7 +192,32 @@
           </v-card-text>
         </v-card>
       </v-dialog>
+      
+      <!-- NEW: Decline with Reason Dialog -->
+      <v-dialog v-model="declineDialog" persistent max-width="500px">
+        <v-card>
+          <v-card-title class="text-h5">Decline Account</v-card-title>
+          <v-card-text>
+            <p class="mb-4">Please provide a reason for declining the account for <strong>{{ form.first_name }} {{ form.last_name }}</strong>. This reason will be sent in the notification.</p>
+            <v-textarea
+              v-model="declineReason"
+              label="Reason for Decline"
+              variant="outlined"
+              rows="3"
+              counter
+              maxlength="250"
+              :rules="[v => !!v || 'Reason is required.']"
+            ></v-textarea>
+          </v-card-text>
+          <v-card-actions>
+            <v-spacer></v-spacer>
+            <v-btn color="grey" text @click="declineDialog = false">Cancel</v-btn>
+            <v-btn color="error" :disabled="!declineReason" :loading="updatingStatus" @click="confirmDecline">Confirm Decline</v-btn>
+          </v-card-actions>
+        </v-card>
+      </v-dialog>
 
+      <!-- Delete Dialog -->
       <v-dialog v-model="confirmDeleteDialog" persistent max-width="500px">
         <v-card>
           <v-card-title class="text-h5">
@@ -206,7 +245,7 @@
 import { reactive, ref, onMounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf, helpers, numeric } from '@vuelidate/validators'; // REVISION: Added numeric validator
+import { required, email, minLength, sameAs, requiredIf, helpers, numeric } from '@vuelidate/validators';
 import { useMyFetch } from '~/composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -215,8 +254,8 @@ const route = useRoute();
 const router = useRouter();
 const residentId = route.params.id;
 
-// REVISION: Added all new fields to the form state to match new.vue
 const form = reactive({
+  // All existing form fields...
   first_name: '', middle_name: '', last_name: '', sex: null, date_of_birth: '', civil_status: null,
   citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
   address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
@@ -225,6 +264,8 @@ const form = reactive({
   is_pwd: false, pwd_id: '', pwd_card_file: null, pwd_card_base64: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null, senior_citizen_card_base64: null,
   is_household_head: false, household_members_details: [],
+  // NEW: Added status to form state to make it reactive
+  status: '', 
 });
 const originalFormState = ref({});
 const loading = ref(true);
@@ -239,10 +280,18 @@ const householdMemberSearchQuery = ref('');
 const eligibleMemberSearchResults = ref([]);
 const isLoadingEligibleMembers = ref(false);
 
-// NEW: State for the image gallery
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
+// NEW: State for status updates and decline dialog
+const updatingStatus = ref(false);
+const declineDialog = ref(false);
+const declineReason = ref('');
+
+// NEW: Helper function for status chip color
+const getStatusColor = (s) => ({ 'Approved': 'success', 'Pending': 'warning', 'Declined': 'error', 'Deactivated': 'grey' }[s] || 'default');
+
+// (All computed properties and validation rules remain unchanged)
 const calculatedAge = computed(() => {
   if (!form.date_of_birth) return null;
   const birthDate = new Date(form.date_of_birth); if (isNaN(birthDate.getTime())) return null;
@@ -253,7 +302,6 @@ const calculatedAge = computed(() => {
 });
 const isSenior = computed(() => calculatedAge.value !== null && calculatedAge.value >= 60);
 
-// NEW: Computed property to aggregate all available images for the gallery
 const imageGallerySource = computed(() => {
   const items = [];
   if (form.proof_of_residency_base64) {
@@ -271,7 +319,6 @@ const imageGallerySource = computed(() => {
   return items;
 });
 
-// NEW: Function to open the gallery at a specific image
 function openGallery(id) {
   const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
   if (foundIndex > -1) {
@@ -280,7 +327,6 @@ function openGallery(id) {
   }
 }
 
-// REVISION: Updated validation rules to match new.vue
 const rules = {
   first_name: { required }, last_name: { required }, sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
@@ -289,14 +335,72 @@ const rules = {
   years_at_current_address: { required, numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
-  voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file && !form.voter_registration_proof_base64)) },
-  pwd_id: { requiredIf: helpers.withMessage('PWD ID is required.', requiredIf(() => form.is_pwd)) },
-  senior_citizen_id: { requiredIf: helpers.withMessage('Senior ID is required.', requiredIf(() => form.is_senior_citizen)) },
+  voter_id_number: { 
+    requiredIf: helpers.withMessage(
+      "Voter's ID Number or uploaded ID is required.", 
+      requiredIf(() => form.is_voter && !form.voter_id_file && !form.voter_registration_proof_base64)
+    ) 
+  },
+  pwd_id: { 
+    requiredIf: helpers.withMessage(
+      'PWD ID Number or uploaded card is required.', 
+      requiredIf(() => form.is_pwd && !form.pwd_card_file && !form.pwd_card_base64)
+    ) 
+  },
+  senior_citizen_id: { 
+    requiredIf: helpers.withMessage(
+      'Senior Citizen ID Number or uploaded card is required.', 
+      requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file && !form.senior_citizen_card_base64)
+    ) 
+  },
 };
 const v$ = useVuelidate(rules, form);
 
 onMounted(async () => { await fetchResident(); });
 
+// NEW: Function to update the resident's status
+async function updateResidentStatus(newStatus, reason = null) {
+  updatingStatus.value = true;
+  try {
+    const payload = { status: newStatus };
+    if (reason) { payload.reason = reason; }
+
+    const { data, error } = await useMyFetch(`/api/residents/${residentId}/status`, {
+      method: 'PATCH',
+      body: payload,
+    });
+
+    if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
+
+    // Update the local form state to reflect the change immediately
+    form.status = newStatus;
+    // Also update the original state so cancelling an edit doesn't revert the status
+    originalFormState.value.status = newStatus;
+    
+    $toast.fire({ title: 'Status updated successfully!', icon: 'success' });
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    updatingStatus.value = false;
+  }
+}
+
+// NEW: Functions to handle the decline dialog
+const openDeclineDialog = () => {
+    declineReason.value = '';
+    declineDialog.value = true;
+};
+
+const confirmDecline = async () => {
+    if (!declineReason.value) {
+        $toast.fire({ title: 'A reason is required to decline.', icon: 'warning' });
+        return;
+    }
+    await updateResidentStatus('Declined', declineReason.value);
+    declineDialog.value = false;
+};
+
+// (All other functions like fetchResident, saveChanges, etc., remain unchanged)
 async function fetchResident() {
   loading.value = true;
   try {
@@ -332,13 +436,11 @@ async function saveChanges() {
     payload.household_member_ids = form.household_members_details.map(m => m._id);
     delete payload.household_members_details;
     
-    // REVISION: Handle all potential new file uploads
     if (form.voter_id_file) payload.voter_registration_proof_base64 = await convertFileToBase64(form.voter_id_file);
     if (form.pwd_card_file) payload.pwd_card_base64 = await convertFileToBase64(form.pwd_card_file);
     if (form.senior_citizen_card_file) payload.senior_citizen_card_base64 = await convertFileToBase64(form.senior_citizen_card_file);
     if (form.proof_of_residency_file) payload.proof_of_residency_base64 = await convertFileToBase64(form.proof_of_residency_file);
     
-    // REVISION: Clean up all file objects before sending payload
     delete payload.voter_id_file; delete payload.pwd_card_file; delete payload.senior_citizen_card_file; delete payload.proof_of_residency_file;
     
     await useMyFetch(`/api/residents/${residentId}`, { method: 'PUT', body: payload });
