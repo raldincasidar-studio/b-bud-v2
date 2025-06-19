@@ -84,8 +84,8 @@
             <strong>Disclaimer:</strong> You must be 15 years old or above to create an account.
         </v-alert>
         <v-row>
-            <v-col cols="12" sm="6"><v-text-field v-model="form.password" label="Password*" type="password" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" sm="6"><v-text-field v-model="form.confirmPassword" label="Confirm Password*" type="password" variant="outlined" :error-messages="vHead$.confirmPassword.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" sm="6"><v-text-field v-model="form.password" label="Password*" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field></v-col>
+            <v-col cols="12" sm="6"><v-text-field v-model="form.confirmPassword" label="Confirm Password*" :type="showHeadConfirmPassword ? 'text' : 'password'" variant="outlined" :error-messages="vHead$.confirmPassword.$errors.map(e => e.$message)" :append-inner-icon="showHeadConfirmPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadConfirmPassword = !showHeadConfirmPassword"></v-text-field></v-col>
         </v-row>
       </v-card-text>
     </v-card>
@@ -178,7 +178,7 @@
             <p class="text-subtitle-2 mb-4">Account Creation (Optional, for ages 15+)</p>
             <v-row>
               <v-col cols="12" md="6"><v-text-field v-model="memberForm.email" label="Email Address" type="email" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="memberForm.password" label="Password" type="password" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field></v-col>
             </v-row>
           </template>
 
@@ -204,6 +204,9 @@ import { useNuxtApp } from '#app';
 const { $toast } = useNuxtApp();
 const router = useRouter();
 const saving = ref(false);
+const showHeadPassword = ref(false);
+const showHeadConfirmPassword = ref(false);
+const showMemberPassword = ref(false);
 
 const form = reactive({
   first_name: '', middle_name: '', last_name: '', sex: null, date_of_birth: '',
@@ -331,6 +334,7 @@ const closeMemberDialog = () => {
     memberVoterIdPreviewUrl.value = null;
     memberPwdCardPreviewUrl.value = null;
     memberSeniorCardPreviewUrl.value = null;
+    showMemberPassword.value = false;
 };
 
 const saveMember = async () => {

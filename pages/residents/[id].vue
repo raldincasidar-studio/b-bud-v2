@@ -126,8 +126,8 @@
         <v-card-title class="text-h6 font-weight-medium">Change Password</v-card-title>
         <v-card-text class="pt-4">
           <v-row>
-            <v-col cols="12" md="6"><v-text-field v-model="form.newPassword" label="New Password" type="password" variant="outlined" hint="Leave blank to keep current password" persistent-hint :error-messages="v$.newPassword.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="6"><v-text-field v-model="form.confirmNewPassword" label="Confirm New Password" type="password" variant="outlined" :error-messages="v$.confirmNewPassword.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.newPassword" label="New Password" :type="showNewPassword ? 'text' : 'password'" variant="outlined" hint="Leave blank to keep current password" persistent-hint :error-messages="v$.newPassword.$errors.map(e => e.$message)" :append-inner-icon="showNewPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showNewPassword = !showNewPassword"></v-text-field></v-col>
+            <v-col cols="12" md="6"><v-text-field v-model="form.confirmNewPassword" label="Confirm New Password" :type="showConfirmNewPassword ? 'text' : 'password'" variant="outlined" :error-messages="v$.confirmNewPassword.$errors.map(e => e.$message)" :append-inner-icon="showConfirmNewPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showConfirmNewPassword = !showConfirmNewPassword"></v-text-field></v-col>
           </v-row>
         </v-card-text>
       </v-card>
@@ -210,6 +210,8 @@ const editMode = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const confirmDeleteDialog = ref(false);
+const showNewPassword = ref(false);
+const showConfirmNewPassword = ref(false);
 
 const householdMemberSearchQuery = ref('');
 const eligibleMemberSearchResults = ref([]);

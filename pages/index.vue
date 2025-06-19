@@ -1,4 +1,4 @@
-c<template>
+<template>
     <v-container min-height="100vh">
         <v-row class="fill-height" align-sm="top" align-md="center">
             <v-col cols="12" sm="12" md="12" class="align-center d-flex d-md-block">
@@ -12,7 +12,7 @@ c<template>
                         </div>
 
                         <v-text-field v-model="username" prepend-inner-icon="mdi-account" variant="outlined" color="primary" label="Username"></v-text-field>
-                        <v-text-field v-model="password" prepend-inner-icon="mdi-key" variant="outlined" color="primary" label="Password" type="password"></v-text-field>
+                        <v-text-field v-model="password" prepend-inner-icon="mdi-key" variant="outlined" color="primary" label="Password" :type="showPassword ? 'text' : 'password'" :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showPassword = !showPassword"></v-text-field>
                         
                         <v-btn @click="login()" :loading="isLoading" :disabled="isLoading" block class="mt-2" color="primary" size="large">Login</v-btn>
                         <p class="my-5 d-flex justify-space-between">
@@ -35,6 +35,7 @@ definePageMeta({
 
 
 const isLoading = ref(false);
+const showPassword = ref(false);
 const username = ref('');
 const password = ref('');
 

@@ -78,22 +78,26 @@
             <v-text-field
               v-model="form.password"
               label="New Password"
-              type="password"
+              :type="showPassword ? 'text' : 'password'"
               variant="outlined"
               hint="Leave blank to keep the current password."
               persistent-hint
               :error-messages="v$.password.$errors.map(e => e.$message)"
               @blur="v$.password.$touch"
+              :append-inner-icon="showPassword ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showPassword = !showPassword"
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
             <v-text-field
               v-model="form.repeat_password"
               label="Repeat New Password"
-              type="password"
+              :type="showRepeatPassword ? 'text' : 'password'"
               variant="outlined"
               :error-messages="v$.repeat_password.$errors.map(e => e.$message)"
               @blur="v$.repeat_password.$touch"
+              :append-inner-icon="showRepeatPassword ? 'mdi-eye-off' : 'mdi-eye'"
+              @click:append-inner="showRepeatPassword = !showRepeatPassword"
             ></v-text-field>
           </v-col>
           <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
@@ -126,6 +130,8 @@ const adminId = route.params.id;
 
 const loading = ref(false);
 const dataLoaded = ref(false);
+const showPassword = ref(false);
+const showRepeatPassword = ref(false);
 
 const form = reactive({
   username: "",
