@@ -30,6 +30,18 @@
               <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
             </v-autocomplete>
           </v-col>
+          <v-col cols="12">
+            <label class="v-label mb-1">Purpose of Document Request <span class="text-red">*</span></label>
+            <v-textarea
+              v-model="form.purpose"
+              label="Enter the purpose for requesting this document"
+              variant="outlined"
+              :error-messages="v$.purpose.$errors.map(e => e.$message)"
+              @blur="v$.purpose.$touch"
+              rows="3"
+              auto-grow
+            ></v-textarea>
+          </v-col>
         </v-row>
 
         <v-divider class="my-6"></v-divider>
@@ -46,6 +58,7 @@
               @blur="v$.request_type.$touch"
             ></v-select>
           </v-col>
+
         </v-row>
 
         <!-- Step 3: DYNAMIC FORM FIELDS based on selection -->
@@ -161,6 +174,7 @@ const documentTypes = [
 const form = reactive({
   requestor_resident_id: null,
   request_type: null,
+  purpose: null,
   details: {} // This object will hold the dynamic fields
 });
 const saving = ref(false);
@@ -172,6 +186,7 @@ const isLoadingRequestors = ref(false);
 // --- Vuelidate Rules ---
 const rules = {
     requestor_resident_id: { required: helpers.withMessage('A requestor must be selected.', required) },
+    purpose: {},
     request_type: { required },
 };
 const v$ = useVuelidate(rules, form);

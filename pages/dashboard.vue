@@ -37,6 +37,9 @@
     <div v-else>
       <!-- Main Metric Cards - REVISED -->
       <v-row>
+        <v-col cols="12">
+          <v-btn block size="large" color="primary" prepend-icon="mdi-printer" href="/printable/dashboard" target="_blank">PRINT STATISTICS</v-btn>
+        </v-col>
         <v-col v-for="metric in mainMetrics" :key="metric.title" cols="12" sm="6" md="4">
           <v-card
             :color="metric.color"
@@ -109,12 +112,12 @@
                 </v-chip>
               </template>
             </v-list-item>
-            <!-- Optional: Display a few recent items if API provides them -->
+            <!-- FIXED: Logic to display recent items, now correctly linked -->
             
             <v-list lines="one" density="compact" v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
-              <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.linkTo}/${item._id}`">
-                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed }}</v-list-item-title>
-                <v-list-item-subtitle class="text-truncate">{{ item.requestor_name || item.complainant_display_name || item.borrower_name }}</v-list-item-subtitle>
+              <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.itemLinkPrefix}/${item._id}`">
+                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed || 'Untitled Item' }}</v-list-item-title>
+                <v-list-item-subtitle class="text-truncate">{{ item.requestor_name || item.complainant_display_name || item.borrower_name || 'N/A' }}</v-list-item-subtitle>
                  <template v-slot:append>
                    <v-icon size="small">mdi-chevron-right</v-icon>
                  </template>
@@ -313,6 +316,8 @@ const mainMetrics = computed(() => [
   { title: 'OUT OF SCHOOL YOUTH', value: apiData.value.totalOutOfSchoolYouth, icon: 'mdi-school-outline', color: 'orange-darken-2', linkTo: '/residents?occupation=Out of School Youth' },
 ]);
 
+// REVISED: This computed property now correctly includes the recent items for all alerts
+// and adds an 'itemLinkPrefix' for correct navigation to individual item pages.
 const transactionAlerts = computed(() => [
   {
     title: 'Pending Document Requests',
@@ -321,6 +326,8 @@ const transactionAlerts = computed(() => [
     color: 'warning',
     subtext: 'Awaiting processing or approval.',
     linkTo: '/document-requests?status=Pending',
+    itemLinkPrefix: '/document-requests', // FIXED: Base path for individual items
+    recentItems: apiData.value.recentPendingDocumentRequests, // FIXED: Added recent items data
   },
   {
     title: 'New Complaints Filed',
@@ -329,6 +336,8 @@ const transactionAlerts = computed(() => [
     color: 'error',
     subtext: 'Require investigation or action.',
     linkTo: '/complaints?status=New',
+    itemLinkPrefix: '/complaints', // FIXED: Base path for individual items
+    recentItems: apiData.value.recentNewComplaints, // FIXED: Added recent items data
   },
   {
     title: 'Assets Currently Borrowed',
@@ -337,6 +346,7 @@ const transactionAlerts = computed(() => [
     color: 'info',
     subtext: 'Items that are out and not yet returned.',
     linkTo: '/borrowed-assets?status=Borrowed,Overdue',
+    itemLinkPrefix: '/borrowed-assets', // FIXED: Base path for individual items
     recentItems: apiData.value.recentBorrowedAssets
   },
 ]);

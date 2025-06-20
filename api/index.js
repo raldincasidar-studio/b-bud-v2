@@ -4673,6 +4673,118 @@ app.get('/api/dashboard/age-distribution', async (req, res) => {
     }
 });
 
+// NEW API ENDPOINT
+// GET /api/demographics/profile
+// Provides detailed demographic breakdowns for reporting, including sex.
+app.get('/api/demographics/profile', async (req, res) => {
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        // ==========================================================
+        // 1. AGE AND SEX DISTRIBUTION
+        // ==========================================================
+        // This pipeline calculates age, groups residents into predefined brackets,
+        // and pivots the data to count males and females within each bracket.
+        // NOTE: The brackets here match your Vue component's HTML structure.
+        const ageSexPipeline = [
+            // Stage 1: Calculate age for each resident
+            {
+                $addFields: {
+                    age: {
+                        $dateDiff: {
+                            startDate: "$date_of_birth",
+                            endDate: "$$NOW",
+                            unit: "year"
+                        }
+                    }
+                }
+            },
+            // Stage 2: Assign a specific age bracket string based on the calculated age
+            {
+                $addFields: {
+                    ageBracket: {
+                        $switch: {
+                            branches: [
+                                { case: { $lte: ['$age', 5] }, then: '1. Children 0-5 years old' },
+                                { case: { $and: [{ $gte: ['$age', 6] }, { $lte: ['$age', 12] }] }, then: '2. Children 6-12 years old' },
+                                { case: { $and: [{ $gte: ['$age', 13] }, { $lte: ['$age', 17] }] }, then: '3. Children 13-17' },
+                                { case: { $and: [{ $gte: ['$age', 18] }, { $lte: ['$age', 35] }] }, then: '4. Children 18-35 years old' },
+                                { case: { $and: [{ $gte: ['$age', 36] }, { $lte: ['$age', 50] }] }, then: '5. Adult 36-50 years old' },
+                                { case: { $and: [{ $gte: ['$age', 51] }, { $lte: ['$age', 65] }] }, then: '6. Adult 51-65 years old' },
+                                { case: { $gte: ['$age', 66] }, then: '7. Adult 66 years old & above' }
+                            ],
+                            default: 'Unknown' // Catch any residents without a valid DOB
+                        }
+                    }
+                }
+            },
+            // Stage 3: Group by the new age bracket and the existing sex field
+            {
+                $group: {
+                    _id: { bracket: '$ageBracket', sex: '$sex' },
+                    count: { $sum: 1 }
+                }
+            },
+            // Stage 4: Pivot the data. Group by bracket and create separate fields for Male/Female counts.
+            {
+                $group: {
+                    _id: '$_id.bracket',
+                    male: { $sum: { $cond: [{ $eq: ['$_id.sex', 'Male'] }, '$count', 0] } },
+                    female: { $sum: { $cond: [{ $eq: ['$_id.sex', 'Female'] }, '$count', 0] } }
+                }
+            },
+            // Stage 5: Clean up the output format
+            {
+                $addFields: {
+                    total: { $add: ['$male', '$female'] }
+                }
+            },
+            {
+                $project: {
+                    _id: 0,
+                    bracket: '$_id',
+                    male: 1,
+                    female: 1,
+                    total: 1
+                }
+            },
+            // Stage 6: Sort the brackets in the correct order
+            { $sort: { bracket: 1 } }
+        ];
+        
+        const ageSexDistribution = await residentsCollection.aggregate(ageSexPipeline).toArray();
+        
+
+        // ==========================================================
+        // 2. POPULATION BY SECTOR WITH SEX BREAKDOWN
+        // ==========================================================
+        const getSectorCounts = async (filter) => {
+            const male = await residentsCollection.countDocuments({ ...filter, sex: 'Male' });
+            const female = await residentsCollection.countDocuments({ ...filter, sex: 'Female' });
+            return { male, female, total: male + female };
+        };
+
+        const sectorSexDistribution = {
+            laborForce: await getSectorCounts({ occupation_status: 'Labor force' }),
+            unemployed: await getSectorCounts({ occupation_status: 'Unemployed' }),
+            osy: await getSectorCounts({ occupation_status: 'Out of School Youth' }),
+            pwd: await getSectorCounts({ is_pwd: true }),
+        };
+
+        // ==========================================================
+        // 3. SEND RESPONSE
+        // ==========================================================
+        res.json({
+            ageSexDistribution,
+            sectorSexDistribution,
+        });
+
+    } catch (error) {
+        console.error("Error fetching detailed demographic profile:", error);
+        res.status(500).json({ error: "Failed to fetch demographic profile", message: error.message });
+    }
+});
 
 
 // =================== AUDIT LOG HELPER =================== //

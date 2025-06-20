@@ -40,7 +40,6 @@
         <!-- NEW: Multi-select Filter Chip Group -->
         <v-chip-group v-model="statusFilter" column multiple color="primary">
           <v-chip v-for="status in Object.keys(STATUS_CONFIG)" :key="status" filter :value="status">
-            <v-icon start size="small" :icon="getStatusIcon(status)"></v-icon>
             {{ status }}
           </v-chip>
         </v-chip-group>

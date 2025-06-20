@@ -32,13 +32,14 @@
         <v-chip-group
           v-model="selectedStatus"
           selected-class="text-primary"
+          column
           mandatory
         >
           <v-chip
             v-for="status in statusFilterItems"
             :key="status"
             :value="status"
-            label
+            filter
             size="large"
           >
             {{ status }}

@@ -39,6 +39,15 @@
               <label class="v-label mb-1">Document Type</label>
               <v-text-field :model-value="request.request_type" variant="outlined" readonly></v-text-field>
             </v-col>
+            <v-col cols="12">
+              <label class="v-label mb-1">Purpose of Request</label>
+              <v-textarea
+                :model-value="request.purpose_of_request"
+                variant="outlined"
+                readonly
+                rows="3"
+              ></v-textarea>
+            </v-col>
           </v-row>
           <v-divider class="my-6"></v-divider>
 
