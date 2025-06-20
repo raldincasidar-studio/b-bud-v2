@@ -4444,7 +4444,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 
-const isDebug = !true;
+const isDebug = !false;
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
@@ -4507,6 +4507,7 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         '[NAME OF BARANGAY SECRETARY]': barangaySecretary?.full_name?.toUpperCase() || 'SECRETARY NAME NOT FOUND',
         '[NAME OF PUNONG BARANGAY]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
         '[BARANGAY CHAIRPERSON’S NAME]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
+        'Mr./Ms.': requestor.gender === 'Male' ? 'Mr.' : 'Ms.',
         
         // --- Certificate of Cohabitation ---
         '[FULL NAME OF MALE PARTNER]': request.details.male_partner_name || '',
