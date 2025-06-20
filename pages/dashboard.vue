@@ -96,7 +96,7 @@
         </v-col>
       </v-row>
 
-      <!-- Transaction Alerts Section - NEW -->
+      <!-- Transaction Alerts Section - REVISED to include pending residents -->
       <v-row class="mt-10">
         <v-col cols="12">
           <h2 class="text-h5 font-weight-medium mb-4">Transaction Alerts</h2>
@@ -112,12 +112,12 @@
                 </v-chip>
               </template>
             </v-list-item>
-            <!-- FIXED: Logic to display recent items, now correctly linked -->
             
             <v-list lines="one" density="compact" v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
               <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.itemLinkPrefix}/${item._id}`">
                 <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed || 'Untitled Item' }}</v-list-item-title>
-                <v-list-item-subtitle class="text-truncate">{{ item.requestor_name || item.complainant_display_name || item.borrower_name || 'N/A' }}</v-list-item-subtitle>
+                <!-- REVISED: Added 'item.dateAdded' to the subtitle chain for pending residents -->
+                <v-list-item-subtitle class="text-truncate">{{ item.requestor_name || item.complainant_display_name || item.borrower_name || item.dateAdded || 'N/A' }}</v-list-item-subtitle>
                  <template v-slot:append>
                    <v-icon size="small">mdi-chevron-right</v-icon>
                  </template>
@@ -139,7 +139,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, onUnmounted } from 'vue'; // MODIFIED: Added onUnmounted
+import { ref, onMounted, computed, onUnmounted } from 'vue'; 
 import { useCookie } from '#app';
 import { useMyFetch } from '../composables/useMyFetch';
 import { useNuxtApp } from '#app';
@@ -151,16 +151,15 @@ const userData = useCookie('userData');
 const loading = ref(true);
 const error = ref(false);
 
-// START: ADDED CLOCK LOGIC
 const currentTime = ref(new Date());
-let timer = null; // To hold the interval ID
+let timer = null; 
 
 const formattedTime = computed(() => {
   return new Intl.DateTimeFormat('en-US', { 
     hour: 'numeric', 
     minute: '2-digit', 
     second: '2-digit',
-    hour12: true // Set to true if you want AM/PM
+    hour12: true 
   }).format(currentTime.value);
 });
 
@@ -172,9 +171,8 @@ const formattedDate = computed(() => {
     day: 'numeric' 
   }).format(currentTime.value);
 });
-// END: ADDED CLOCK LOGIC
 
-// Refs for dashboard data from API
+// REVISED: Refs for dashboard data from API now include pending resident fields
 const apiData = ref({
   totalPopulation: 0,
   totalHouseholds: 0,
@@ -187,20 +185,19 @@ const apiData = ref({
   pendingDocumentRequestsCount: 0,
   newComplaintsCount: 0,
   borrowedAssetsNotReturnedCount: 0,
+  pendingResidentsCount: 0, // ADDED: Count for pending residents
   recentPendingDocumentRequests: [],
   recentNewComplaints: [],
   recentBorrowedAssets: [],
+  recentPendingResidents: [], // ADDED: Array for recent pending residents
 });
 
 const ageData = ref([]);
 
 onMounted(async () => {
-  // START: ADDED CLOCK LOGIC
-  // Start the timer to update the clock every second
   timer = setInterval(() => {
     currentTime.value = new Date();
   }, 1000);
-  // END: ADDED CLOCK LOGIC
 
   loading.value = true;
   error.value = false;
@@ -232,12 +229,9 @@ onMounted(async () => {
   }
 });
 
-// START: ADDED CLOCK LOGIC
-// Clean up the timer when the component is unmounted to prevent memory leaks
 onUnmounted(() => {
   clearInterval(timer);
 });
-// END: ADDED CLOCK LOGIC
 
 
 const router = useRouter();
@@ -316,9 +310,18 @@ const mainMetrics = computed(() => [
   { title: 'OUT OF SCHOOL YOUTH', value: apiData.value.totalOutOfSchoolYouth, icon: 'mdi-school-outline', color: 'orange-darken-2', linkTo: '/residents?occupation=Out of School Youth' },
 ]);
 
-// REVISED: This computed property now correctly includes the recent items for all alerts
-// and adds an 'itemLinkPrefix' for correct navigation to individual item pages.
+// REVISED: This computed property now includes the new alert for pending residents.
 const transactionAlerts = computed(() => [
+  {
+    title: 'Pending Resident Approval',
+    count: apiData.value.pendingResidentsCount,
+    icon: 'mdi-account-clock-outline',
+    color: 'blue-grey',
+    subtext: 'New residents awaiting verification.',
+    linkTo: '/residents?status=Pending',
+    itemLinkPrefix: '/residents', 
+    recentItems: apiData.value.recentPendingResidents,
+  },
   {
     title: 'Pending Document Requests',
     count: apiData.value.pendingDocumentRequestsCount,
@@ -326,8 +329,8 @@ const transactionAlerts = computed(() => [
     color: 'warning',
     subtext: 'Awaiting processing or approval.',
     linkTo: '/document-requests?status=Pending',
-    itemLinkPrefix: '/document-requests', // FIXED: Base path for individual items
-    recentItems: apiData.value.recentPendingDocumentRequests, // FIXED: Added recent items data
+    itemLinkPrefix: '/document-requests',
+    recentItems: apiData.value.recentPendingDocumentRequests,
   },
   {
     title: 'New Complaints Filed',
@@ -336,8 +339,8 @@ const transactionAlerts = computed(() => [
     color: 'error',
     subtext: 'Require investigation or action.',
     linkTo: '/complaints?status=New',
-    itemLinkPrefix: '/complaints', // FIXED: Base path for individual items
-    recentItems: apiData.value.recentNewComplaints, // FIXED: Added recent items data
+    itemLinkPrefix: '/complaints',
+    recentItems: apiData.value.recentNewComplaints,
   },
   {
     title: 'Assets Currently Borrowed',
@@ -346,7 +349,7 @@ const transactionAlerts = computed(() => [
     color: 'info',
     subtext: 'Items that are out and not yet returned.',
     linkTo: '/borrowed-assets?status=Borrowed,Overdue',
-    itemLinkPrefix: '/borrowed-assets', // FIXED: Base path for individual items
+    itemLinkPrefix: '/borrowed-assets',
     recentItems: apiData.value.recentBorrowedAssets
   },
 ]);

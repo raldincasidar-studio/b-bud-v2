@@ -35,21 +35,27 @@
       </v-card-title>
       <v-divider></v-divider>
       
-      <!-- Filter Chip Group -->
-      <v-card-text>
-        <v-chip-group
-          v-model="categoryFilter"
-          column
-          color="primary"
-        >
-          <v-chip filter value="All">All</v-chip>
-          <v-chip filter value="Furniture">Furniture</v-chip>
-          <v-chip filter value="Medical">Medical</v-chip>
-          <v-chip filter value="Office Supplies">Office Supplies</v-chip>
-          <v-chip filter value="Equipment">Equipment</v-chip>
-        </v-chip-group>
-      </v-card-text>
-      <v-divider></v-divider>
+      <!-- REVISED: Dynamic Filter Chip Group -->
+      <template v-if="!loadingCategories && categories.length > 0">
+        <v-card-text>
+          <v-chip-group
+            v-model="categoryFilter"
+            column
+            color="primary"
+          >
+            <v-chip filter value="All">All</v-chip>
+            <v-chip
+              v-for="category in categories"
+              :key="category"
+              filter
+              :value="category"
+            >
+              {{ category }}
+            </v-chip>
+          </v-chip-group>
+        </v-card-text>
+        <v-divider></v-divider>
+      </template>
 
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
@@ -88,7 +94,7 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -101,7 +107,11 @@ const assets = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 
-// REVISED: Updated headers to display new information
+// --- NEW for Dynamic Categories ---
+const categories = ref([]);
+const loadingCategories = ref(true);
+// ---
+
 const headers = ref([
   { title: 'Item Name / Description', key: 'name', sortable: true, width: '45%' },
   { title: 'Available', key: 'available', sortable: false, align: 'center' },
@@ -123,8 +133,27 @@ watch(categoryFilter, () => {
   loadAssets({ page: 1, itemsPerPage: itemsPerPage.value });
 });
 
+// --- NEW Function to load categories ---
+async function loadCategories() {
+  loadingCategories.value = true;
+  try {
+    // This assumes an endpoint /api/assets/categories that returns { categories: ['Furniture', 'Medical', ...] }
+    const { data, error } = await useMyFetch('/api/assets/categories');
+    if (error.value) {
+      throw new Error('Failed to load asset categories.');
+    }
+    categories.value = data.value?.categories || [];
+  } catch (e) {
+    console.error("Category loading error:", e);
+    // Optionally show a toast, but gracefully hide the filter on error anyway
+    $toast.fire({ title: e.message || 'Could not fetch categories.', icon: 'warning' });
+    categories.value = []; // Ensure it's an empty array on failure
+  } finally {
+    loadingCategories.value = false;
+  }
+}
+
 // --- DATA LOADING ---
-// REVISED: Modified to fetch from both endpoints and merge the data
 async function loadAssets(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp } = options;
@@ -137,33 +166,24 @@ async function loadAssets(options) {
   };
   
   try {
-    // Step 1: Fetch the paginated/filtered list of assets to determine the current page's items
     const assetsPromise = useMyFetch('/api/assets', { query: queryParams });
-
-    // Step 2: Fetch the full inventory status to get borrowed/available counts for all items
     const inventoryPromise = useMyFetch('/api/assets/inventory-status');
-
-    // Await both promises concurrently for better performance
     const [assetsResponse, inventoryResponse] = await Promise.all([assetsPromise, inventoryPromise]);
 
-    // Error handling for both requests
     if (assetsResponse.error.value) throw new Error('Failed to load assets list.');
     if (inventoryResponse.error.value) throw new Error('Failed to load inventory status.');
 
     const paginatedAssets = assetsResponse.data.value?.assets || [];
     const inventoryStatusList = inventoryResponse.data.value?.inventory || [];
 
-    // Create a lookup map for efficient merging (Key: asset name, Value: { borrowed, available })
     const inventoryMap = new Map(
       inventoryStatusList.map(item => [item.name, { borrowed: item.borrowed, available: item.available }])
     );
 
-    // Step 3: Merge the two datasets
     const enrichedAssets = paginatedAssets.map(asset => {
       const status = inventoryMap.get(asset.name);
       return {
         ...asset,
-        // Use status data if available, otherwise fallback to prevent errors
         available: status ? status.available : asset.total_quantity,
         borrowed: status ? status.borrowed : 0,
       };
@@ -181,4 +201,10 @@ async function loadAssets(options) {
     loading.value = false;
   }
 }
+
+// --- LIFECYCLE HOOK ---
+// Fetch categories when the component is mounted
+onMounted(() => {
+  loadCategories();
+});
 </script>
