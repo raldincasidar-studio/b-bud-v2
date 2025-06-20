@@ -19,17 +19,16 @@
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Complainant Name <span class="text-red">*</span></label>
               <v-autocomplete
-                v-model="form.complainant_resident_id"
+                v-model="form.complainant_resident"
                 v-model:search="complainantSearchQuery"
                 label="Search Complainant (Resident)..."
                 variant="outlined"
                 :items="complainantSearchResults"
                 item-title="name"
-                item-value="_id"
+                return-object
                 :loading="isLoadingComplainants"
-                :error-messages="v$.complainant_resident_id.$errors.map(e => e.$message)"
-                @blur="v$.complainant_resident_id.$touch"
-                @update:model-value="onComplainantSelect"
+                :error-messages="v$.complainant_resident.$errors.map(e => e.$message)"
+                @blur="v$.complainant_resident.$touch"
                 no-filter
               >
                   <template v-slot:item="{ props, item }">
@@ -85,16 +84,17 @@
             <v-col cols="12" md="6">
               <label class="v-label mb-1">Person Complained Against <span class="text-red">*</span></label>
               <v-autocomplete
+                v-model="form.person_complained_against_name"
                 v-model:search="personComplainedSearchQuery"
                 label="Search Resident or Enter Name..."
                 variant="outlined"
                 :items="personComplainedSearchResults"
                 item-title="name"
-                item-value="_id"
+                return-object
                 :loading="isLoadingPersonComplained"
                 :error-messages="v$.person_complained_against_name.$errors.map(e => e.$message)"
                 @blur="v$.person_complained_against_name.$touch"
-                @update:model-value="onPersonComplainedSelect"
+                @update:model-value="onPersonComplainedUpdate"
                 no-filter
               >
                   <template v-slot:item="{ props, item }">
@@ -157,32 +157,24 @@ const { $toast } = useNuxtApp();
 const router = useRouter();
 
 const form = reactive({
-  complainant_resident_id: null, complainant_display_name: '', complainant_address: '', contact_number: '',
+  complainant_resident: null, // Changed to object
+  complainant_address: '',
+  contact_number: '',
   date_of_complaint: new Date().toISOString().split('T')[0],
   time_of_complaint: new Date().toTimeString().slice(0,5),
   category: '',
-  person_complained_against_resident_id: null, person_complained_against_name: '',
-  status: 'New', notes_description: '',
+  person_complained_against_resident_id: null,
+  person_complained_against_name: '',
+  status: 'New',
+  notes_description: '',
 });
 
 const complaintCategories = ref([
-  'Theft / Robbery',
-  'Scam / Fraud',
-  'Physical Assault / Violence',
-  'Verbal Abuse / Threats',
-  'Sexual Harassment / Abuse',
-  'Vandalism',
-  'Noise Disturbance',
-  'Illegal Parking / Obstruction',
-  'Drunk and Disorderly Behavior',
-  'Curfew Violation / Minor Offenses',
-  'Illegal Gambling',
-  'Animal Nuisance / Stray Animal Concern',
-  'Garbage / Sanitation Complaints',
-  'Boundary Disputes / Trespassing',
-  'Barangay Staff / Official Misconduct',
-  'Others',
-
+  'Theft / Robbery', 'Scam / Fraud', 'Physical Assault / Violence', 'Verbal Abuse / Threats',
+  'Sexual Harassment / Abuse', 'Vandalism', 'Noise Disturbance', 'Illegal Parking / Obstruction',
+  'Drunk and Disorderly Behavior', 'Curfew Violation / Minor Offenses', 'Illegal Gambling',
+  'Animal Nuisance / Stray Animal Concern', 'Garbage / Sanitation Complaints',
+  'Boundary Disputes / Trespassing', 'Barangay Staff / Official Misconduct', 'Others',
 ]);
 
 const saving = ref(false);
@@ -197,11 +189,15 @@ const isLoadingPersonComplained = ref(false);
 
 // Vuelidate Rules
 const rules = {
-    complainant_resident_id: { required: helpers.withMessage('A complainant must be selected.', required) },
-    complainant_address: { required }, contact_number: { required }, date_of_complaint: { required }, time_of_complaint: { required },
+    complainant_resident: { required: helpers.withMessage('A complainant must be selected.', required) },
+    complainant_address: { required },
+    contact_number: { required },
+    date_of_complaint: { required },
+    time_of_complaint: { required },
     person_complained_against_name: { required: helpers.withMessage('The person being complained against is required.', required) },
     category: { required },
-    status: { required }, notes_description: { required }
+    status: { required },
+    notes_description: { required }
 };
 const v$ = useVuelidate(rules, form);
 
@@ -225,49 +221,32 @@ const searchResidentsAPI = debounce(async (query, type) => {
     finally { loadingRef.value = false; }
 }, 500);
 
-// --- Watchers for Search Fields ---
-watch(complainantSearchQuery, (newQuery) => {
-    if (form.complainant_resident_id && newQuery === form.complainant_display_name) return;
-    if (!newQuery) clearComplainantSelection();
-    searchResidentsAPI(newQuery, 'complainant');
-});
+// --- Watchers for Search and Selection ---
+watch(complainantSearchQuery, (newQuery) => { searchResidentsAPI(newQuery, 'complainant'); });
+watch(personComplainedSearchQuery, (newQuery) => { searchResidentsAPI(newQuery, 'personComplained'); });
 
-watch(personComplainedSearchQuery, (newQuery) => {
-    form.person_complained_against_name = newQuery;
-    if (form.person_complained_against_resident_id && newQuery !== form.person_complained_against_name) {
-        form.person_complained_against_resident_id = null;
+watch(() => form.complainant_resident, (newResident) => {
+    if (newResident && typeof newResident === 'object') {
+        form.complainant_address = newResident.address;
+        form.contact_number = newResident.contact_number;
+    } else {
+        form.complainant_address = '';
+        form.contact_number = '';
     }
-    searchResidentsAPI(newQuery, 'personComplained');
 });
 
-// --- Selection Handlers ---
-const clearComplainantSelection = () => {
-    form.complainant_resident_id = null; form.complainant_display_name = '';
-    form.complainant_address = ''; form.contact_number = '';
-    complainantSearchResults.value = [];
-};
-
-const onComplainantSelect = (selectedId) => {
-    if (!selectedId) { clearComplainantSelection(); return; }
-    const resident = complainantSearchResults.value.find(r => r._id === selectedId);
-    if (!resident) return;
-    
-    form.complainant_display_name = resident.name;
-    form.complainant_address = resident.address;
-    form.contact_number = resident.contact_number;
-    complainantSearchQuery.value = resident.name; // Sync search text
-    complainantSearchResults.value = [];
-};
-
-const onPersonComplainedSelect = (selectedId) => {
-    if (!selectedId) { form.person_complained_against_resident_id = null; return; }
-    const resident = personComplainedSearchResults.value.find(r => r._id === selectedId);
-    if (!resident) return;
-
-    form.person_complained_against_resident_id = resident._id;
-    form.person_complained_against_name = resident.name;
-    personComplainedSearchQuery.value = resident.name; // Sync search text
-    personComplainedSearchResults.value = [];
+const onPersonComplainedUpdate = (value) => {
+  if (typeof value === 'object' && value !== null) {
+    // User selected a resident from the list
+    form.person_complained_against_resident_id = value._id;
+    form.person_complained_against_name = value.name;
+    // Sync the search query to make the selection stick visually
+    personComplainedSearchQuery.value = value.name;
+  } else if (typeof value === 'string') {
+    // User is typing a free-form name or cleared selection
+    form.person_complained_against_name = value;
+    form.person_complained_against_resident_id = null;
+  }
 };
 
 // --- Save Logic ---
@@ -277,7 +256,18 @@ async function saveComplaint() {
   
   saving.value = true;
   try {
-    const payload = { ...form, date_of_complaint: new Date(form.date_of_complaint).toISOString() };
+    const payload = {
+      complainant_resident_id: form.complainant_resident?._id,
+      complainant_address: form.complainant_address,
+      contact_number: form.contact_number,
+      date_of_complaint: new Date(form.date_of_complaint).toISOString(),
+      time_of_complaint: form.time_of_complaint,
+      category: form.category,
+      person_complained_against_resident_id: form.person_complained_against_resident_id,
+      person_complained_against_name: form.person_complained_against_name,
+      status: form.status,
+      notes_description: form.notes_description,
+    };
     const { error } = await useMyFetch('/api/complaints', { method: 'POST', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to submit complaint');
     $toast.fire({ title: 'Complaint submitted successfully!', icon: 'success' });

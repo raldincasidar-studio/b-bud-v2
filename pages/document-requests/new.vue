@@ -20,14 +20,21 @@
           <v-col cols="12">
             <label class="v-label mb-1">Requestor (Resident) <span class="text-red">*</span></label>
             <v-autocomplete
-              v-model="form.requestor_resident_id"
+              v-model="form.requestor_resident"
               v-model:search="requestorSearchQuery"
-              label="Search for a resident..." variant="outlined" :items="requestorSearchResults"
-              item-title="name" item-value="_id" :loading="isLoadingRequestors"
-              :error-messages="v$.requestor_resident_id.$errors.map(e => e.$message)"
-              @blur="v$.requestor_resident_id.$touch" @update:model-value="onRequestorSelect" no-filter
+              label="Search for a resident..."
+              variant="outlined"
+              :items="requestorSearchResults"
+              item-title="name"
+              return-object
+              :loading="isLoadingRequestors"
+              :error-messages="v$.requestor_resident.$errors.map(e => e.$message)"
+              @blur="v$.requestor_resident.$touch"
+              no-filter
             >
-              <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
+              <template v-slot:item="{ props, item }">
+                <v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item>
+              </template>
             </v-autocomplete>
           </v-col>
           <v-col cols="12">
@@ -138,9 +145,7 @@
           </div>
           
           <!-- Certificate of Good Moral has no extra fields, so no section is needed -->
-
-
-
+          
         </div>
       </v-card-text>
     </v-card>
@@ -172,7 +177,7 @@ const documentTypes = [
 ];
 
 const form = reactive({
-  requestor_resident_id: null,
+  requestor_resident: null, // Changed from _id to hold the full object
   request_type: null,
   purpose: null,
   details: {} // This object will hold the dynamic fields
@@ -185,7 +190,8 @@ const isLoadingRequestors = ref(false);
 
 // --- Vuelidate Rules ---
 const rules = {
-    requestor_resident_id: { required: helpers.withMessage('A requestor must be selected.', required) },
+    // Validating the object directly
+    requestor_resident: { required: helpers.withMessage('A requestor must be selected.', required) },
     purpose: {},
     request_type: { required },
 };
@@ -210,10 +216,8 @@ const searchResidentsAPI = debounce(async (query) => {
 
 watch(requestorSearchQuery, (nq) => { searchResidentsAPI(nq); });
 
-const onRequestorSelect = (selectedId) => {
-    // This event is sufficient. The v-model handles setting the ID.
-    // Additional logic could be added here if needed, e.g., fetching full resident details.
-};
+// Note: The redundant onRequestorSelect handler has been removed.
+// v-model with the `return-object` prop handles updating `form.requestor_resident` automatically.
 
 // --- Save Logic ---
 async function saveRequest() {
@@ -223,7 +227,8 @@ async function saveRequest() {
   saving.value = true;
   try {
     const payload = {
-        requestor_resident_id: form.requestor_resident_id,
+        // Extract the _id from the selected resident object for submission
+        requestor_resident_id: form.requestor_resident._id,
         purpose: form.purpose,
         request_type: form.request_type,
         details: form.details,

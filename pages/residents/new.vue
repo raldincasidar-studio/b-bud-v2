@@ -28,7 +28,7 @@
           <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" variant="outlined" placeholder="Select Citizenship" :error-messages="vHead$.citizenship.$errors.map(e => e.$message)" @blur="vHead$.citizenship.$touch()"></v-select></v-col>
           <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" variant="outlined" :error-messages="vHead$.occupation_status.$errors.map(e => e.$message)" @blur="vHead$.occupation_status.$touch()"></v-select></v-col>
           <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" variant="outlined" :error-messages="vHead$.email.$errors.map(e => e.$message)" @blur="vHead$.email.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" variant="outlined" :error-messages="vHead$.contact_number.$errors.map(e => e.$message)" @blur="vHead$.contact_number.$touch()"></v-text-field></v-col>
+          <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" variant="outlined" maxlength="11" :error-messages="vHead$.contact_number.$errors.map(e => e.$message)" @blur="vHead$.contact_number.$touch()"></v-text-field></v-col>
         </v-row>
         
         <v-divider class="my-6"></v-divider>

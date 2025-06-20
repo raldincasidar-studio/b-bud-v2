@@ -56,6 +56,7 @@
               v-model="form.contact_number"
               label="Contact Number"
               variant="outlined"
+              maxlength="11"
               :error-messages="v$.contact_number.$errors.map(e => e.$message)"
               @blur="v$.contact_number.$touch"
             ></v-text-field>
