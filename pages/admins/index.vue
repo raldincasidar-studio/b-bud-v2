@@ -20,7 +20,7 @@
             <v-spacer></v-spacer>
             <v-text-field
                 v-model="searchKey"
-                density="compact"
+                
                 label="Search by Username, Name, Role, etc..."
                 prepend-inner-icon="mdi-magnify"
                 variant="solo-filled"

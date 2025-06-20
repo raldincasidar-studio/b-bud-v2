@@ -328,16 +328,16 @@ app.post('/api/residents/login', async (req, res) => {
 
     // Send OTP email
     const mailOptions = {
-      from: `"BBud System" <${SMTP_USER}>`,
+      from: `"B-Bud System" <${SMTP_USER}>`,
       to: resident.email,
-      subject: 'Your BBud Login Verification Code',
+      subject: 'Your B-Bud Login Verification Code',
       html: `
         <p>Hello ${resident.first_name || 'User'},</p>
         <p>To complete your login, please use the following One-Time Password (OTP):</p>
         <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
         <p>This OTP is valid for ${OTP_EXPIRY_MINUTES_LOGIN} minutes.</p>
         <p>If you did not attempt to log in, please secure your account or contact support immediately.</p>
-        <br><p>Thanks,<br>The BBud Team</p>`,
+        <br><p>Thanks,<br>The B-Bud Team</p>`,
     };
 
     try {
@@ -479,7 +479,7 @@ app.post('/api/residents/forgot-password/request-otp', async (req, res) => {
 
       // Send OTP email
       const mailOptions = {
-        from: `"BBud System" <${SMTP_USER}>`,
+        from: `"B-Bud System" <${SMTP_USER}>`,
         to: normalizedEmail,
         subject: 'Your Password Reset OTP Code',
         html: `
@@ -489,7 +489,7 @@ app.post('/api/residents/forgot-password/request-otp', async (req, res) => {
           <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
           <p>If you did not request this, please ignore this email.</p>
           <br>
-          <p>Thanks,<br>The BBud Team</p>
+          <p>Thanks,<br>The B-Bud Team</p>
         `,
       };
 
@@ -859,6 +859,143 @@ app.get('/api/residents', async (req, res) => {
     
     // --- 4. Define Projection (Fields to Return) ---
     // This is the same as your original code, which is good practice.
+    const projection = {
+        first_name: 1,
+        middle_name: 1,
+        last_name: 1,
+        sex: 1,
+        date_of_birth: 1,
+        is_household_head: 1,
+        address_house_number: 1,
+        address_street: 1,
+        address_subdivision_zone: 1,
+        contact_number: 1,
+        email: 1,
+        status: 1,
+        created_at: 1,
+        _id: 1,
+    };
+    
+    // --- 5. Execute Queries ---
+    const residents = await residentsCollection
+      .find(finalQuery)
+      .project(projection)
+      .sort(sortOptions)
+      .skip(skip)
+      .limit(itemsPerPage)
+      .toArray();
+
+    // Get total count based on the same filters for accurate pagination
+    const totalResidents = await residentsCollection.countDocuments(finalQuery);
+
+    // --- 6. Send Response ---
+    res.json({
+      residents: residents,
+      total: totalResidents,
+      page: page,
+      itemsPerPage: itemsPerPage,
+      totalPages: Math.ceil(totalResidents / itemsPerPage),
+    });
+
+  } catch (error) {
+    console.error("Error fetching residents:", error);
+    res.status(500).json({ error: "Failed to fetch residents", message: error.message });
+  }
+});
+
+// GET ALL APPROVED RESIDENTS (GET) - Updated to handle all dashboard filters
+app.get('/api/residents/approved', async (req, res) => {
+  try {
+    // --- 1. Extract and Sanitize All Potential Query Parameters ---
+    const {
+      search,
+      is_voter,
+      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
+      is_pwd,
+      occupation, // Assumes a field 'occupation_status' in your DB schema
+      minAge,
+      maxAge,
+      sortBy,   // For dynamic sorting
+      sortOrder // 'asc' or 'desc'
+    } = req.query;
+    
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+
+    // --- 2. Build the MongoDB Filter Array Dynamically ---
+    // This approach is robust and cleanly handles multiple optional filters.
+    const filters = [
+      { $or: [{ status: 'Approved' }] },
+    ]; // Show both approved and deactivated residents
+
+    // Boolean Filters (query params are strings, so we check for 'true')
+    if (is_voter === 'true') {
+      filters.push({ is_registered_voter: true });
+    }
+    if (is_pwd === 'true') {
+      filters.push({ is_pwd: true });
+    }
+    if (is_senior === 'true') {
+      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
+      // If not, you'd need to calculate based on date_of_birth.
+      filters.push({ is_senior_citizen: true });
+    }
+
+    // Occupation Filter
+    if (occupation) {
+      // Assumes your schema has an 'occupation_status' field.
+      filters.push({ occupation_status: occupation });
+    }
+    
+    // Age Range Filter (calculates based on date_of_birth)
+    if (minAge || maxAge) {
+      const ageFilter = {};
+      const now = new Date();
+      if (maxAge) {
+        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
+        const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
+        ageFilter.$gte = minBirthDate;
+      }
+      if (minAge) {
+        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
+        const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
+        ageFilter.$lte = maxBirthDate;
+      }
+      filters.push({ date_of_birth: ageFilter });
+    }
+
+    // General Text Search Filter
+    if (search) {
+      const searchRegex = new RegExp(search.trim(), 'i');
+      filters.push({
+        $or: [
+          { first_name: searchRegex },
+          { middle_name: searchRegex },
+          { last_name: searchRegex },
+          { email: searchRegex },
+          { contact_number: searchRegex },
+          { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex },
+          { precinct_number: searchRegex },
+        ],
+      });
+    }
+
+    // Combine all filters with $and. If filters is empty, query will be {} (match all).
+    const finalQuery = { $and: filters };
+
+    // --- 3. Define Sorting Options ---
+    let sortOptions = { created_at: -1 }; // Default sort
+    if (sortBy) {
+        // Use dynamic key for the field to sort by
+        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+    }
+    
+    // --- 4. Define Projection (Fields to Return) ---
     const projection = {
         first_name: 1,
         middle_name: 1,
@@ -1391,6 +1528,9 @@ app.patch('/api/residents/:id/status', async (req, res) => {
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
+  
+
+
   try {
     const updateFields = { status: status, updated_at: new Date() };
     if (status === 'Declined' && reason) {
@@ -1398,6 +1538,22 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         updateFields.status_reason = reason;
     }
 
+    
+  
+
+  if (status === 'Approved') {
+      // get currentResident
+      const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+      if (!currentResident) {
+          return res.status(404).json({ error: 'Resident not found.' });
+      }
+
+      // If approving, loop through and approve household members as well
+      if (updateFields.status === 'Approved') {
+          const householdMembers = await residentsCollection.find({ _id: { $in: currentResident.household_member_ids } }).toArray();
+          await Promise.all(householdMembers.map(member => residentsCollection.updateOne({ _id: member._id }, { $set: { status: 'Approved', updated_at: new Date() } })));
+      }
+  }
 
     const result = await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     if (result.matchedCount === 0) return res.status(404).json({ error: 'Resident not found.' });
@@ -1410,6 +1566,20 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         entityId: id
       }, req);
     // --- END AUDIT LOG ---
+
+    // Create notification if status changed to 'Approved'
+    if (status === 'Approved') {
+        const notificationData = {
+            name: 'Account Approved',
+            content: `Your account has been approved. You can now log in and access community features.`,
+            by: 'System',
+            type: 'Notification',
+            target_audience: 'SpecificResidents',
+            recipient_ids: [id],
+            date: new Date()
+        };
+        await createNotification(dab, notificationData);
+    }
     
     if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
         // Fetch current status to confirm it's indeed the same
@@ -1828,8 +1998,8 @@ app.put('/api/admins/:id', async (req, res) => {
 
   // Check for validation
   if (req.body.role === 'Technical Admin') {
-      const existingTechAdmin = await adminsCollection.findOne({ role: 'Technical Admin' });
-      if (existingTechAdmin) {
+      const existingTechAdmin = await adminsCollection.find({ role: 'Technical Admin' }).toArray();
+      if (existingTechAdmin.length > 1) {
           return res.status(409).json({ error: 'A Technical Admin account already exists.' });
       }
   }
@@ -1872,272 +2042,311 @@ app.put('/api/admins/:id', async (req, res) => {
 // ====================== BARANGAY OFFICIALS CRUD (REVISED & COMPLETE) =========================== //
 
 // --- Define Core Business Rules ---
-    const ALLOWED_DESIGNATIONS = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Sangguniang Barangay Member', 'SK Chairperson', 'SK Member'];
-    const UNIQUE_ROLES = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'SK Chairperson'];
+const ALLOWED_DESIGNATIONS = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'Sangguniang Barangay Member', 'SK Chairperson', 'SK Member'];
+const UNIQUE_ROLES = ['Punong Barangay', 'Barangay Secretary', 'Treasurer', 'SK Chairperson'];
 
-    // 1. CREATE: POST /api/barangay-officials
-    app.post('/api/barangay-officials', async (req, res) => {
-        const dab = await db();
-        const collection = dab.collection('barangay_officials');
-        const { 
-            first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
-            position, term_start, term_end, status, photo_url,
+// 1. CREATE: POST /api/barangay-officials
+app.post('/api/barangay-officials', async (req, res) => {
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    const { 
+        first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
+        position, term_start, term_end, status, photo_url,
+        // New Fields
+        birth_date, birth_place, residence_address, residence_telephone_no, mobile_number,
+        barangay_hall_telephone_number, email_address, highest_educational_attainment,
+        educational_attainment_details, educational_attainment_status, occupation,
+        honorarium, beneficiaries
+    } = req.body;
+
+    // --- Validation ---
+    if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position || !birth_date || !residence_address || !mobile_number) {
+        return res.status(400).json({ error: 'Missing required fields. Please complete all required information.' });
+    }
+    if (!ALLOWED_DESIGNATIONS.includes(position)) {
+        return res.status(400).json({ error: 'Invalid position provided.' });
+    }
+
+    // --- Uniqueness Check ---
+    if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
+        const existingOfficial = await collection.findOne({ position, status: 'Active' });
+        if (existingOfficial) {
+            return res.status(409).json({ error: `An active '${position}' already exists.` });
+        }
+    }
+
+    try {
+        const newOfficialDoc = {
+            first_name: String(first_name).trim(),
+            last_name: String(last_name).trim(),
+            middle_name: middle_name ? String(middle_name).trim() : null,
+            sex: String(sex),
+            civil_status: String(civil_status),
+            religion: religion ? String(religion).trim() : null,
+            term_in_present_position: String(term_in_present_position),
+            position: String(position),
+            term_start: new Date(term_start),
+            term_end: term_end ? new Date(term_end) : null,
+            status: String(status),
+            photo_url: photo_url || null,
             // New Fields
-            birth_date, birth_place, residence_address, residence_telephone_no, mobile_number,
-            barangay_hall_telephone_number, email_address, highest_educational_attainment,
-            educational_attainment_details, educational_attainment_status, occupation,
-            honorarium, beneficiaries
-        } = req.body;
+            birth_date: birth_date ? new Date(birth_date) : null,
+            birth_place: birth_place ? String(birth_place).trim() : null,
+            residence_address: residence_address ? String(residence_address).trim() : null,
+            residence_telephone_no: residence_telephone_no ? String(residence_telephone_no).trim() : null,
+            mobile_number: mobile_number ? String(mobile_number).trim() : null,
+            barangay_hall_telephone_number: barangay_hall_telephone_number ? String(barangay_hall_telephone_number).trim() : null,
+            email_address: email_address ? String(email_address).trim().toLowerCase() : null,
+            highest_educational_attainment: highest_educational_attainment || null,
+            educational_attainment_details: educational_attainment_details ? String(educational_attainment_details).trim() : null,
+            educational_attainment_status: educational_attainment_status || null,
+            occupation: occupation ? String(occupation).trim() : null,
+            honorarium: honorarium || null,
+            beneficiaries: beneficiaries || [],
+            created_at: new Date(),
+            updated_at: new Date(),
+        };
 
-        // --- Validation ---
-        if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position || !birth_date || !residence_address || !mobile_number) {
-            return res.status(400).json({ error: 'Missing required fields. Please complete all required information.' });
-        }
-        if (!ALLOWED_DESIGNATIONS.includes(position)) {
-            return res.status(400).json({ error: 'Invalid position provided.' });
-        }
-
-        // --- Uniqueness Check ---
-        if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
-            const existingOfficial = await collection.findOne({ position, status: 'Active' });
-            if (existingOfficial) {
-                return res.status(409).json({ error: `An active '${position}' already exists.` });
-            }
-        }
-
-        try {
-            const newOfficialDoc = {
-                first_name: String(first_name).trim(),
-                last_name: String(last_name).trim(),
-                middle_name: middle_name ? String(middle_name).trim() : null,
-                sex: String(sex),
-                civil_status: String(civil_status),
-                religion: religion ? String(religion).trim() : null,
-                term_in_present_position: String(term_in_present_position),
-                position: String(position),
-                term_start: new Date(term_start),
-                term_end: term_end ? new Date(term_end) : null,
-                status: String(status),
-                photo_url: photo_url || null,
-                // New Fields
-                birth_date: birth_date ? new Date(birth_date) : null,
-                birth_place: birth_place ? String(birth_place).trim() : null,
-                residence_address: residence_address ? String(residence_address).trim() : null,
-                residence_telephone_no: residence_telephone_no ? String(residence_telephone_no).trim() : null,
-                mobile_number: mobile_number ? String(mobile_number).trim() : null,
-                barangay_hall_telephone_number: barangay_hall_telephone_number ? String(barangay_hall_telephone_number).trim() : null,
-                email_address: email_address ? String(email_address).trim().toLowerCase() : null,
-                highest_educational_attainment: highest_educational_attainment || null,
-                educational_attainment_details: educational_attainment_details ? String(educational_attainment_details).trim() : null,
-                educational_attainment_status: educational_attainment_status || null,
-                occupation: occupation ? String(occupation).trim() : null,
-                honorarium: honorarium || null,
-                beneficiaries: beneficiaries || [],
-                created_at: new Date(),
-                updated_at: new Date(),
-            };
-
-            const result = await collection.insertOne(newOfficialDoc);
-
-            await createAuditLog({
-              description: `New barangay official added: '${first_name} ${last_name}' as ${position}.`,
-              action: "CREATE",
-              entityType: "BarangayOfficial",
-              entityId: result.insertedId.toString(),
-            }, req)
-
-            res.status(201).json({ message: 'Barangay Official added successfully', officialId: result.insertedId });
-        } catch (error) {
-            console.error("Error adding official:", error);
-            res.status(500).json({ error: 'Failed to add official.' });
-        }
-    });
-
-    // 2. READ (List): GET /api/barangay-officials (No changes needed)
-    app.get('/api/barangay-officials', async (req, res) => {
-        const search = req.query.search || '';
-        const positionFilter = req.query.position || '';
-        const page = parseInt(req.query.page) || 1;
-        const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-        const skip = (page - 1) * itemsPerPage;
-
-        const dab = await db();
-        const collection = dab.collection('barangay_officials');
-        
-        let query = {};
-        const andConditions = [];
-
-        if (search) {
-            const searchRegex = new RegExp(search, 'i');
-            andConditions.push({
-                $or: [
-                    { first_name: { $regex: searchRegex } },
-                    { last_name: { $regex: searchRegex } },
-                    { middle_name: { $regex: searchRegex } },
-                    { position: { $regex: searchRegex } },
-                    { email_address: { $regex: searchRegex } },
-                ]
-            });
-        }
-
-        if (positionFilter) {
-            andConditions.push({ position: positionFilter });
-        }
-        
-        if (andConditions.length > 0) {
-            query = { $and: andConditions };
-        }
-
-        try {
-            const officials = await collection.find(query)
-                .sort({ position: 1, last_name: 1, first_name: 1 })
-                .skip(skip)
-                .limit(itemsPerPage)
-                .toArray();
-                
-            const totalOfficials = await collection.countDocuments(query);
-
-            res.json({ officials, totalOfficials });
-        } catch (error) {
-            console.error("Error fetching officials:", error);
-            res.status(500).json({ error: 'Failed to fetch officials.' });
-        }
-    });
-
-    // 3. READ (Single): GET /api/barangay-officials/:id (No changes needed)
-    app.get('/api/barangay-officials/:id', async (req, res) => {
-        if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
-        const dab = await db();
-        const collection = dab.collection('barangay_officials');
-        try {
-            const official = await collection.findOne({ _id: new ObjectId(req.params.id) });
-            if (!official) return res.status(404).json({ error: 'Official not found.' });
-            res.json({ official });
-        } catch (error) {
-            console.error("Error fetching official by ID:", error);
-            res.status(500).json({ error: 'Failed to fetch official.' });
-        }
-    });
-
-    // 4. UPDATE: PUT /api/barangay-officials/:id
-    app.put('/api/barangay-officials/:id', async (req, res) => {
-        const { id } = req.params;
-        if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
-        
-        const dab = await db();
-        const collection = dab.collection('barangay_officials');
-        const { 
-            first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
-            position, term_start, term_end, status, photo_url,
-            // New Fields
-            birth_date, birth_place, residence_address, residence_telephone_no, mobile_number,
-            barangay_hall_telephone_number, email_address, highest_educational_attainment,
-            educational_attainment_details, educational_attainment_status, occupation,
-            honorarium, beneficiaries
-        } = req.body;
-
-        // --- Validation ---
-        if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position || !birth_date || !residence_address || !mobile_number) {
-            return res.status(400).json({ error: 'Missing required fields.' });
-        }
-        if (!ALLOWED_DESIGNATIONS.includes(position)) {
-            return res.status(400).json({ error: 'Invalid position provided.' });
-        }
-
-        // --- Uniqueness Check ---
-        if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
-            const existingOfficial = await collection.findOne({
-                position: position,
-                status: 'Active',
-                _id: { $ne: new ObjectId(id) }
-            });
-            if (existingOfficial) {
-                return res.status(409).json({ error: `An active '${position}' already exists.` });
-            }
-        }
-
-        try {
-            const currentOfficial = await collection.findOne({ _id: new ObjectId(id) });
-            if (!currentOfficial) {
-              return res.status(404).json({ error: "Official not found." });
-            }
-
-            const updateFields = {
-                first_name: String(first_name).trim(),
-                last_name: String(last_name).trim(),
-                middle_name: middle_name ? String(middle_name).trim() : null,
-                sex: String(sex),
-                civil_status: String(civil_status),
-                religion: religion ? String(religion).trim() : null,
-                term_in_present_position: String(term_in_present_position),
-                position: String(position),
-                term_start: new Date(term_start),
-                term_end: term_end ? new Date(term_end) : null,
-                status: String(status),
-                photo_url: photo_url || null,
-                // New Fields
-                birth_date: birth_date ? new Date(birth_date) : null,
-                birth_place: birth_place ? String(birth_place).trim() : null,
-                residence_address: residence_address ? String(residence_address).trim() : null,
-                residence_telephone_no: residence_telephone_no ? String(residence_telephone_no).trim() : null,
-                mobile_number: mobile_number ? String(mobile_number).trim() : null,
-                barangay_hall_telephone_number: barangay_hall_telephone_number ? String(barangay_hall_telephone_number).trim() : null,
-                email_address: email_address ? String(email_address).trim().toLowerCase() : null,
-                highest_educational_attainment: highest_educational_attainment || null,
-                educational_attainment_details: educational_attainment_details ? String(educational_attainment_details).trim() : null,
-                educational_attainment_status: educational_attainment_status || null,
-                occupation: occupation ? String(occupation).trim() : null,
-                honorarium: honorarium || null,
-                beneficiaries: beneficiaries || [],
-                updated_at: new Date(),
-            };
-
-            const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-            if (result.matchedCount === 0) return res.status(404).json({ error: 'Official not found.' });
-
-            await createAuditLog({
-              description: `Barangay official updated: '${currentOfficial.first_name} ${currentOfficial.last_name}' (${currentOfficial.position}).`,
-              action: "UPDATE",
-              entityType: "BarangayOfficial",
-              entityId: id,
-            }, req)
-
-            res.json({ message: 'Barangay Official updated successfully' });
-        } catch (error) {
-            console.error("Error updating official:", error);
-            res.status(500).json({ error: 'Failed to update official.' });
-        }
-    });
-
-    // 5. DELETE: DELETE /api/barangay-officials/:id (No changes needed)
-    app.delete("/api/barangay-officials/:id", async (req, res) => {
-      if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format." })
-
-      const dab = await db()
-      const collection = dab.collection("barangay_officials")
-
-      try {
-        const official = await collection.findOne({ _id: new ObjectId(req.params.id) })
-        if (!official) {
-          return res.status(404).json({ error: "Official not found." })
-        }
-
-        const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) })
-        if (result.deletedCount === 0) return res.status(404).json({ error: "Official not found." })
+        const result = await collection.insertOne(newOfficialDoc);
 
         await createAuditLog({
-          description: `Barangay official deleted: '${official.first_name} ${official.last_name}' (${official.position}).`,
-          action: "DELETE",
+          description: `New barangay official added: '${first_name} ${last_name}' as ${position}.`,
+          action: "CREATE",
           entityType: "BarangayOfficial",
-          entityId: req.params.id,
+          entityId: result.insertedId.toString(),
         }, req)
 
-        res.json({ message: "Official deleted successfully" })
-      } catch (error) {
-        console.error("Error deleting official:", error)
-        res.status(500).json({ error: "Failed to delete official." })
-      }
-    });
+        res.status(201).json({ message: 'Barangay Official added successfully', officialId: result.insertedId });
+    } catch (error) {
+        console.error("Error adding official:", error);
+        res.status(500).json({ error: 'Failed to add official.' });
+    }
+});
+
+// 2. READ (List): GET /api/barangay-officials (No changes needed)
+app.get('/api/barangay-officials', async (req, res) => {
+    const search = req.query.search || '';
+    const positionFilter = req.query.position || '';
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (page - 1) * itemsPerPage;
+
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    
+    let query = {};
+    const andConditions = [];
+
+    if (search) {
+        const searchRegex = new RegExp(search, 'i');
+        andConditions.push({
+            $or: [
+                { first_name: { $regex: searchRegex } },
+                { last_name: { $regex: searchRegex } },
+                { middle_name: { $regex: searchRegex } },
+                { position: { $regex: searchRegex } },
+                { email_address: { $regex: searchRegex } },
+            ]
+        });
+    }
+
+    if (positionFilter) {
+        andConditions.push({ position: positionFilter });
+    }
+    
+    if (andConditions.length > 0) {
+        query = { $and: andConditions };
+    }
+
+    try {
+        const officialsFromDb = await collection.find(query)
+            .sort({ position: 1, last_name: 1, first_name: 1 })
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+            
+        // ✅ START: Automatic status update logic for the list
+        const currentDate = new Date();
+        const officials = officialsFromDb.map(official => {
+            // Check if term dates exist and are valid
+            if (official.term_start && official.term_end) {
+                const termStart = new Date(official.term_start);
+                const termEnd = new Date(official.term_end);
+
+                // If current date is within the term, set status to "active"
+                if (currentDate >= termStart && currentDate <= termEnd) {
+                    // Return a new object with the updated status
+                    return { ...official, status: 'Active' };
+                } else {
+                    return { ...official, status: 'Inactive' };
+
+                }
+            }
+            // Otherwise, return the official as-is
+            return official;
+        });
+        // ✅ END: Automatic status update logic
+
+        const totalOfficials = await collection.countDocuments(query);
+
+        res.json({ officials, totalOfficials });
+    } catch (error) {
+        console.error("Error fetching officials:", error);
+        res.status(500).json({ error: 'Failed to fetch officials.' });
+    }
+});
+
+// 3. READ (Single): GET /api/barangay-officials/:id
+app.get('/api/barangay-officials/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    try {
+        const official = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!official) return res.status(404).json({ error: 'Official not found.' });
+
+        // ✅ START: Automatic status update logic for a single record
+        const currentDate = new Date();
+        // Check if term dates exist and are valid
+        if (official.term_start && official.term_end) {
+            const termStart = new Date(official.term_start);
+            const termEnd = new Date(official.term_end);
+
+            // If current date is within the term, set status to "active"
+            if (currentDate >= termStart && currentDate <= termEnd) {
+                official.status = 'Active';
+            } else {
+                official.status = 'Inactive';
+            }
+        }
+        // ✅ END: Automatic status update logic
+
+        res.json({ official });
+    } catch (error) {
+        console.error("Error fetching official by ID:", error);
+        res.status(500).json({ error: 'Failed to fetch official.' });
+    }
+});
+
+// 4. UPDATE: PUT /api/barangay-officials/:id
+app.put('/api/barangay-officials/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('barangay_officials');
+    const { 
+        first_name, last_name, middle_name, sex, civil_status, religion, term_in_present_position,
+        position, term_start, term_end, status, photo_url,
+        // New Fields
+        birth_date, birth_place, residence_address, residence_telephone_no, mobile_number,
+        barangay_hall_telephone_number, email_address, highest_educational_attainment,
+        educational_attainment_details, educational_attainment_status, occupation,
+        honorarium, beneficiaries
+    } = req.body;
+
+    // --- Validation ---
+    if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position || !birth_date || !residence_address || !mobile_number) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+    if (!ALLOWED_DESIGNATIONS.includes(position)) {
+        return res.status(400).json({ error: 'Invalid position provided.' });
+    }
+
+    // --- Uniqueness Check ---
+    if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
+        const existingOfficial = await collection.findOne({
+            position: position,
+            status: 'Active',
+            _id: { $ne: new ObjectId(id) }
+        });
+        if (existingOfficial) {
+            return res.status(409).json({ error: `An active '${position}' already exists.` });
+        }
+    }
+
+    try {
+        const currentOfficial = await collection.findOne({ _id: new ObjectId(id) });
+        if (!currentOfficial) {
+          return res.status(404).json({ error: "Official not found." });
+        }
+
+        const updateFields = {
+            first_name: String(first_name).trim(),
+            last_name: String(last_name).trim(),
+            middle_name: middle_name ? String(middle_name).trim() : null,
+            sex: String(sex),
+            civil_status: String(civil_status),
+            religion: religion ? String(religion).trim() : null,
+            term_in_present_position: String(term_in_present_position),
+            position: String(position),
+            term_start: new Date(term_start),
+            term_end: term_end ? new Date(term_end) : null,
+            status: String(status),
+            photo_url: photo_url || null,
+            // New Fields
+            birth_date: birth_date ? new Date(birth_date) : null,
+            birth_place: birth_place ? String(birth_place).trim() : null,
+            residence_address: residence_address ? String(residence_address).trim() : null,
+            residence_telephone_no: residence_telephone_no ? String(residence_telephone_no).trim() : null,
+            mobile_number: mobile_number ? String(mobile_number).trim() : null,
+            barangay_hall_telephone_number: barangay_hall_telephone_number ? String(barangay_hall_telephone_number).trim() : null,
+            email_address: email_address ? String(email_address).trim().toLowerCase() : null,
+            highest_educational_attainment: highest_educational_attainment || null,
+            educational_attainment_details: educational_attainment_details ? String(educational_attainment_details).trim() : null,
+            educational_attainment_status: educational_attainment_status || null,
+            occupation: occupation ? String(occupation).trim() : null,
+            honorarium: honorarium || null,
+            beneficiaries: beneficiaries || [],
+            updated_at: new Date(),
+        };
+
+        const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Official not found.' });
+
+        await createAuditLog({
+          description: `Barangay official updated: '${currentOfficial.first_name} ${currentOfficial.last_name}' (${currentOfficial.position}).`,
+          action: "UPDATE",
+          entityType: "BarangayOfficial",
+          entityId: id,
+        }, req)
+
+        res.json({ message: 'Barangay Official updated successfully' });
+    } catch (error) {
+        console.error("Error updating official:", error);
+        res.status(500).json({ error: 'Failed to update official.' });
+    }
+});
+
+// 5. DELETE: DELETE /api/barangay-officials/:id (No changes needed)
+app.delete("/api/barangay-officials/:id", async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: "Invalid ID format." })
+
+  const dab = await db()
+  const collection = dab.collection("barangay_officials")
+
+  try {
+    const official = await collection.findOne({ _id: new ObjectId(req.params.id) })
+    if (!official) {
+      return res.status(404).json({ error: "Official not found." })
+    }
+
+    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) })
+    if (result.deletedCount === 0) return res.status(404).json({ error: "Official not found." })
+
+    await createAuditLog({
+      description: `Barangay official deleted: '${official.first_name} ${official.last_name}' (${official.position}).`,
+      action: "DELETE",
+      entityType: "BarangayOfficial",
+      entityId: req.params.id,
+    }, req)
+
+    res.json({ message: "Official deleted successfully" })
+  } catch (error) {
+    console.error("Error deleting official:", error)
+    res.status(500).json({ error: "Failed to delete official." })
+  }
+});
 
 
 
@@ -2997,6 +3206,17 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
       entityId: id,
     }, req);
     // --- END AUDIT LOG ---
+
+
+    // Create notification for all status changes
+    await createNotification(db(), {
+      name: `Status of borrowed item '${transaction.item_borrowed}' changed`,
+      content: `The status of the borrowed item '${transaction.item_borrowed}' has been updated to '${newStatus}'.`,
+      by: 'System',
+      type: 'Notification',
+      target_audience: 'Specific Residents',
+      recipient_ids: [transaction.borrower_resident_id],
+    });
 
     const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
     res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
@@ -4250,6 +4470,19 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
     // --- END AUDIT LOG ---
 
     // TODO: Send notification to user
+    // Send notification to all users
+    const notificationData = {
+        name: `Status of your document request has been updated to '${newStatus}'.`,
+        content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
+        by: "System",
+        type: "Notification",
+        target_audience: "Specific Residents",
+        target_residents: [originalRequest.requestor_resident_id],
+    };
+    await createNotification(dab, notificationData);
+
+
+
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
 
   } catch (error) { 
@@ -4287,6 +4520,29 @@ app.patch('/api/document-requests/:id/process', async (req, res) => {
       return res.status(200).json({ message: 'Request was not in Pending state.', request: currentRequest });
     }
 
+    // --- ADD AUDIT LOG HERE ---
+    await createAuditLog({
+        description: `Document request '${result.value.request_type}' (#${id.slice(-6)}) moved to 'Processing'.`,
+        action: "STATUS_CHANGE",
+        entityType: "DocumentRequest",
+        entityId: id,
+        // userName: req.user.name // In a real app with auth context
+    }, req);
+    // --- END AUDIT LOG ---
+
+
+    // Send notification to the user
+    const notificationData = {
+        name: `Your document request for a ${result.value.request_type} has been approved.`,
+        content: `Your document request for a ${result.value.request_type} has been approved. You can view the request details in the Resident Portal.`,
+        by: "System",
+        type: "Notification",
+        target_audience: "Specific Residents",
+        target_residents: [result.value.requestor_resident_id],
+    };
+    await createNotification(dab, notificationData);
+    
+
     res.json({ message: 'Request moved to Processing.', request: result.value });
   } catch (error) {
     console.error("Error processing request:", error);
@@ -4317,6 +4573,17 @@ app.patch('/api/document-requests/:id/approve', async (req, res) => {
     
 
     // TODO: Send notification to user
+
+    await createNotification(dab, {
+        name: `Your document request for a ${result.value.request_type} is ready for pickup.`,
+        content: `Your document request for a ${result_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
+        by: "System",
+        type: "Notification",
+        target_audience: "SpecificResidents",
+        target_residents: [result.value.requestor_resident_id],
+    });
+
+
     res.json({ message: 'Request approved successfully.', request: result });
   } catch (error) {
     console.error("Error approving request:", error);
@@ -4344,6 +4611,18 @@ app.patch('/api/document-requests/:id/generate', async (req, res) => {
     if (!result) {
       return res.status(404).json({ error: 'Request not found or is not in Approved state.' });
     }
+
+    // Send notification to the user
+    const notificationData = {
+        name: `Your document request for a ${result.value.request_type} is ready for pickup.`,
+        content: `Your document request for a ${result.value.request_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
+        by: "System",
+        type: "Notification",
+        target_audience: "SpecificResidents",
+        target_residents: [result.value.requestor_resident_id],
+    };
+    await createNotification(dab, notificationData);
+    
     
     res.json({ message: 'Document is now Ready for Pickup.', request: result });
   } catch (error) {
@@ -4373,6 +4652,18 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
         if (!result) {
             return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
         }
+
+        // Send notification to the user
+        const notificationData = {
+            name: `Your document request for a ${result.value.request_type} was declined.`,
+            content: `Your document request for a ${result.value.request_type} was declined. The reason provided is: '${result.value.decline_reason}'.`,
+            by: "System",
+            type: "Alert",
+            target_audience: "SpecificResidents",
+            target_residents: [result.value.requestor_resident_id],
+        };
+        await createNotification(dab, notificationData);
+        
         
         res.json({ message: 'Request has been declined.', request: result });
     } catch (error) {
@@ -4444,7 +4735,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 
-const isDebug = !false;
+const isDebug = !true;
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
@@ -4483,6 +4774,7 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
       'Barangay Certification (First Time Jobseeker)': 'jobseeker.html',
       'Certificate of Indigency': 'indigency.html',
       'Certificate of Solo Parent': 'solo_parent.html',
+      'Certificate of Residency': 'residency.html',
       'Barangay Permit (for installations)': 'permit.html',
     };
     templatePath = path.join(__dirname, 'templates', templateMap[request.request_type]);
@@ -4500,13 +4792,17 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         '[NAME OF APPLICANT]': `${requestor.first_name} ${requestor.last_name}`.trim(),
         '[Household no, Subdivision/ Zone/Sitio/Purok, City/Municipality]': fullAddress, // Address format 1
         '[Household No./ Street/ Subdivision/ Sitio/ City or Municipality]': fullAddress, // Address format 2
+        '[Household no, Street, Subdivision/Zone/Sitio/Purok, City/Municipality]': fullAddress, // Address format 3
         '[PURPOSE]': request.purpose || '',
         '[DAY]': today.getDate(),
         '[MONTH]': today.toLocaleString('en-US', { month: 'long' }),
         '[YEAR]': today.getFullYear(),
+        '[YEAR_LIVING]': today.getFullYear() - (requestor.years_at_current_address || 0),
         '[NAME OF BARANGAY SECRETARY]': barangaySecretary?.full_name?.toUpperCase() || 'SECRETARY NAME NOT FOUND',
         '[NAME OF PUNONG BARANGAY]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
         '[BARANGAY CHAIRPERSON’S NAME]': punongBarangay?.full_name?.toUpperCase() || 'PUNONG BARANGAY NOT FOUND',
+        '[PUNONG_BARANGAY_PICTURE]': punongBarangay?.photo_url ? punongBarangay.photo_url : 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
+        '[BARANGAY_SECRETARY_PICTURE]': barangaySecretary?.photo_url ? punongBarangay.photo_url : 'data:image/gif;base64,R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==',
         'Mr./Ms.': requestor.gender === 'Male' ? 'Mr.' : 'Ms.',
         
         // --- Certificate of Cohabitation ---

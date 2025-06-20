@@ -24,7 +24,7 @@
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey"
-          density="compact"
+          
           label="Search by type, requestor, etc..."
           prepend-inner-icon="mdi-magnify"
           variant="solo-filled"

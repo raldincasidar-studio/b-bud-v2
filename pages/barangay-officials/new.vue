@@ -169,10 +169,10 @@
             <label class="v-label mb-1">Term End Date (Optional)</label>
             <v-text-field v-model="form.term_end" label="Leave blank if currently serving" type="date" variant="outlined"></v-text-field>
           </v-col>
-          <v-col cols="12" md="4">
+          <!-- <v-col cols="12" md="4">
             <label class="v-label mb-1">Status <span class="text-red">*</span></label>
             <v-select v-model="form.status" :items="['Active', 'Inactive']" variant="outlined" :error-messages="v$.status.$errors.map(e => e.$message)" @blur="v$.status.$touch"></v-select>
-          </v-col>
+          </v-col> -->
         </v-row>
 
         <v-divider class="my-6"></v-divider>
@@ -190,13 +190,13 @@
             <v-row align="center">
               <v-col cols="12" md="1" class="text-h6 text-grey-darken-1">{{ index + 1 }}.</v-col>
               <v-col cols="12" md="4">
-                <v-text-field v-model="beneficiary.name" label="Name" variant="outlined" density="compact" hide-details></v-text-field>
+                <v-text-field v-model="beneficiary.name" label="Name" variant="outlined"  hide-details></v-text-field>
               </v-col>
               <v-col cols="12" md="3">
-                <v-text-field v-model="beneficiary.date_of_birth" label="Date of Birth" variant="outlined" type="date" density="compact" hide-details></v-text-field>
+                <v-text-field v-model="beneficiary.date_of_birth" label="Date of Birth" variant="outlined" type="date"  hide-details></v-text-field>
               </v-col>
               <v-col cols="12" md="3">
-                <v-text-field v-model="beneficiary.relationship" label="Relationship" variant="outlined" density="compact" hide-details></v-text-field>
+                <v-text-field v-model="beneficiary.relationship" label="Relationship" variant="outlined"  hide-details></v-text-field>
               </v-col>
               <v-col cols="12" md="1" class="text-right">
                 <v-btn icon="mdi-delete" variant="text" color="error" @click="removeBeneficiary(index)"></v-btn>
@@ -259,7 +259,7 @@ const rules = {
   position: { required },
   term_in_present_position: { required },
   term_start: { required },
-  status: { required },
+  // status: { required },
   // New Rules
   birth_date: { required },
   residence_address: { required },

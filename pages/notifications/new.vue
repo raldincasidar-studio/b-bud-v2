@@ -14,10 +14,10 @@
         <v-form ref="form">
           <v-row>
             <v-col cols="12" md="6">
-              <v-text-field v-model="notification.name" label="Announcement Name/Title*" :rules="[rules.required, rules.nameLength]" variant="outlined" density="compact"></v-text-field>
+              <v-text-field v-model="notification.name" label="Announcement Name/Title*" :rules="[rules.required, rules.nameLength]" variant="outlined" ></v-text-field>
             </v-col>
             <v-col cols="12" md="6">
-              <v-text-field v-model="notification.by" label="Author (e.g., Admin Name)*" :rules="[rules.required]" variant="outlined" density="compact"></v-text-field>
+              <v-text-field v-model="notification.by" label="Author (e.g., Admin Name)*" :rules="[rules.required]" variant="outlined" ></v-text-field>
             </v-col>
           </v-row>
 
@@ -29,11 +29,11 @@
                 label="Announcemnent Type*"
                 :rules="[rules.required]"
                 variant="outlined"
-                density="compact"
+                
               ></v-select>
             </v-col>
             <v-col cols="12" md="6">
-              <v-text-field v-model="notification.date" label="Effective Date & Time*" type="datetime-local" :rules="[rules.required]" variant="outlined" density="compact"></v-text-field>
+              <v-text-field v-model="notification.date" label="Effective Date & Time*" type="datetime-local" :rules="[rules.required]" variant="outlined" ></v-text-field>
             </v-col>
           </v-row>
 
@@ -54,7 +54,7 @@
                 label="Target Audience*"
                 :rules="[rules.required]"
                 variant="outlined"
-                density="compact"
+                
               ></v-select>
             </v-col>
           </v-row>
@@ -74,7 +74,7 @@
                 label="Select Specific Residents (Type to search)"
                 placeholder="Search by name or email..."
                 variant="outlined"
-                density="compact"
+                
                 no-filter 
                 hide-no-data
                 @update:search="debouncedSearchResidents"

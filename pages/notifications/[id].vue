@@ -45,7 +45,7 @@
                   label="Announcement Name/Title*"
                   :rules="[rules.required, rules.nameLength]"
                   :readonly="!editMode"
-                  variant="outlined" density="compact"
+                  variant="outlined" 
                 ></v-text-field>
               </v-col>
               <v-col cols="12" md="6">
@@ -54,7 +54,7 @@
                   label="Author (e.g., Admin Name)*"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" density="compact"
+                  variant="outlined" 
                 ></v-text-field>
               </v-col>
             </v-row>
@@ -67,7 +67,7 @@
                   label="Notification Type*"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" density="compact"
+                  variant="outlined" 
                 ></v-select>
               </v-col>
               <v-col cols="12" md="6">
@@ -77,7 +77,7 @@
                   type="datetime-local"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" density="compact"
+                  variant="outlined" 
                 ></v-text-field>
               </v-col>
             </v-row>
@@ -106,7 +106,7 @@
                   :rules="[rules.required]"
                   :readonly="!editMode"
                   variant="outlined"
-                  density="compact"
+                  
                 ></v-select>
               </v-col>
             </v-row>
@@ -126,7 +126,7 @@
                   label="Select Specific Residents (Type to search)"
                   placeholder="Search by name or email..."
                   variant="outlined"
-                  density="compact"
+                  
                   no-filter
                   hide-no-data
                   :readonly="!editMode"

@@ -19,7 +19,7 @@
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey"
-          density="compact"
+          
           label="Search by ref #, complainant, etc..."
           prepend-inner-icon="mdi-magnify"
           variant="solo-filled"
@@ -115,7 +115,7 @@ const headers = ref([
   { title: 'Complained Against', key: 'person_complained_against', sortable: true },
   { title: 'Date Filed', key: 'date_of_complaint', sortable: true },
   { title: 'Category', key: 'category', sortable: false },
-  { title: 'Status & Actions', key: 'status', sortable: true, align: 'center', width: '220px'},
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '220px'},
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);
 

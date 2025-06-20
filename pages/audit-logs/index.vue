@@ -16,7 +16,7 @@
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey"
-          density="compact"
+          
           label="Search logs by description, user, etc..."
           prepend-inner-icon="mdi-magnify"
           variant="solo-filled"

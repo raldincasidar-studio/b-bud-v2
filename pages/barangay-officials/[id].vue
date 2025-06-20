@@ -182,7 +182,7 @@
               </v-col>
               <v-col cols="12" md="4">
                 <label class="v-label mb-1">Status <span v-if="editMode" class="text-red">*</span></label>
-                <v-select v-model="form.status" :items="['Active', 'Inactive']" :readonly="!editMode" variant="outlined" :error-messages="v$.status.$errors.map(e => e.$message)" @blur="v$.status.$touch"></v-select>
+                <v-select v-model="form.status" :items="['Active', 'Inactive']" message="Status is based on term start and end" readonly variant="outlined" :error-messages="v$.status.$errors.map(e => e.$message)" @blur="v$.status.$touch"></v-select>
               </v-col>
             </v-row>
             
@@ -201,13 +201,13 @@
                 <v-row align="center">
                   <v-col cols="12" md="1" class="text-h6 text-grey-darken-1">{{ index + 1 }}.</v-col>
                   <v-col cols="12" md="4">
-                    <v-text-field v-model="beneficiary.name" label="Name" :readonly="!editMode" variant="outlined" density="compact" hide-details></v-text-field>
+                    <v-text-field v-model="beneficiary.name" label="Name" :readonly="!editMode" variant="outlined"  hide-details></v-text-field>
                   </v-col>
                   <v-col cols="12" md="3">
-                    <v-text-field v-model="beneficiary.date_of_birth" label="Date of Birth" :readonly="!editMode" variant="outlined" type="date" density="compact" hide-details></v-text-field>
+                    <v-text-field v-model="beneficiary.date_of_birth" label="Date of Birth" :readonly="!editMode" variant="outlined" type="date"  hide-details></v-text-field>
                   </v-col>
                   <v-col cols="12" md="3">
-                    <v-text-field v-model="beneficiary.relationship" label="Relationship" :readonly="!editMode" variant="outlined" density="compact" hide-details></v-text-field>
+                    <v-text-field v-model="beneficiary.relationship" label="Relationship" :readonly="!editMode" variant="outlined"  hide-details></v-text-field>
                   </v-col>
                   <v-col v-if="editMode" cols="12" md="1" class="text-right">
                     <v-btn icon="mdi-delete" variant="text" color="error" @click="removeBeneficiary(index)"></v-btn>

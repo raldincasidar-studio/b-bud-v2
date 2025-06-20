@@ -35,19 +35,19 @@
             <v-card-text class="pt-4">
               <v-form ref="form">
                 <label class="v-label">Borrower</label>
-                <v-text-field :model-value="transactionData.borrower_display_name || 'N/A'" readonly variant="outlined" density="compact" class="mb-2" prepend-inner-icon="mdi-account"></v-text-field>
+                <v-text-field :model-value="transactionData.borrower_display_name || 'N/A'" readonly variant="outlined"  class="mb-2" prepend-inner-icon="mdi-account"></v-text-field>
 
                 <label class="v-label">Item Borrowed</label>
-                <v-text-field v-model="form.item_borrowed" :readonly="!editMode" variant="outlined" density="compact" class="mb-2" prepend-inner-icon="mdi-cube-outline"></v-text-field>
+                <v-text-field v-model="form.item_borrowed" :readonly="!editMode" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-cube-outline"></v-text-field>
 
                 <label class="v-label">Quantity</label>
-                <v-text-field v-model.number="form.quantity_borrowed" :readonly="!editMode" type="number" variant="outlined" density="compact" class="mb-2" prepend-inner-icon="mdi-counter"></v-text-field>
+                <v-text-field v-model.number="form.quantity_borrowed" :readonly="!editMode" type="number" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-counter"></v-text-field>
 
                 <label class="v-label">Date Borrowed</label>
-                <v-text-field v-model="form.borrow_datetime" :readonly="!editMode" type="datetime-local" variant="outlined" density="compact" class="mb-2" prepend-inner-icon="mdi-calendar-arrow-right"></v-text-field>
+                <v-text-field v-model="form.borrow_datetime" :readonly="!editMode" type="datetime-local" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-calendar-arrow-right"></v-text-field>
 
                 <label class="v-label">Expected Return Date</label>
-                <v-text-field v-model="form.expected_return_date" :readonly="!editMode" type="date" variant="outlined" density="compact" class="mb-2" prepend-inner-icon="mdi-calendar-arrow-left"></v-text-field>
+                <v-text-field v-model="form.expected_return_date" :readonly="!editMode" type="date" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-calendar-arrow-left"></v-text-field>
 
                 <label class="v-label">Notes / Reason for Borrowing</label>
                 <v-textarea v-model="form.notes" :readonly="!editMode" variant="outlined" rows="4" auto-grow prepend-inner-icon="mdi-note-text-outline"></v-textarea>
@@ -83,7 +83,7 @@
                 <div v-if="['Approved', 'Overdue', 'Returned'].includes(transactionData.status)">
                     <v-card-text>
                         <p class="text-body-2 mb-4">Once the resident returns the item, upload proof and add notes on its condition.</p>
-                        <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined" density="compact" prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
+                        <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined"  prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
                         <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3"></v-textarea>
                     </v-card-text>
                     <v-card-actions class="pa-4">
@@ -97,15 +97,15 @@
                 <!-- Display Return Info -->
                 <div v-if="transactionData.status === 'Returned'">
                     <v-card-text>
-                        <v-list lines="two" density="compact">
+                        <v-list lines="two" >
                             <v-list-item title="Actual Return Date" :subtitle="formatDateTime(transactionData.date_returned)"></v-list-item>
                             <v-divider inset></v-divider>
                             <v-list-item title="Return Condition Notes" :subtitle="transactionData.return_condition_notes || 'No notes provided.'"></v-list-item>
                         </v-list>
                         <div v-if="transactionData.return_proof_image_url" class="pa-2 mt-2">
                             <p class="text-subtitle-2 mb-2">Return Proof:</p>
-                            <!-- The 'src' directly uses the Base64 data URL from the database -->
-                            <v-img :src="transactionData.return_proof_image_url" max-height="300" class="elevation-2 rounded-lg border"></v-img>
+                            <!-- MODIFICATION: Made image clickable -->
+                            <v-img :src="transactionData.return_proof_image_url" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
                         </div>
                         <v-alert v-else type="info" variant="tonal" class="mt-2" text="No return proof was uploaded."></v-alert>
                     </v-card-text>
@@ -124,7 +124,7 @@
                 </div>
 
                 <!-- Other statuses (Resolved, Rejected) -->
-                <div v-else>
+                <div v-if="['Closed'].includes(transactionData.status)">
                      <v-card-text>
                         <v-alert :type="transactionData.status === 'Resolved' ? 'success' : 'error'" variant="tonal">
                             This transaction is considered closed. No further actions are required.
@@ -135,6 +135,24 @@
         </v-col>
       </v-row>
     </div>
+
+    <!-- NEW: Image Gallery Dialog -->
+    <v-dialog v-model="galleryDialog" max-width="1000px" scrollable>
+        <v-card class="d-flex flex-column">
+          <v-toolbar color="primary" density="compact">
+            <v-toolbar-title class="text-h6">{{ imageGallerySource[currentGalleryIndex]?.title }}</v-toolbar-title>
+            <v-spacer></v-spacer>
+            <v-btn icon="mdi-close" @click="galleryDialog = false"></v-btn>
+          </v-toolbar>
+          <v-card-text class="pa-0 flex-grow-1 d-flex align-center justify-center" style="background-color: rgba(0,0,0,0.85);">
+            <v-carousel v-model="currentGalleryIndex" height="100%" hide-delimiters :show-arrows="imageGallerySource.length > 1 ? 'hover' : false" style="min-height: 50vh;">
+              <v-carousel-item v-for="(item, i) in imageGallerySource" :key="i">
+                <v-img :src="item.src" contain max-height="80vh"></v-img>
+              </v-carousel-item>
+            </v-carousel>
+          </v-card-text>
+        </v-card>
+    </v-dialog>
 
     <!-- Delete confirmation dialog -->
     <v-dialog v-model="confirmDeleteDialog" persistent max-width="400">
@@ -152,12 +170,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue';
+import { reactive, ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
-
-
 
 const STATUS_CONFIG = {
   Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
@@ -191,6 +207,33 @@ const isDeleting = ref(false);
 const isReturning = ref(false);
 const confirmDeleteDialog = ref(false);
 
+// NEW: State for the image gallery
+const galleryDialog = ref(false);
+const currentGalleryIndex = ref(0);
+
+// NEW: Computed property to aggregate all available images for the gallery
+const imageGallerySource = computed(() => {
+  const items = [];
+  if (transactionData.value.return_proof_image_url) {
+    items.push({ 
+      id: 'return_proof', 
+      src: transactionData.value.return_proof_image_url, 
+      title: 'Return Proof' 
+    });
+  }
+  // Future images can be added here
+  return items;
+});
+
+// NEW: Function to open the gallery at a specific image
+function openGallery(id) {
+  const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
+  if (foundIndex > -1) {
+    currentGalleryIndex.value = foundIndex;
+    galleryDialog.value = true;
+  }
+}
+
 // --- LIFECYCLE & DATA FETCHING ---
 onMounted(async () => {
     await fetchTransaction();
@@ -202,6 +245,9 @@ async function fetchTransaction() {
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`);
     if (error.value || !data.value?.transaction) throw new Error('Transaction not found or could not be loaded.');
     transactionData.value = { ...data.value.transaction };
+    // The line below was auto-updating status on load, which seems incorrect.
+    // It's commented out to preserve the actual status from the database.
+    // updateStatus('Processing'); 
     resetForm();
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
@@ -246,6 +292,9 @@ async function saveChanges() {
 }
 
 async function updateStatus(newStatus, prompt = false) {
+
+    if (newStatus === transactionData.value.status) return;
+
     if (prompt) {
         const { value: notes, isConfirmed } = await $toast.fire({
             title: `Confirm: ${newStatus}`, text: `Please provide a reason or note for this status change.`,
@@ -270,7 +319,7 @@ async function processReturn() {
     isReturning.value = true;
     let imageBase64 = null;
 
-    const file = returnForm.proofImage ? returnForm.proofImage : null;
+    const file = returnForm.proofImage ? returnForm.proofImage[0] : null;
 
     if (file) {
         // Validate file size again before processing
@@ -300,6 +349,8 @@ async function processReturn() {
         if (error.value) throw new Error(error.value.data?.message || 'Failed to process return.');
         $toast.fire({ title: 'Item successfully marked as Returned!', icon: 'success' });
         transactionData.value = data.value.transaction;
+        returnForm.proofImage = null; // Clear the input after successful upload
+        returnForm.conditionNotes = '';
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
     finally { isReturning.value = false; }
 }
@@ -317,7 +368,6 @@ async function deleteTransaction() {
 
 // --- HELPER FUNCTIONS ---
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
-  console.log(file);
     const reader = new FileReader();
     reader.readAsDataURL(file);
     reader.onload = () => resolve(reader.result);
@@ -345,4 +395,7 @@ const formatDateTime = (dateString) => {
     display: block; margin-bottom: 4px; font-weight: 500;
 }
 .ga-2 { gap: 8px; }
+.cursor-pointer {
+    cursor: pointer;
+}
 </style>

@@ -18,7 +18,7 @@
         Find Residents
         <v-spacer></v-spacer>
         <v-text-field
-          v-model="searchKey" density="compact" label="Search by name, email, etc..."
+          v-model="searchKey"  label="Search by name, email, etc..."
           prepend-inner-icon="mdi-magnify" variant="solo-filled"
           flat hide-details single-line
         ></v-text-field>
@@ -26,18 +26,17 @@
       <v-divider></v-divider>
 
       <!-- Filter Chip Group remains unchanged and will be synced with the URL -->
-      <v-card-text>
+      <!-- <v-card-text>
         <v-chip-group
           v-model="statusFilter"
           column
           color="primary"
         >
           <v-chip filter value="All">All</v-chip>
-          <v-chip filter value="Pending">Pending</v-chip>
           <v-chip filter value="Approved">Approved</v-chip>
           <v-chip filter value="Deactivated">Deactivated</v-chip>
         </v-chip-group>
-      </v-card-text>
+      </v-card-text> -->
       <v-divider></v-divider>
 
       <!-- The data table will now fetch data based on URL and local filters -->
@@ -73,7 +72,7 @@
                   :loading="updatingStatusFor === item._id" :disabled="updatingStatusFor === item._id"
                 ></v-btn>
               </template>
-              <v-list density="compact">
+              <v-list >
                 <v-list-item
                   v-for="action in getAvailableActions(item.status)"
                   :key="action.status"
@@ -145,6 +144,7 @@ const declineReason = ref('');
 
 // Table Headers (MODIFIED: "Status" column removed, "Details" renamed to "Actions")
 const headers = ref([
+  { title: 'House No.', key: 'address_house_number', sortable: false },
   { title: 'Full Name', key: 'full_name', sortable: false },
   { title: 'Email', key: 'email', sortable: true },
   { title: 'Contact No.', key: 'contact_number', sortable: false },
@@ -245,7 +245,7 @@ async function loadResidents(options) {
     Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
 
     // 4. Make the API call with the combined filters
-    const { data, error } = await useMyFetch('/api/residents', { query: finalQuery });
+    const { data, error } = await useMyFetch('/api/residents/approved', { query: finalQuery });
 
     if (error.value) throw new Error('Failed to load residents.');
     

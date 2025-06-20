@@ -38,7 +38,7 @@
             </v-autocomplete>
           </v-col>
           <v-col cols="12">
-            <label class="v-label mb-1">Purpose of Document Request <span class="text-red">*</span></label>
+            <label class="v-label mb-1">Purpose of Document Request</label>
             <v-textarea
               v-model="form.purpose"
               label="Enter the purpose for requesting this document"

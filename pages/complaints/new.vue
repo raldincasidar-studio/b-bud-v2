@@ -228,6 +228,7 @@ watch(personComplainedSearchQuery, (newQuery) => { searchResidentsAPI(newQuery, 
 watch(() => form.complainant_resident, (newResident) => {
     if (newResident && typeof newResident === 'object') {
         form.complainant_address = newResident.address;
+        form.complainant_name = newResident.name;
         form.contact_number = newResident.contact_number;
     } else {
         form.complainant_address = '';
@@ -258,6 +259,7 @@ async function saveComplaint() {
   try {
     const payload = {
       complainant_resident_id: form.complainant_resident?._id,
+      complainant_display_name: form.complainant_resident?.name,
       complainant_address: form.complainant_address,
       contact_number: form.contact_number,
       date_of_complaint: new Date(form.date_of_complaint).toISOString(),

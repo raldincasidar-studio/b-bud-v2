@@ -112,10 +112,10 @@
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
             <p class="mt-2 text-grey-darken-1 text-caption">Loading Notes...</p>
           </div>
-          <v-alert v-else-if="!investigationNotes.length" type="info" variant="tonal" density="compact" class="mb-4">
+          <v-alert v-else-if="!investigationNotes.length" type="info" variant="tonal"  class="mb-4">
             No investigation notes have been added yet.
           </v-alert>
-          <v-timeline v-else side="end" align="start" density="compact" class="mb-4">
+          <v-timeline v-else side="end" align="start"  class="mb-4">
             <v-timeline-item
               v-for="note in investigationNotes"
               :key="note._id"
@@ -128,7 +128,7 @@
                   <div class="font-weight-bold">{{ note.author?.name || 'System' }}</div>
                 </div>
               </template>
-              <v-alert class="pa-3" border="start" density="compact" color="blue-grey-lighten-5">
+              <v-alert class="pa-3" border="start"  color="blue-grey-lighten-5">
                 <p class="text-body-2" style="white-space: pre-wrap;">{{ note.content }}</p>
               </v-alert>
             </v-timeline-item>

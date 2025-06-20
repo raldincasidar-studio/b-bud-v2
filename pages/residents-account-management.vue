@@ -13,7 +13,7 @@
         Find Resident Accounts
         <v-spacer></v-spacer>
         <v-text-field
-          v-model="searchKey" density="compact" label="Search by name, email, etc..."
+          v-model="searchKey"  label="Search by name, email, etc..."
           prepend-inner-icon="mdi-magnify" variant="solo-filled"
           flat hide-details single-line
         ></v-text-field>
@@ -45,6 +45,11 @@
         @update:options="loadResidents"
         item-value="_id"
       >
+        <template v-slot:item._id="{ item }">
+          # {{ item._id.slice(-4) }}
+        </template>
+
+
         <template v-slot:item.full_name="{ item }">
           {{ item.first_name }} {{ item.last_name }}
         </template>
@@ -64,7 +69,7 @@
                   :loading="updatingStatusFor === item._id" :disabled="updatingStatusFor === item._id"
                 ></v-btn>
               </template>
-              <v-list density="compact">
+              <v-list >
                 <v-list-item
                   v-for="action in getAvailableActions(item.status)"
                   :key="action.status"
@@ -133,6 +138,7 @@ const declineReason = ref('');
 
 // REVISED: Table Headers for Account Management
 const headers = ref([
+  { title: 'Acc Number', key: '_id', sortable: false },
   { title: 'Resident Name', key: 'full_name', sortable: false },
   { title: 'Email', key: 'email', sortable: true },
   { title: 'Phone Number', key: 'contact_number', sortable: false },

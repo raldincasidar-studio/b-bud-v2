@@ -165,7 +165,7 @@
               <thead><tr><th>Name</th><th>Relationship</th><th>Actions</th></tr></thead>
               <tbody>
                 <tr v-for="(member, index) in form.household_members_details" :key="member._id">
-                  <td><v-chip link color="primary" prepend-icon="mdi-account" :to="`/residents/${member._id}`">{{ member.first_name }} {{ member.last_name }}</v-chip></td><td>{{ member.relationship_to_head || 'Not specified' }}</td>
+                  <td>{{ member.first_name }} {{ member.last_name }}</td><td>{{ member.relationship_to_head || 'Not specified' }}</td>
                   <td><v-btn prepend-icon="mdi-pencil-outline" variant="text" color="primary" size="small" :to="`/residents/${member._id}`">View Info</v-btn><v-btn icon="mdi-delete-outline" variant="text" color="error" v-if="editMode"   size="small" @click="removeMember(index)"></v-btn></td>
                 </tr>
                 <tr v-if="!form.household_members_details || form.household_members_details.length === 0"><td colspan="3" class="text-center text-grey py-3">No members in this household.</td></tr>
@@ -178,7 +178,7 @@
       <!-- Image Gallery Dialog -->
       <v-dialog v-model="galleryDialog" max-width="1000px" scrollable>
         <v-card class="d-flex flex-column">
-          <v-toolbar color="primary" density="compact">
+          <v-toolbar color="primary" >
             <v-toolbar-title class="text-h6">{{ imageGallerySource[currentGalleryIndex]?.title }}</v-toolbar-title>
             <v-spacer></v-spacer>
             <v-btn icon="mdi-close" @click="galleryDialog = false"></v-btn>

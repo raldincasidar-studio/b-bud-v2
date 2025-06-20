@@ -7,9 +7,7 @@
       </v-col>
       <v-col class="text-right">
         <v-btn
-          rounded="lg"
           size="large"
-          variant="tonal"
           to="/borrowed-assets/new"
           prepend-icon="mdi-plus-circle-outline"
           color="primary"
@@ -32,7 +30,7 @@
           color="primary"
           label="Search by Borrower, Item, or Status..."
           clearable
-          density="compact"
+          
           class="mb-4"
           hide-details
         ></v-text-field>
@@ -69,7 +67,6 @@
 
           <template v-slot:item.status="{ item }">
             <v-chip :color="getStatusColor(item.status)" label size="small" class="font-weight-bold">
-              <v-icon start :icon="getStatusIcon(item.status)"></v-icon>
               {{ item.status }}
             </v-chip>
           </template>

@@ -24,7 +24,7 @@
           label="Search Households"
           placeholder="Search by Head's Name, Household No..."
           clearable
-          density="compact"
+          
           class="mb-4"
         ></v-text-field>
 

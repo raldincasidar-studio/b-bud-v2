@@ -36,7 +36,7 @@
                 label="Search Resident from Population..."
                 prepend-inner-icon="mdi-account-search-outline"
                 variant="outlined"
-                density="compact"
+                
                 return-object
                 no-filter
                 clearable
@@ -63,7 +63,7 @@
                 type="datetime-local"
                 :rules="[rules.required]"
                 variant="outlined"
-                density="compact"
+                
                 required
               ></v-text-field>
             </v-col>
@@ -81,7 +81,7 @@
                 :loading="isLoadingInventory"
                 :rules="[rules.required, rules.itemIsAvailable]"
                 variant="outlined"
-                density="compact"
+                
                 required
                 @update:model-value="onItemSelect"
               >
@@ -105,7 +105,7 @@
                 v-model.number="transaction.quantity_borrowed"
                 type="number"
                 variant="outlined"
-                density="compact"
+                
                 required
                 :disabled="!transaction.item_borrowed"
                 :rules="[rules.required, rules.quantityIsValid]"
@@ -121,7 +121,7 @@
                 type="date"
                 :rules="[rules.required, rules.futureDate]"
                 variant="outlined"
-                density="compact"
+                
                 required
                 :min="new Date().toISOString().split('T')[0]"
               ></v-text-field>
@@ -131,7 +131,7 @@
               <v-text-field
                 v-model="transaction.borrowed_from_personnel"
                 variant="outlined"
-                density="compact"
+                
                 readonly
                 hint="This is automatically filled with the logged-in user's name."
               ></v-text-field>

@@ -42,7 +42,7 @@
             <v-col cols="12">
               <label class="v-label mb-1">Purpose of Request</label>
               <v-textarea
-                :model-value="request.purpose_of_request"
+                :model-value="request.purpose"
                 variant="outlined"
                 readonly
                 rows="3"
@@ -195,10 +195,11 @@ const proofOfReleaseBase64 = ref('');
 
 // --- COMPUTED PROPERTIES ---
 const requestorName = computed(() => {
-  if (request.value && request.value.requestor_details) {
+  console.log(request.value.requestor_details); 
+  if (request.value.requestor_details) {
     return `${request.value.requestor_details.first_name} ${request.value.requestor_details.last_name}`;
   }
-  return '...';
+  return '...'; 
 });
 
 // --- LIFECYCLE & DATA FETCHING ---
@@ -216,7 +217,7 @@ async function fetchRequest(showLoading = true) {
             isAutoProcessing.value = true;
             const { data: processedData, error: processError } = await useMyFetch(`/api/document-requests/${requestId}/process`, { method: 'PATCH' });
             if (processError.value) throw new Error('Could not auto-update status to Processing.');
-            request.value = processedData.value.request;
+            fetchRequest(false);
         }
         
     } catch (e) { 
