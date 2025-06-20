@@ -331,7 +331,7 @@ const rules = {
   first_name: { required }, last_name: { required }, sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
-  address_house_number: { required }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numberic: numeric }, address_street: { required }, address_subdivision_zone: { required },
   years_at_current_address: { required, numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },

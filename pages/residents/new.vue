@@ -245,7 +245,7 @@ const headRules = {
   email: { required, email }, contact_number: { required },
   password: { required, minLength: minLength(6) },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
-  address_house_number: { required }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numberic: numeric }, address_street: { required }, address_subdivision_zone: { required },
   years_at_current_address: { required, numeric }, proof_of_residency_file: { required: helpers.withMessage('Proof of Residency is required.', required) },
   // REVISED VALIDATION
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
