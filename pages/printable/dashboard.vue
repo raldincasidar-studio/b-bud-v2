@@ -126,7 +126,6 @@
     <!-- Populated from the original /api/dashboard endpoint -->
     <div class="info-item"><span class="label">A. No. of Registered voters</span><span class="value">: {{ apiData.totalRegisteredVoters }}</span></div>
     <div class="info-item"><span class="label">B. No. of Population</span><span class="value">: {{ apiData.totalPopulation }}</span></div>
-    <div class="info-item"><span class="label">C. With RBIS?</span><span class="value">: Yes</span></div> <!-- Kept as is, assumed static -->
     <div class="info-item"><span class="label">D. No. of Households</span><span class="value">: {{ apiData.totalHouseholds }}</span></div>
     <div class="info-item"><span class="label">E. No. of Families</span><span class="value">: {{ apiData.totalHouseholds }}</span></div> <!-- Assuming Families = Households -->
     <div class="info-item"><span class="label">... No. of inhabitants (RBI) 2nd Sem</span><span class="value">: {{ apiData.totalPopulation }}</span></div>

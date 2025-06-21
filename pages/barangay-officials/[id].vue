@@ -336,6 +336,7 @@ async function saveChanges() {
         body: form,
     });
     if (error.value) throw new Error(error.value.data?.error || 'Failed to update official.');
+    if (data.value.error) throw new Error(data.value.error || 'Failed to update official.');
     
     $toast.fire({ title: 'Official updated successfully!', icon: 'success' });
     await fetchOfficial();

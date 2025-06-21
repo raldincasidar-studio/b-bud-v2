@@ -2061,17 +2061,17 @@ app.post('/api/barangay-officials', async (req, res) => {
 
     // --- Validation ---
     if (!first_name || !last_name || !position || !term_start || !status || !sex || !civil_status || !term_in_present_position || !birth_date || !residence_address || !mobile_number) {
-        return res.status(400).json({ error: 'Missing required fields. Please complete all required information.' });
+        return res.status(200).json({ error: 'Missing required fields. Please complete all required information.' });
     }
     if (!ALLOWED_DESIGNATIONS.includes(position)) {
-        return res.status(400).json({ error: 'Invalid position provided.' });
+        return res.status(200).json({ error: 'Invalid position provided.' });
     }
 
     // --- Uniqueness Check ---
     if (status === 'Active' && UNIQUE_ROLES.includes(position)) {
         const existingOfficial = await collection.findOne({ position, status: 'Active' });
         if (existingOfficial) {
-            return res.status(409).json({ error: `An active '${position}' already exists.` });
+            return res.status(200).json({ error: `An active '${position}' already exists.` });
         }
     }
 
@@ -2261,7 +2261,7 @@ app.put('/api/barangay-officials/:id', async (req, res) => {
             _id: { $ne: new ObjectId(id) }
         });
         if (existingOfficial) {
-            return res.status(409).json({ error: `An active '${position}' already exists.` });
+            return res.status(200).json({ error: `An active '${position}' already exists.` });
         }
     }
 
@@ -2906,14 +2906,14 @@ app.post('/api/borrowed-assets', async (req, res) => {
 
   // Validation
   if (!borrower_resident_id || !borrower_display_name || !item_borrowed || !quantity_borrowed || !expected_return_date) {
-    return res.status(400).json({ error: 'Missing required fields. Borrower, item, quantity, and expected return date are required.' });
+    return res.status(200).json({ error: 'Missing required fields. Borrower, item, quantity, and expected return date are required.' });
   }
   if (!ObjectId.isValid(borrower_resident_id)) {
-    return res.status(400).json({ error: 'Invalid borrower resident ID format.' });
+    return res.status(200).json({ error: 'Invalid borrower resident ID format.' });
   }
   const requestedQuantity = parseInt(quantity_borrowed, 10);
   if (isNaN(requestedQuantity) || requestedQuantity <= 0) {
-      return res.status(400).json({ error: 'Quantity must be a number greater than 0.' });
+      return res.status(200).json({ error: 'Quantity must be a number greater than 0.' });
   }
 
   try {
@@ -2930,9 +2930,10 @@ app.post('/api/borrowed-assets', async (req, res) => {
         { $group: { _id: "$item_borrowed", total_borrowed: { $sum: "$quantity_borrowed" } } }
     ]).toArray();
     const totalBorrowed = borrowedCountResult.length > 0 ? borrowedCountResult[0].total_borrowed : 0;
+    console.log(totalBorrowed);
     const availableStock = masterAsset.total_quantity - totalBorrowed;
     if (requestedQuantity > availableStock) {
-      return res.status(400).json({
+      return res.status(200).json({
           error: 'Insufficient stock.',
           message: `Cannot borrow ${requestedQuantity}. Only ${availableStock} ${item_borrowed} are available.`
       });

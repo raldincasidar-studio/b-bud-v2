@@ -305,6 +305,10 @@ async function saveOfficial() {
       throw new Error(error.value.data?.error || 'Failed to add official.');
     }
 
+    if (data.value.error) {
+      throw new Error(data.value.error || 'Failed to add official.');
+    }
+
     $toast.fire({ title: 'Official added successfully!', icon: 'success' });
     router.push('/barangay-officials');
 
