@@ -89,7 +89,7 @@
                     <v-card-actions class="pa-4">
                         <v-spacer></v-spacer>
                         <v-btn color="success" variant="flat" v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
-                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-broken-image" size="large">Mark as Damaged</v-btn>
+                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-alert-octagon-outline" size="large">Mark as Damaged</v-btn>
                         <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
                     </v-card-actions>
                 </div>
@@ -240,6 +240,7 @@ onMounted(async () => {
     await fetchTransaction();
 });
 
+
 async function fetchTransaction() {
   loading.value = true;
   try {
@@ -294,6 +295,8 @@ async function saveChanges() {
 async function updateStatus(newStatus, prompt = false) {
 
     if (newStatus === transactionData.value.status) return;
+
+    if (transactionData.value.status != 'Pending' && newStatus === 'Processing') return;
 
     if (prompt) {
         const { value: notes, isConfirmed } = await $toast.fire({
