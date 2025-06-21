@@ -4574,8 +4574,11 @@ app.patch('/api/document-requests/:id/approve', async (req, res) => {
 
     // TODO: Send notification to user
 
+    const getDocu = await collection.findOne({ _id: new ObjectId(id) });
+    const result_type = getDocu.request_type;
+
     await createNotification(dab, {
-        name: `Your document request for a ${result.value.request_type} is ready for pickup.`,
+        name: `Your document request for a ${result_type} is ready for pickup.`,
         content: `Your document request for a ${result_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
         by: "System",
         type: "Notification",
@@ -4612,10 +4615,14 @@ app.patch('/api/document-requests/:id/generate', async (req, res) => {
       return res.status(404).json({ error: 'Request not found or is not in Approved state.' });
     }
 
+
+    const getDocu = await collection.findOne({ _id: new ObjectId(id) });
+    const result_type = getDocu.request_type;
+
     // Send notification to the user
     const notificationData = {
-        name: `Your document request for a ${result.value.request_type} is ready for pickup.`,
-        content: `Your document request for a ${result.value.request_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
+        name: `Your document request for a ${result_type} is ready for pickup.`,
+        content: `Your document request for a ${result_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
         by: "System",
         type: "Notification",
         target_audience: "SpecificResidents",
@@ -4653,10 +4660,13 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
             return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
         }
 
+
+        const getDocu = await collection.findOne({ _id: new ObjectId(id) });
+    const result_type = getDocu.request_type;
         // Send notification to the user
         const notificationData = {
-            name: `Your document request for a ${result.value.request_type} was declined.`,
-            content: `Your document request for a ${result.value.request_type} was declined. The reason provided is: '${result.value.decline_reason}'.`,
+            name: `Your document request for a ${result_type} was declined.`,
+            content: `Your document request for a ${result_type} was declined. The reason provided is: '${result.value.decline_reason}'.`,
             by: "System",
             type: "Alert",
             target_audience: "SpecificResidents",
