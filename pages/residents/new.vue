@@ -239,7 +239,7 @@ const headCalculatedAge = computed(() => calculateAge(form.date_of_birth));
 const isHeadSenior = computed(() => headCalculatedAge.value !== null && headCalculatedAge.value >= 60);
 
 const headRules = {
-  first_name: { required, alpha: alpha }, middle_name: { alpha: alpha }, last_name: { required, alpha: helpers.regex('alpha', /^[a-zA-Z]+$/i) }, middle_name: { alpha: helpers.regex('alpha', /^[a-zA-Z]+$/i) },
+  first_name: { required, alpha: alpha }, middle_name: { alpha: alpha }, last_name: { required, alpha: alpha }, middle_name: { alpha: helpers.regex('alpha', /^[a-zA-Z]+$/i) },
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
