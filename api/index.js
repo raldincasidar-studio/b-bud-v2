@@ -3209,7 +3209,7 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
 
 
     // Create notification for all status changes
-    await createNotification(db(), {
+    await createNotification(dab, {
       name: `Status of borrowed item '${transaction.item_borrowed}' changed`,
       content: `The status of the borrowed item '${transaction.item_borrowed}' has been updated to '${newStatus}'.`,
       by: 'System',
@@ -4583,7 +4583,7 @@ app.patch('/api/document-requests/:id/approve', async (req, res) => {
         by: "System",
         type: "Notification",
         target_audience: "SpecificResidents",
-        target_residents: [result.value.requestor_resident_id],
+        target_residents: [getDocu.requestor_resident_id],
     });
 
 
@@ -4626,7 +4626,7 @@ app.patch('/api/document-requests/:id/generate', async (req, res) => {
         by: "System",
         type: "Notification",
         target_audience: "SpecificResidents",
-        target_residents: [result.value.requestor_resident_id],
+        target_residents: [getDocu.requestor_resident_id],
     };
     await createNotification(dab, notificationData);
     
@@ -4670,7 +4670,7 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
             by: "System",
             type: "Alert",
             target_audience: "SpecificResidents",
-            target_residents: [result.value.requestor_resident_id],
+            target_residents: [getDocu.requestor_resident_id],
         };
         await createNotification(dab, notificationData);
         
