@@ -252,8 +252,8 @@ const headRules = {
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => form.is_voter && !form.voter_id_number)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf(() => form.is_pwd && !form.pwd_card_file)) },
   pwd_card_file: { requiredIf: helpers.withMessage('PWD Card or ID Number is required.', requiredIf(() => form.is_pwd && !form.pwd_id)) },
-  senior_citizen_id: { requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file)) },
-  senior_citizen_card_file: { requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_id)) },
+  // senior_citizen_id: { requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file)) },
+  // senior_citizen_card_file: { requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_id)) },
 };
 const vHead$ = useVuelidate(headRules, form);
 
