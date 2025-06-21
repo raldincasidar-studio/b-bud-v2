@@ -5,7 +5,7 @@
       <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
       <p class="mt-2 text-grey-darken-1">Loading Official Data...</p>
     </div>
-    <div v-else-if="!form.last_name">
+    <div v-else-if="!form._id">
       <v-alert type="warning" prominent border="start" text="Official not found.">
         <template v-slot:append><v-btn to="/barangay-officials">Back to List</v-btn></template>
       </v-alert>
