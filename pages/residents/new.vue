@@ -18,29 +18,78 @@
       <v-card-text class="pt-4">
         <p class="text-subtitle-2 mb-4">Personal Information</p>
         <v-row>
-          <v-col cols="12" md="4"><v-text-field v-model="form.first_name" label="First Name*" variant="outlined" :error-messages="vHead$.first_name.$errors.map(e => e.$message)" @blur="vHead$.first_name.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.middle_name" label="Middle Name" variant="outlined"></v-text-field></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.last_name" label="Last Name*" variant="outlined" :error-messages="vHead$.last_name.$errors.map(e => e.$message)" @blur="vHead$.last_name.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="3"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" variant="outlined" placeholder="Select Sex" :error-messages="vHead$.sex.$errors.map(e => e.$message)" @blur="vHead$.sex.$touch()"></v-select></v-col>
-          <v-col cols="12" md="3"><v-text-field v-model="form.date_of_birth" label="Date of Birth*" type="date" variant="outlined" :error-messages="vHead$.date_of_birth.$errors.map(e => e.$message)" @blur="vHead$.date_of_birth.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="2"><v-text-field :model-value="headCalculatedAge" label="Age" type="number" variant="outlined" readonly hint="Auto-calculated" persistent-hint></v-text-field></v-col>
-          <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" variant="outlined" placeholder="Select Civil Status" :error-messages="vHead$.civil_status.$errors.map(e => e.$message)" @blur="vHead$.civil_status.$touch()"></v-select></v-col>
-          <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" variant="outlined" placeholder="Select Citizenship" :error-messages="vHead$.citizenship.$errors.map(e => e.$message)" @blur="vHead$.citizenship.$touch()"></v-select></v-col>
-          <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" variant="outlined" :error-messages="vHead$.occupation_status.$errors.map(e => e.$message)" @blur="vHead$.occupation_status.$touch()"></v-select></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" variant="outlined" :error-messages="vHead$.email.$errors.map(e => e.$message)" @blur="vHead$.email.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" variant="outlined" maxlength="11" :error-messages="vHead$.contact_number.$errors.map(e => e.$message)" @blur="vHead$.contact_number.$touch()"></v-text-field></v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">First Name *</label>
+            <v-text-field v-model="form.first_name" label="First Name *" variant="outlined" :error-messages="vHead$.first_name.$errors.map(e => e.$message)" @blur="vHead$.first_name.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Middle Name</label>
+            <v-text-field v-model="form.middle_name" label="Middle Name" variant="outlined"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Last Name *</label>
+            <v-text-field v-model="form.last_name" label="Last Name *" variant="outlined" :error-messages="vHead$.last_name.$errors.map(e => e.$message)" @blur="vHead$.last_name.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="3">
+            <label class="v-label">Sex *</label>
+            <v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex *" variant="outlined" placeholder="Select Sex" :error-messages="vHead$.sex.$errors.map(e => e.$message)" @blur="vHead$.sex.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="3">
+            <label class="v-label">Date of Birth *</label>
+            <v-text-field v-model="form.date_of_birth" label="Date of Birth *" type="date" variant="outlined" :error-messages="vHead$.date_of_birth.$errors.map(e => e.$message)" @blur="vHead$.date_of_birth.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="2">
+            <label class="v-label">Age</label>
+            <v-text-field :model-value="headCalculatedAge" label="Age" type="number" variant="outlined" readonly hint="Auto-calculated" persistent-hint></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Civil Status *</label>
+            <v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status *" variant="outlined" placeholder="Select Civil Status" :error-messages="vHead$.civil_status.$errors.map(e => e.$message)" @blur="vHead$.civil_status.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Citizenship *</label>
+            <v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship *" variant="outlined" placeholder="Select Citizenship" :error-messages="vHead$.citizenship.$errors.map(e => e.$message)" @blur="vHead$.citizenship.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Occupation Status *</label>
+            <v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status *" variant="outlined" :error-messages="vHead$.occupation_status.$errors.map(e => e.$message)" @blur="vHead$.occupation_status.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Email Address *</label>
+            <v-text-field v-model="form.email" label="Email Address *" type="email" variant="outlined" :error-messages="vHead$.email.$errors.map(e => e.$message)" @blur="vHead$.email.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Contact Number *</label>
+            <v-text-field v-model="form.contact_number" label="Contact Number *" variant="outlined" maxlength="11" :error-messages="vHead$.contact_number.$errors.map(e => e.$message)" @blur="vHead$.contact_number.$touch()"></v-text-field>
+          </v-col>
         </v-row>
         
         <v-divider class="my-6"></v-divider>
         <p class="text-subtitle-2 mb-4">Address Information</p>
         <v-row>
-          <v-col cols="12" md="4"><v-text-field v-model="form.address_house_number" label="House Number/Lot/Block*" variant="outlined" :error-messages="vHead$.address_house_number.$errors.map(e => e.$message)" @blur="vHead$.address_house_number.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="8"><v-text-field v-model="form.address_street" label="Street*" variant="outlined" :error-messages="vHead$.address_street.$errors.map(e => e.$message)" @blur="vHead$.address_street.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="6"><v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok*" variant="outlined" :error-messages="vHead$.address_subdivision_zone.$errors.map(e => e.$message)" @blur="vHead$.address_subdivision_zone.$touch()"></v-text-field></v-col>
-          <v-col cols="12" md="6"><v-text-field v-model="form.address_city_municipality" label="City/Municipality" variant="outlined" readonly></v-text-field></v-col>
-          <v-col cols="12" md="6"><v-text-field v-model="form.years_at_current_address" label="Years at Current Address*" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field></v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">House Number/Lot/Block *</label>
+            <v-text-field v-model="form.address_house_number" label="House Number/Lot/Block *" variant="outlined" :error-messages="vHead$.address_house_number.$errors.map(e => e.$message)" @blur="vHead$.address_house_number.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="8">
+            <label class="v-label">Street *</label>
+            <v-text-field v-model="form.address_street" label="Street *" variant="outlined" :error-messages="vHead$.address_street.$errors.map(e => e.$message)" @blur="vHead$.address_street.$touch()"></v-text-field>
+          </v-col>
           <v-col cols="12" md="6">
-            <v-file-input v-model="form.proof_of_residency_file" label="Upload Proof of Residency*" variant="outlined" accept="image/*,application/pdf" :error-messages="vHead$.proof_of_residency_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.proof_of_residency_file.$touch()"></v-file-input>
+            <label class="v-label">Subdivision/Zone/Sitio/Purok *</label>
+            <v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok *" variant="outlined" :error-messages="vHead$.address_subdivision_zone.$errors.map(e => e.$message)" @blur="vHead$.address_subdivision_zone.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">City/Municipality</label>
+            <v-text-field v-model="form.address_city_municipality" label="City/Municipality" variant="outlined" readonly></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Years at Current Address *</label>
+            <v-text-field v-model="form.years_at_current_address" label="Years at Current Address *" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload Proof of Residency *</label>
+            <v-file-input v-model="form.proof_of_residency_file" label="Upload Proof of Residency *" variant="outlined" accept="image/*,application/pdf" :error-messages="vHead$.proof_of_residency_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.proof_of_residency_file.$touch()"></v-file-input>
              <v-img v-if="proofResidencyPreviewUrl" :src="proofResidencyPreviewUrl" class="mt-2" max-height="150" contain></v-img>
           </v-col>
         </v-row>
@@ -49,8 +98,12 @@
         <p class="text-subtitle-2 mb-4">Voter Information</p>
         <v-row v-if="headCalculatedAge >= 18"><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="form.is_voter" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
         <v-row v-if="form.is_voter && headCalculatedAge >= 18">
-          <v-col cols="12" md="6"><v-text-field v-model="form.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vHead$.voter_id_number.$errors.map(e => e.$message)" @blur="vHead$.voter_id_number.$touch()"></v-text-field></v-col>
           <v-col cols="12" md="6">
+            <label class="v-label">Voter's ID Number</label>
+            <v-text-field v-model="form.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vHead$.voter_id_number.$errors.map(e => e.$message)" @blur="vHead$.voter_id_number.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload Voter's ID Card</label>
             <v-file-input v-model="form.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vHead$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.voter_id_file.$touch()"></v-file-input>
             <v-img v-if="voterIdPreviewUrl" :src="voterIdPreviewUrl" class="mt-2" max-height="150" contain></v-img>
           </v-col>
@@ -60,8 +113,12 @@
         <p class="text-subtitle-2 mb-4">Special Classification</p>
         <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Person with Disability (PWD)?</label><v-radio-group v-model="form.is_pwd" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
         <v-row v-if="form.is_pwd">
-          <v-col cols="12" md="6"><v-text-field v-model="form.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vHead$.pwd_id.$errors.map(e => e.$message)" @blur="vHead$.pwd_id.$touch()"></v-text-field></v-col>
           <v-col cols="12" md="6">
+            <label class="v-label">PWD ID Number</label>
+            <v-text-field v-model="form.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vHead$.pwd_id.$errors.map(e => e.$message)" @blur="vHead$.pwd_id.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload PWD ID Card</label>
             <v-file-input v-model="form.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vHead$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.pwd_card_file.$touch()"></v-file-input>
             <v-img v-if="pwdCardPreviewUrl" :src="pwdCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
           </v-col>
@@ -70,8 +127,12 @@
           <v-divider class="my-4"></v-divider>
           <v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label><v-radio-group v-model="form.is_senior_citizen" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col>
           <template v-if="form.is_senior_citizen">
-            <v-col cols="12" md="6"><v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vHead$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vHead$.senior_citizen_id.$touch()"></v-text-field></v-col>
             <v-col cols="12" md="6">
+              <label class="v-label">Senior Citizen ID Number</label>
+              <v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vHead$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vHead$.senior_citizen_id.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Senior Citizen ID Card</label>
               <v-file-input v-model="form.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vHead$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.senior_citizen_card_file.$touch()"></v-file-input>
               <v-img v-if="seniorCardPreviewUrl" :src="seniorCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
             </v-col>
@@ -84,8 +145,14 @@
             <strong>Disclaimer:</strong> You must be 15 years old or above to create an account.
         </v-alert>
         <v-row>
-            <v-col cols="12" sm="6"><v-text-field v-model="form.password" label="Password*" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field></v-col>
-            <v-col cols="12" sm="6"><v-text-field v-model="form.confirmPassword" label="Confirm Password*" :type="showHeadConfirmPassword ? 'text' : 'password'" variant="outlined" :error-messages="vHead$.confirmPassword.$errors.map(e => e.$message)" @blur="vHead$.confirmPassword.$touch()" :append-inner-icon="showHeadConfirmPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadConfirmPassword = !showHeadConfirmPassword"></v-text-field></v-col>
+            <v-col cols="12" sm="6">
+              <label class="v-label">Password *</label>
+              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
+            </v-col>
+            <v-col cols="12" sm="6">
+              <label class="v-label">Confirm Password *</label>
+              <v-text-field v-model="form.confirmPassword" label="Confirm Password *" :type="showHeadConfirmPassword ? 'text' : 'password'" variant="outlined" :error-messages="vHead$.confirmPassword.$errors.map(e => e.$message)" @blur="vHead$.confirmPassword.$touch()" :append-inner-icon="showHeadConfirmPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadConfirmPassword = !showHeadConfirmPassword"></v-text-field>
+            </v-col>
         </v-row>
       </v-card-text>
     </v-card>
@@ -120,32 +187,68 @@
         <v-card-text>
           <p class="text-subtitle-2 mb-4">Personal Information</p>
           <v-row>
-            <v-col cols="12" md="4"><v-text-field v-model="memberForm.first_name" label="First Name*" variant="outlined" :error-messages="vMember$.first_name.$errors.map(e => e.$message)" @blur="vMember$.first_name.$touch()"></v-text-field></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="memberForm.middle_name" label="Middle Name" variant="outlined"></v-text-field></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="memberForm.last_name" label="Last Name*" variant="outlined" :error-messages="vMember$.last_name.$errors.map(e => e.$message)" @blur="vMember$.last_name.$touch()"></v-text-field></v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">First Name *</label>
+              <v-text-field v-model="memberForm.first_name" label="First Name *" variant="outlined" :error-messages="vMember$.first_name.$errors.map(e => e.$message)" @blur="vMember$.first_name.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Middle Name</label>
+              <v-text-field v-model="memberForm.middle_name" label="Middle Name" variant="outlined"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Last Name *</label>
+              <v-text-field v-model="memberForm.last_name" label="Last Name *" variant="outlined" :error-messages="vMember$.last_name.$errors.map(e => e.$message)" @blur="vMember$.last_name.$touch()"></v-text-field>
+            </v-col>
             
             <v-col cols="12" md="4">
-              <v-select v-model="memberForm.relationship_to_head" :items="relationshipOptions" label="Relationship to Head*" variant="outlined" :error-messages="vMember$.relationship_to_head.$errors.map(e => e.$message)" @blur="vMember$.relationship_to_head.$touch()"></v-select>
+              <label class="v-label">Relationship to Head *</label>
+              <v-select v-model="memberForm.relationship_to_head" :items="relationshipOptions" label="Relationship to Head *" variant="outlined" :error-messages="vMember$.relationship_to_head.$errors.map(e => e.$message)" @blur="vMember$.relationship_to_head.$touch()"></v-select>
             </v-col>
             <v-col cols="12" md="8" v-if="memberForm.relationship_to_head === 'Other'">
-                <v-text-field v-model="memberForm.other_relationship" label="Please Specify Relationship*" variant="outlined" :error-messages="vMember$.other_relationship.$errors.map(e => e.$message)" @blur="vMember$.other_relationship.$touch()"></v-text-field>
+                <label class="v-label">Please Specify Relationship *</label>
+                <v-text-field v-model="memberForm.other_relationship" label="Please Specify Relationship *" variant="outlined" :error-messages="vMember$.other_relationship.$errors.map(e => e.$message)" @blur="vMember$.other_relationship.$touch()"></v-text-field>
             </v-col>
 
-            <v-col cols="12" md="3"><v-select v-model="memberForm.sex" :items="['Male', 'Female']" label="Sex*" variant="outlined" placeholder="Select Sex" :error-messages="vMember$.sex.$errors.map(e => e.$message)" @blur="vMember$.sex.$touch()"></v-select></v-col>
-            <v-col cols="12" md="3"><v-text-field v-model="memberForm.date_of_birth" label="Date of Birth*" type="date" variant="outlined" :error-messages="vMember$.date_of_birth.$errors.map(e => e.$message)" @blur="vMember$.date_of_birth.$touch()"></v-text-field></v-col>
-            <v-col cols="12" md="2"><v-text-field :model-value="memberAge" label="Age" type="number" variant="outlined" readonly></v-text-field></v-col>
-            <v-col cols="12" md="4"><v-select v-model="memberForm.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" variant="outlined" placeholder="Select Civil Status" :error-messages="vMember$.civil_status.$errors.map(e => e.$message)" @blur="vMember$.civil_status.$touch()"></v-select></v-col>
-            <v-col cols="12" md="4"><v-select v-model="memberForm.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" variant="outlined" placeholder="Select Citizenship" :error-messages="vMember$.citizenship.$errors.map(e => e.$message)" @blur="vMember$.citizenship.$touch()"></v-select></v-col>
-            <v-col cols="12" md="4"><v-select v-model="memberForm.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" variant="outlined" :error-messages="vMember$.occupation_status.$errors.map(e => e.$message)" @blur="vMember$.occupation_status.$touch()"></v-select></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="memberForm.contact_number" label="Contact Number" variant="outlined"></v-text-field></v-col>
+            <v-col cols="12" md="3">
+              <label class="v-label">Sex *</label>
+              <v-select v-model="memberForm.sex" :items="['Male', 'Female']" label="Sex *" variant="outlined" placeholder="Select Sex" :error-messages="vMember$.sex.$errors.map(e => e.$message)" @blur="vMember$.sex.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="3">
+              <label class="v-label">Date of Birth *</label>
+              <v-text-field v-model="memberForm.date_of_birth" label="Date of Birth *" type="date" variant="outlined" :error-messages="vMember$.date_of_birth.$errors.map(e => e.$message)" @blur="vMember$.date_of_birth.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="2">
+              <label class="v-label">Age</label>
+              <v-text-field :model-value="memberAge" label="Age" type="number" variant="outlined" readonly></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Civil Status *</label>
+              <v-select v-model="memberForm.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status *" variant="outlined" placeholder="Select Civil Status" :error-messages="vMember$.civil_status.$errors.map(e => e.$message)" @blur="vMember$.civil_status.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Citizenship *</label>
+              <v-select v-model="memberForm.citizenship" :items="['Filipino', 'Other']" label="Citizenship *" variant="outlined" placeholder="Select Citizenship" :error-messages="vMember$.citizenship.$errors.map(e => e.$message)" @blur="vMember$.citizenship.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Occupation Status *</label>
+              <v-select v-model="memberForm.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status *" variant="outlined" :error-messages="vMember$.occupation_status.$errors.map(e => e.$message)" @blur="vMember$.occupation_status.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Contact Number</label>
+              <v-text-field v-model="memberForm.contact_number" label="Contact Number" variant="outlined"></v-text-field>
+            </v-col>
           </v-row>
           
           <v-divider class="my-6"></v-divider>
           <p class="text-subtitle-2 mb-4">Voter Information</p>
           <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Voter?</label><v-radio-group v-model="memberForm.is_voter" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
           <v-row v-if="memberForm.is_voter">
-            <v-col cols="12" md="6"><v-text-field v-model="memberForm.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vMember$.voter_id_number.$errors.map(e => e.$message)" @blur="vMember$.voter_id_number.$touch()"></v-text-field></v-col>
             <v-col cols="12" md="6">
+              <label class="v-label">Voter's ID Number</label>
+              <v-text-field v-model="memberForm.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vMember$.voter_id_number.$errors.map(e => e.$message)" @blur="vMember$.voter_id_number.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Voter's ID Card</label>
               <v-file-input v-model="memberForm.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vMember$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.voter_id_file.$touch()"></v-file-input>
               <v-img v-if="memberVoterIdPreviewUrl" :src="memberVoterIdPreviewUrl" class="mt-2" max-height="150" contain></v-img>
             </v-col>
@@ -155,8 +258,12 @@
           <p class="text-subtitle-2 mb-4">Special Classification</p>
           <v-row><v-col cols="12"><label class="v-label font-weight-medium mb-1">Person with Disability (PWD)?</label><v-radio-group v-model="memberForm.is_pwd" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col></v-row>
           <v-row v-if="memberForm.is_pwd">
-            <v-col cols="12" md="6"><v-text-field v-model="memberForm.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vMember$.pwd_id.$errors.map(e => e.$message)" @blur="vMember$.pwd_id.$touch()"></v-text-field></v-col>
             <v-col cols="12" md="6">
+              <label class="v-label">PWD ID Number</label>
+              <v-text-field v-model="memberForm.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vMember$.pwd_id.$errors.map(e => e.$message)" @blur="vMember$.pwd_id.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload PWD ID Card</label>
               <v-file-input v-model="memberForm.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vMember$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.pwd_card_file.$touch()"></v-file-input>
               <v-img v-if="memberPwdCardPreviewUrl" :src="memberPwdCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
             </v-col>
@@ -165,8 +272,12 @@
             <v-divider class="my-4"></v-divider>
             <v-col cols="12"><label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label><v-radio-group v-model="memberForm.is_senior_citizen" inline><v-radio label="No" :value="false"></v-radio><v-radio label="Yes" :value="true"></v-radio></v-radio-group></v-col>
             <template v-if="memberForm.is_senior_citizen">
-              <v-col cols="12" md="6"><v-text-field v-model="memberForm.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vMember$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vMember$.senior_citizen_id.$touch()"></v-text-field></v-col>
               <v-col cols="12" md="6">
+                <label class="v-label">Senior Citizen ID Number</label>
+                <v-text-field v-model="memberForm.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vMember$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vMember$.senior_citizen_id.$touch()"></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <label class="v-label">Upload Senior Citizen ID Card</label>
                 <v-file-input v-model="memberForm.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vMember$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.senior_citizen_card_file.$touch()"></v-file-input>
                 <v-img v-if="memberSeniorCardPreviewUrl" :src="memberSeniorCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
               </v-col>
@@ -177,8 +288,14 @@
             <v-divider class="my-6"></v-divider>
             <p class="text-subtitle-2 mb-4">Account Creation (Optional, for ages 15+)</p>
             <v-row>
-              <v-col cols="12" md="6"><v-text-field v-model="memberForm.email" label="Email Address" type="email" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.email.$errors.map(e => e.$message)" @blur="vMember$.email.$touch()"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" @blur="vMember$.password.$touch()" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field></v-col>
+              <v-col cols="12" md="6">
+                <label class="v-label">Email Address</label>
+                <v-text-field v-model="memberForm.email" label="Email Address" type="email" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.email.$errors.map(e => e.$message)" @blur="vMember$.email.$touch()"></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <label class="v-label">Password</label>
+                <v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" @blur="vMember$.password.$touch()" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field>
+              </v-col>
             </v-row>
           </template>
 
