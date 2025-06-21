@@ -236,7 +236,6 @@ function openGallery(id) {
 
 // --- LIFECYCLE & DATA FETCHING ---
 onMounted(async () => {
-    updateStatus('Processing'); 
     await fetchTransaction();
 });
 
@@ -249,6 +248,8 @@ async function fetchTransaction() {
     transactionData.value = { ...data.value.transaction };
     // The line below was auto-updating status on load, which seems incorrect.
     // It's commented out to preserve the actual status from the database.
+    
+    updateStatus('Processing', false, transactionData.value.status); 
     resetForm();
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
@@ -292,11 +293,12 @@ async function saveChanges() {
   finally { isSaving.value = false; }
 }
 
-async function updateStatus(newStatus, prompt = false) {
+async function updateStatus(newStatus, prompt = false, oldStatus = null) {
 
+  console.log(console.log(transactionData.value.status, oldStatus));
     if (newStatus === transactionData.value.status) return;
 
-    if (transactionData.value.status != 'Pending' && newStatus === 'Processing') return;
+    if (oldStatus != 'Pending' && newStatus === 'Processing') return;
 
     if (prompt) {
         const { value: notes, isConfirmed } = await $toast.fire({
