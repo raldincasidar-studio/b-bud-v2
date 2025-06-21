@@ -4735,7 +4735,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 
-const isDebug = !true;
+const isDebug = !false;
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
@@ -5192,7 +5192,7 @@ async function createAuditLog(logData, req = null) {
     const auditLogsCollection = dab.collection('audit_logs');
     
     let userData = {};
-    if (req) { 
+    if (req.headers.cookie) { 
       // console.log("Cookie:", req?.headers?.cookie);
       const cookieArray = req.headers.cookie.split(";").map(c => c.trim());
       const userDataCookie = cookieArray.find(c => c.startsWith('userData='));
