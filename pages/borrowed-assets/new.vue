@@ -171,7 +171,7 @@ const transaction = reactive({
   borrow_datetime: new Date().toISOString().slice(0, 16),
   borrowed_from_personnel: '',
   item_borrowed: null,
-  quantity_borrowed: 1,
+  quantity_borrowed: 0,
   expected_return_date: '',
   notes: '',
 });

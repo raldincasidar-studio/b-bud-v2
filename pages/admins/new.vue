@@ -23,27 +23,30 @@
       <v-card-text class="py-6">
         <v-row>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Full Name <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.name"
-              label="Full Name"
+              label="Juan Dela Cruz"
               variant="outlined"
               :error-messages="v$.name.$errors.map(e => e.$message)"
               @blur="v$.name.$touch"
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Username <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.username"
-              label="Username"
+              label="Juan123"
               variant="outlined"
               :error-messages="v$.username.$errors.map(e => e.$message)"
               @blur="v$.username.$touch"
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Email Address <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.email"
-              label="Email Address"
+              label="juanluna@gmail.com"
               type="email"
               variant="outlined"
               :error-messages="v$.email.$errors.map(e => e.$message)"
@@ -52,9 +55,10 @@
           </v-col>
           <v-col cols="12" md="6">
             <!-- ADDED CONTACT NUMBER FIELD -->
+            <label class="v-label mb-3 font-weight-bold text-black">Contact Number <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.contact_number"
-              label="Contact Number"
+              label="09356770642"
               variant="outlined"
               maxlength="11"
               :error-messages="v$.contact_number.$errors.map(e => e.$message)"
@@ -62,6 +66,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Password <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.password"
               label="Password"
@@ -74,6 +79,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Reapet Password <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.repeat_password"
               label="Repeat Password"

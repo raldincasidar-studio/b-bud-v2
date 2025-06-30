@@ -69,18 +69,18 @@ console.log(userData);
 const drawer = ref(false);
 const items = [
     { to: '/dashboard', text: 'Dashboard', icon: 'mdi-speedometer' },
-    { to: '/residents-account-management', text: 'Residents Account Management', icon: 'mdi-account-cog-outline' },
+    { to: '/residents-account-management', text: 'Household Account Management', icon: 'mdi-account-cog-outline' },
     { to: '/residents', text: 'Residents Profile', icon: 'mdi-account-group' },
     { to: '/households', text: 'Households', icon: 'mdi-home-group' },
     { to: '/document-requests', text: 'Document Requests', icon: 'mdi-file-document' },
     { to: '/borrowed-assets', text: 'Borrowed Assets', icon: 'mdi-archive-arrow-down-outline' },
-    { to: '/complaints', text: 'Complaints', icon: 'mdi-comment-alert-outline' },
+    { to: '/complaints', text: 'Filed Complaints', icon: 'mdi-comment-alert-outline' },
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/assets', text: 'Inventory', icon: 'mdi-archive-search-outline' },
-    { to: '/admins', text: 'Admins', icon: 'mdi-shield-account', superAdmin: true },
+    { to: '/admins', text: 'Admin Management', icon: 'mdi-shield-account', superAdmin: true },
     { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
-    { to: '/audit-logs', text: 'Audit log', icon: 'mdi-file-document-outline', superAdmin: true },
+    { to: '/audit-logs', text: 'Audit Log', icon: 'mdi-file-document-outline', superAdmin: true },
   ]
 
   const router = useRouter();
@@ -90,6 +90,6 @@ async function logout() {
 }
 
 const itemsFiltered = computed(() => {
-    return items.filter(item => !item.superAdmin || userData.value?.role === 'Technical Admin');
+    return items.filter(item => !item.superAdmin || userData.value?.role === 'Super Admin');
 })
 </script>

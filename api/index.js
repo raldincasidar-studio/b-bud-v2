@@ -676,8 +676,13 @@ app.post('/api/residents', async (req, res) => {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
             }
 
-            // Create head document using the helper function
             const headResidentDocument = createResidentDocument(headData, true);
+            
+            // --- UPDATE: Set created_at and initialize date_approved ---
+            headResidentDocument.created_at = new Date();
+            headResidentDocument.updated_at = new Date();
+            headResidentDocument.date_approved = null;
+            // --- END UPDATE ---
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
@@ -693,7 +698,6 @@ app.post('/api/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                // REVISION: Validate member account creation (age 15+)
                 if (memberAge >= 15 && (memberData.email || memberData.password)) {
                     if (!memberData.email || !memberData.password) {
                         throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
@@ -708,13 +712,17 @@ app.post('/api/residents', async (req, res) => {
                     }
                     processedEmails.add(memberEmail);
                 } else {
-                    // If no account is being created, ensure email/pass are null
                     memberData.email = null;
                     memberData.password = null;
                 }
                 
-                // REVISION: Create full member document using helper, passing head's address
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
+
+                // --- UPDATE: Set created_at and initialize date_approved ---
+                newMemberDoc.created_at = new Date();
+                newMemberDoc.updated_at = new Date();
+                newMemberDoc.date_approved = null;
+                // --- END UPDATE ---
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -731,7 +739,6 @@ app.post('/api/residents', async (req, res) => {
             }
         });
 
-        // --- ADD AUDIT LOG HERE ---
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
@@ -740,7 +747,6 @@ app.post('/api/residents', async (req, res) => {
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
         }, req)
-        // --- END AUDIT LOG ---
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending approval.',
@@ -761,21 +767,58 @@ app.post('/api/residents', async (req, res) => {
     }
 });
 
+
+// PATCH /api/residents/:id/status - APPROVE/DECLINE/DEACTIVATE A RESIDENT
+// This route is CRUCIAL for the date_approved logic to work.
+app.patch('/api/residents/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, reason } = req.body; // reason is optional, for declines
+
+        if (!status) {
+            return res.status(400).json({ message: 'Status is required.' });
+        }
+
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        const updateData = {
+            status: status,
+            updated_at: new Date()
+        };
+
+        // --- UPDATE: Set date_approved only when status is 'Approved' ---
+        if (status === 'Approved') {
+            updateData.date_approved = new Date();
+        }
+
+        const result = await residentsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ message: 'Resident not found.' });
+        }
+
+        // You can add audit logging and notifications here
+        // await createAuditLog(...)
+
+        res.status(200).json({ message: `Resident status updated to ${status}.` });
+
+    } catch (error) {
+        console.error("Error updating resident status:", error);
+        res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
+    }
+});
+
+
 // GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
     const {
-      search,
-      status,
-      is_voter,
-      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
-      is_pwd,
-      occupation, // Assumes a field 'occupation_status' in your DB schema
-      minAge,
-      maxAge,
-      sortBy,   // For dynamic sorting
-      sortOrder // 'asc' or 'desc'
+      search, status, is_voter, is_senior, is_pwd,
+      occupation, minAge, maxAge, sortBy, sortOrder
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
@@ -784,99 +827,59 @@ app.get('/api/residents', async (req, res) => {
 
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-
-    // --- 2. Build the MongoDB Filter Array Dynamically ---
-    // This approach is robust and cleanly handles multiple optional filters.
     const filters = [];
 
-    // Status Filter
-    if (status) {
-      filters.push({ status: status });
-    }
-
-    // Boolean Filters (query params are strings, so we check for 'true')
-    if (is_voter === 'true') {
-      filters.push({ is_registered_voter: true });
-    }
-    if (is_pwd === 'true') {
-      filters.push({ is_pwd: true });
-    }
-    if (is_senior === 'true') {
-      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
-      // If not, you'd need to calculate based on date_of_birth.
-      filters.push({ is_senior_citizen: true });
-    }
-
-    // Occupation Filter
-    if (occupation) {
-      // Assumes your schema has an 'occupation_status' field.
-      filters.push({ occupation_status: occupation });
-    }
+    if (status) filters.push({ status: status });
+    if (is_voter === 'true') filters.push({ is_registered_voter: true });
+    if (is_pwd === 'true') filters.push({ is_pwd: true });
+    if (is_senior === 'true') filters.push({ is_senior_citizen: true });
+    if (occupation) filters.push({ occupation_status: occupation });
     
-    // Age Range Filter (calculates based on date_of_birth)
     if (minAge || maxAge) {
       const ageFilter = {};
       const now = new Date();
       if (maxAge) {
-        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
         const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
         ageFilter.$gte = minBirthDate;
       }
       if (minAge) {
-        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
         const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
         ageFilter.$lte = maxBirthDate;
       }
       filters.push({ date_of_birth: ageFilter });
     }
 
-    // General Text Search Filter
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       filters.push({
         $or: [
-          { first_name: searchRegex },
-          { middle_name: searchRegex },
-          { last_name: searchRegex },
-          { email: searchRegex },
-          { contact_number: searchRegex },
-          { address_street: searchRegex },
-          { address_subdivision_zone: searchRegex },
-          { precinct_number: searchRegex },
+          { first_name: searchRegex }, { middle_name: searchRegex }, { last_name: searchRegex },
+          { email: searchRegex }, { contact_number: searchRegex }, { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex }, { precinct_number: searchRegex },
         ],
       });
     }
 
-    // Combine all filters with $and. If filters is empty, query will be {} (match all).
     const finalQuery = filters.length > 0 ? { $and: filters } : {};
 
-    // --- 3. Define Sorting Options ---
-    let sortOptions = { created_at: -1 }; // Default sort
+    // --- UPDATE: Use 'created_at' for 'date_added' sorting ---
+    let sortOptions = { created_at: -1 }; 
     if (sortBy) {
-        // Use dynamic key for the field to sort by
-        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        // Map frontend key 'date_added' to backend field 'created_at'
+        const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
+        sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- 4. Define Projection (Fields to Return) ---
-    // This is the same as your original code, which is good practice.
+    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1,
-        middle_name: 1,
-        last_name: 1,
-        sex: 1,
-        date_of_birth: 1,
-        is_household_head: 1,
-        address_house_number: 1,
-        address_street: 1,
-        address_subdivision_zone: 1,
-        contact_number: 1,
-        email: 1,
-        status: 1,
-        created_at: 1,
-        _id: 1,
+        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        date_of_birth: 1, is_household_head: 1, address_house_number: 1,
+        address_street: 1, address_subdivision_zone: 1, contact_number: 1,
+        email: 1, status: 1, _id: 1,
+        date_added: "$created_at", // Rename field in output
+        date_approved: 1
     };
     
-    // --- 5. Execute Queries ---
     const residents = await residentsCollection
       .find(finalQuery)
       .project(projection)
@@ -885,10 +888,8 @@ app.get('/api/residents', async (req, res) => {
       .limit(itemsPerPage)
       .toArray();
 
-    // Get total count based on the same filters for accurate pagination
     const totalResidents = await residentsCollection.countDocuments(finalQuery);
 
-    // --- 6. Send Response ---
     res.json({
       residents: residents,
       total: totalResidents,
@@ -903,20 +904,13 @@ app.get('/api/residents', async (req, res) => {
   }
 });
 
+
 // GET ALL APPROVED RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents/approved', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
     const {
-      search,
-      is_voter,
-      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
-      is_pwd,
-      occupation, // Assumes a field 'occupation_status' in your DB schema
-      minAge,
-      maxAge,
-      sortBy,   // For dynamic sorting
-      sortOrder // 'asc' or 'desc'
+      search, is_voter, is_senior, is_pwd,
+      occupation, minAge, maxAge, sortBy, sortOrder
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
@@ -926,94 +920,58 @@ app.get('/api/residents/approved', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
 
-    // --- 2. Build the MongoDB Filter Array Dynamically ---
-    // This approach is robust and cleanly handles multiple optional filters.
-    const filters = [
-      { $or: [{ status: 'Approved' }] },
-    ]; // Show both approved and deactivated residents
+    // --- UPDATE: Simplified filter to only get Approved residents ---
+    const filters = [ { status: 'Approved' } ];
 
-    // Boolean Filters (query params are strings, so we check for 'true')
-    if (is_voter === 'true') {
-      filters.push({ is_registered_voter: true });
-    }
-    if (is_pwd === 'true') {
-      filters.push({ is_pwd: true });
-    }
-    if (is_senior === 'true') {
-      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
-      // If not, you'd need to calculate based on date_of_birth.
-      filters.push({ is_senior_citizen: true });
-    }
-
-    // Occupation Filter
-    if (occupation) {
-      // Assumes your schema has an 'occupation_status' field.
-      filters.push({ occupation_status: occupation });
-    }
+    if (is_voter === 'true') filters.push({ is_registered_voter: true });
+    if (is_pwd === 'true') filters.push({ is_pwd: true });
+    if (is_senior === 'true') filters.push({ is_senior_citizen: true });
+    if (occupation) filters.push({ occupation_status: occupation });
     
-    // Age Range Filter (calculates based on date_of_birth)
     if (minAge || maxAge) {
       const ageFilter = {};
       const now = new Date();
       if (maxAge) {
-        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
         const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
         ageFilter.$gte = minBirthDate;
       }
       if (minAge) {
-        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
         const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
         ageFilter.$lte = maxBirthDate;
       }
       filters.push({ date_of_birth: ageFilter });
     }
 
-    // General Text Search Filter
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       filters.push({
         $or: [
-          { first_name: searchRegex },
-          { middle_name: searchRegex },
-          { last_name: searchRegex },
-          { email: searchRegex },
-          { contact_number: searchRegex },
-          { address_street: searchRegex },
-          { address_subdivision_zone: searchRegex },
-          { precinct_number: searchRegex },
+          { first_name: searchRegex }, { middle_name: searchRegex }, { last_name: searchRegex },
+          { email: searchRegex }, { contact_number: searchRegex }, { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex }, { precinct_number: searchRegex },
         ],
       });
     }
 
-    // Combine all filters with $and. If filters is empty, query will be {} (match all).
     const finalQuery = { $and: filters };
 
-    // --- 3. Define Sorting Options ---
-    let sortOptions = { created_at: -1 }; // Default sort
+    // --- UPDATE: Default sort is by 'date_approved' for this endpoint ---
+    let sortOptions = { date_approved: -1 };
     if (sortBy) {
-        // Use dynamic key for the field to sort by
-        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
+        sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- 4. Define Projection (Fields to Return) ---
+    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1,
-        middle_name: 1,
-        last_name: 1,
-        sex: 1,
-        date_of_birth: 1,
-        is_household_head: 1,
-        address_house_number: 1,
-        address_street: 1,
-        address_subdivision_zone: 1,
-        contact_number: 1,
-        email: 1,
-        status: 1,
-        created_at: 1,
-        _id: 1,
+        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        date_of_birth: 1, is_household_head: 1, address_house_number: 1,
+        address_street: 1, address_subdivision_zone: 1, contact_number: 1,
+        email: 1, status: 1, _id: 1,
+        date_added: "$created_at", // Rename field in output
+        date_approved: 1
     };
     
-    // --- 5. Execute Queries ---
     const residents = await residentsCollection
       .find(finalQuery)
       .project(projection)
@@ -1022,10 +980,8 @@ app.get('/api/residents/approved', async (req, res) => {
       .limit(itemsPerPage)
       .toArray();
 
-    // Get total count based on the same filters for accurate pagination
     const totalResidents = await residentsCollection.countDocuments(finalQuery);
 
-    // --- 6. Send Response ---
     res.json({
       residents: residents,
       total: totalResidents,
@@ -1858,7 +1814,7 @@ app.post('/api/admins', async (req, res) => {
     { field: 'password', value: req.body.password, format: /^[a-zA-Z0-9._%+-]{6,}$/ },
     { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
     { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: req.body.role, format: /^(Technical Admin|Admin)$/ },
+    { field: 'role', value: req.body.role, format: /^(Super Admin|Admin)$/ },
   ];
 
   const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
@@ -1871,14 +1827,14 @@ app.post('/api/admins', async (req, res) => {
   const adminsCollection = dab.collection('admins');
 
   // Check for validation
-  if (req.body.role === 'Technical Admin') {
-      const existingTechAdmin = await adminsCollection.findOne({ role: 'Technical Admin' });
+  if (req.body.role === 'Super Admin') {
+      const existingTechAdmin = await adminsCollection.findOne({ role: 'Super Admin' });
       if (existingTechAdmin) {
-          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
+          return res.status(409).json({ error: 'A Super Admin account already exists.' });
       }
   }
 
-  await adminsCollection.insertOne({...req.body, password: md5(req.body.password)});
+  await adminsCollection.insertOne({...req.body, password: md5(req.body.password), createdAt: new Date() });
 
    // --- ADD AUDIT LOG HERE ---
   // TODO: In a real app with auth middleware, you'd know which admin created this one.
@@ -1917,6 +1873,7 @@ app.get('/api/admins', async (req, res) => {
       email: 1,
       role: 1,
       _id: 1,
+      createdAt: 1,
       action: { $ifNull: [ "$action", "" ] }
     }
   })
@@ -2706,7 +2663,7 @@ app.get('/api/notifications/:id', async (req, res) => {
   }
 });
 
-// UPDATE NOTIFICATION BY ID (PUT)
+/// UPDATE NOTIFICATION BY ID (PUT)
 app.put('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
   const {
@@ -2720,96 +2677,94 @@ app.put('/api/notifications/:id', async (req, res) => {
 
   const dab = await db();
   const notificationsCollection = dab.collection('notifications');
-  const residentsCollection = dab.collection('residents'); // Needed if target_audience changes to 'All'
-
-  const updateFields = {};
-
-  // Standard field updates
-  if (name !== undefined) {
-    if (typeof name !== 'string' || name.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Name cannot be empty.' });
-    updateFields.name = String(name).trim();
-  }
-  if (content !== undefined) {
-    if (typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Content cannot be empty.' });
-    updateFields.content = String(content).trim();
-  }
-  if (date !== undefined) {
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format.' });
-    updateFields.date = parsedDate;
-  }
-  if (by !== undefined) {
-     if (typeof by !== 'string' || by.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Author (by) cannot be empty.' });
-    updateFields.by = String(by).trim();
-  }
-  if (type !== undefined) {
-    if (!['Announcement', 'Alert', 'Notification'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
-    updateFields.type = type;
-  }
-
-  // Handle recipients update - If target_audience or recipient_ids are in the payload, rebuild recipients array.
-  // This is a simplification. A more complex update might involve adding/removing specific recipients.
-  let needsRecipientRebuild = false;
-  if (target_audience !== undefined) {
-      if (!['All', 'SpecificResidents'].includes(target_audience)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
-      updateFields.target_audience = target_audience;
-      needsRecipientRebuild = true;
-  }
-  if (recipient_ids !== undefined) { // Even if empty array, it means intent to change
-      if (!Array.isArray(recipient_ids) || recipient_ids.some(rid => !ObjectId.isValid(rid))) {
-          return res.status(400).json({ error: 'Validation failed', message: 'recipient_ids must be an array of valid ObjectIds.' });
-      }
-      // If target_audience is not changing to 'SpecificResidents' but recipient_ids are sent,
-      // we might assume it's for 'SpecificResidents' or ignore if target is 'All'.
-      // Forcing target_audience to 'SpecificResidents' if recipient_ids are provided and target_audience is not 'All'.
-      if (updateFields.target_audience !== 'All' && recipient_ids.length > 0) {
-          updateFields.target_audience = 'SpecificResidents';
-      }
-      needsRecipientRebuild = true;
-  }
-
-  if (needsRecipientRebuild) {
-    let finalRecipientObjects = [];
-    const effectiveTargetAudience = updateFields.target_audience || (await notificationsCollection.findOne({_id: new ObjectId(id)}, {projection: {target_audience:1}})).target_audience;
-    const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : [];
-
-
-    if (effectiveTargetAudience === 'All') {
-      const allApprovedResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
-      finalRecipientObjects = allApprovedResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
-    } else if (effectiveTargetAudience === 'SpecificResidents' && effectiveRecipientIds.length > 0) {
-      finalRecipientObjects = effectiveRecipientIds.map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
-    }
-    // If specific and empty, recipients will be an empty array
-    updateFields.recipients = finalRecipientObjects;
-  }
-
-
-  if (Object.keys(updateFields).length === 0) {
-    const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
-    return res.json({ message: 'No changes provided to update.', notification: currentNotification });
-  }
-  updateFields.updated_at = new Date();
+  const residentsCollection = dab.collection('residents');
 
   try {
-    const result = await notificationsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateFields }
-    );
+    // 1. Fetch the current state of the notification BEFORE updating it.
+    // This is crucial for the audit log and for comparing changes.
+    const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
 
-    if (result.matchedCount === 0) {
+    if (!currentNotification) {
       return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
     }
     
+    const updateFields = {};
+
+    // Standard field validation and updates
+    if (name !== undefined) {
+      if (typeof name !== 'string' || name.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Name cannot be empty.' });
+      updateFields.name = String(name).trim();
+    }
+    if (content !== undefined) {
+      if (typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Content cannot be empty.' });
+      updateFields.content = String(content).trim();
+    }
+    if (date !== undefined) {
+      const parsedDate = new Date(date);
+      if (isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format.' });
+      updateFields.date = parsedDate;
+    }
+    if (by !== undefined) {
+      if (typeof by !== 'string' || by.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Author (by) cannot be empty.' });
+      updateFields.by = String(by).trim();
+    }
+    if (type !== undefined) {
+      if (!['Announcement', 'Alert', 'Notification'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
+      updateFields.type = type;
+    }
+
+    // Handle recipients update
+    let needsRecipientRebuild = false;
+    if (target_audience !== undefined) {
+        if (!['All', 'SpecificResidents'].includes(target_audience)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
+        updateFields.target_audience = target_audience;
+        needsRecipientRebuild = true;
+    }
+    if (recipient_ids !== undefined) {
+        if (!Array.isArray(recipient_ids) || recipient_ids.some(rid => !ObjectId.isValid(rid))) {
+            return res.status(400).json({ error: 'Validation failed', message: 'recipient_ids must be an array of valid ObjectIds.' });
+        }
+        if (updateFields.target_audience !== 'All' && recipient_ids.length > 0) {
+            updateFields.target_audience = 'SpecificResidents';
+        }
+        needsRecipientRebuild = true;
+    }
+
+    if (needsRecipientRebuild) {
+      let finalRecipientObjects = [];
+      const effectiveTargetAudience = updateFields.target_audience || currentNotification.target_audience;
+      const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : [];
+
+      if (effectiveTargetAudience === 'All') {
+        const allApprovedResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
+        finalRecipientObjects = allApprovedResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
+      } else if (effectiveTargetAudience === 'SpecificResidents' && effectiveRecipientIds.length > 0) {
+        finalRecipientObjects = effectiveRecipientIds.map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
+      }
+      updateFields.recipients = finalRecipientObjects;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.json({ message: 'No changes provided to update.', notification: currentNotification });
+    }
+    
+    updateFields.updated_at = new Date();
+
+    await notificationsCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateFields }
+    );
+    
     const updatedNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
 
-    // --- ADD AUDIT LOG HERE ---
+    // --- AUDIT LOG ---
+    // `currentNotification` is now correctly defined and holds the pre-update name.
     await createAuditLog({
       description: `Notification updated: '${currentNotification.name}' was modified.`,
       action: "UPDATE",
       entityType: "Notification",
       entityId: id,
-    }, req)
+    }, req);
     // --- END AUDIT LOG ---
 
     res.json({ message: 'Notification updated successfully', notification: updatedNotification });

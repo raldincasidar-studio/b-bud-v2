@@ -292,15 +292,32 @@ async function generateAndSetToPickup() {
   }
 }
 
+// async function declineRequest() {
+//     isActing.value = true;
+//     try {
+//         const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/decline`, { method: 'PATCH', body: { reason: 'N/A' } });
+//         if (error.value) throw new Error('Failed to decline request.');
+//         request.value = data.value.request;
+//         $toast.fire({ title: 'Request Declined', icon: 'info' });
+//     } catch(e) {
+//         $toast.fire({ title: e.message, icon: 'error' });
+//     } finally {
+//         isActing.value = false;
+//     }
+// }
+
 async function declineRequest() {
     isActing.value = true;
     try {
-        const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/decline`, { method: 'PATCH', body: { reason: 'N/A' } });
-        if (error.value) throw new Error('Failed to decline request.');
-        request.value = data.value.request;
+        await $fetch(`/api/document-requests/${requestId}/decline`, {
+            method: 'PATCH',
+            body: { reason: 'Declined by Administrator' }
+        });
         $toast.fire({ title: 'Request Declined', icon: 'info' });
-    } catch(e) {
-        $toast.fire({ title: e.message, icon: 'error' });
+        await fetchRequest(false);
+    } catch (e) {
+        const errorMessage = e.data?.message || 'Failed to decline request. Please try again.';
+        $toast.fire({ title: errorMessage, icon: 'error' });
     } finally {
         isActing.value = false;
     }

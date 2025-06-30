@@ -60,7 +60,7 @@
         <template v-slot:item.household_role="{ item }">
           <v-chip :color="item.is_household_head ? 'blue' : 'grey'" label size="small">{{ item.is_household_head ? 'Head' : 'Member' }}</v-chip>
         </template>
-        <template v-slot:item.created_at="{ item }">{{ formatDate(item.created_at) }}</template>
+        <template v-slot:item.date_added="{ item }">{{ formatDate(item.date_added) }}</template>
 
         <template v-slot:item.action="{ item }">
           <div class="d-flex align-center justify-center">
@@ -149,7 +149,7 @@ const headers = ref([
   { title: 'Email', key: 'email', sortable: true },
   { title: 'Contact No.', key: 'contact_number', sortable: false },
   { title: 'Household Role', key: 'household_role', sortable: true, align: 'center' },
-  { title: 'Date Registered', key: 'created_at', sortable: true },
+  { title: 'Date Registered', key: 'date_added', sortable: true },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 

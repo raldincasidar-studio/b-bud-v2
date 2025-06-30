@@ -37,6 +37,7 @@
       <v-card-text class="py-6">
         <v-row>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Full Name </label>
             <v-text-field
               v-model="form.name"
               label="Full Name"
@@ -46,6 +47,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Username </label>
             <v-text-field
               v-model="form.username"
               label="Username"
@@ -55,6 +57,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Email Address </label>
             <v-text-field
               v-model="form.email"
               label="Email Address"
@@ -65,6 +68,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Contact Number </label>
             <v-text-field
               v-model="form.contact_number"
               label="Contact Number"
@@ -76,6 +80,7 @@
           </v-col>
           <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">New Password </label>
             <v-text-field
               v-model="form.password"
               label="New Password"
@@ -90,6 +95,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Repeat New Password </label>
             <v-text-field
               v-model="form.repeat_password"
               label="Repeat New Password"
@@ -103,6 +109,7 @@
           </v-col>
           <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Role </label>
             <v-select
               readonly
               v-model="form.role"
