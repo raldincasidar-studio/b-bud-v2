@@ -3588,14 +3588,14 @@ app.post('/api/complaints', async (req, res) => {
     category,
     date_of_complaint,
     time_of_complaint,
-    person_complained_against_name, // Name (can be manual or from resident search)
-    person_complained_against_resident_id, // Optional ObjectId
+    person_complained_against_name,
+    person_complained_against_resident_id,
     status,
     notes_description,
   } = req.body;
 
-  // Validation
-  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category || 
+  // --- Start of Validation (No changes needed here) ---
+  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category ||
       !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
@@ -3605,11 +3605,18 @@ app.post('/api/complaints', async (req, res) => {
   if (person_complained_against_resident_id && !ObjectId.isValid(person_complained_against_resident_id)) {
     return res.status(400).json({ error: 'Invalid person complained against resident ID format.' });
   }
+  // --- End of Validation ---
 
   try {
+    const collection = dab.collection('complaints');
     const complaintDate = new Date(date_of_complaint);
 
+    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    const customRefNo = await generateUniqueReference(collection);
+
+    // --- 2. ADD ref_no TO THE NEW COMPLAINT OBJECT ---
     const newComplaint = {
+      ref_no: customRefNo, // <-- NEW: Add the reference number
       complainant_resident_id: new ObjectId(complainant_resident_id),
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
@@ -3624,22 +3631,26 @@ app.post('/api/complaints', async (req, res) => {
       created_at: new Date(),
       updated_at: new Date(),
     };
-    const collection = dab.collection('complaints');
+    
     const result = await collection.insertOne(newComplaint);
-    const insertedDoc = await collection.findOne({ _id: result.insertedId });
 
-    // --- ADD AUDIT LOG HERE ---
+    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION ---
     await createAuditLog({
-      userId: newComplaint.complainant_resident_id, // The complainant is the user in this context
+      userId: newComplaint.complainant_resident_id,
       userName: newComplaint.complainant_display_name,
-      description: `New complaint filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
+      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
       action: 'CREATE',
       entityType: 'Complaint',
       entityId: result.insertedId.toString()
     }, req);
-    // --- END AUDIT LOG ---
 
-    res.status(201).json({ message: 'Complaint request added successfully', complaint: insertedDoc });
+    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND ---
+    res.status(201).json({
+      message: 'Complaint request added successfully',
+      complaintId: result.insertedId,
+      refNo: customRefNo // Send the new ref # back
+    });
+    
   } catch (error) {
     console.error('Error adding complaint request:', error);
     res.status(500).json({ error: 'Error adding complaint: ' + error.message });
@@ -3649,7 +3660,7 @@ app.post('/api/complaints', async (req, res) => {
 // GET ALL COMPLAINT REQUESTS (GET)
 app.get('/api/complaints', async (req, res) => {
   const search = req.query.search || '';
-  const status = req.query.status || ''; // <-- Read the new status parameter
+  const status = req.query.status || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -3657,18 +3668,16 @@ app.get('/api/complaints', async (req, res) => {
   const dab = await db();
   const collection = dab.collection('complaints');
   
-  // This object will hold all our matching conditions
   let matchQuery = {};
 
-  // If a specific status is provided, add it to the query
   if (status) {
     matchQuery.status = status;
   }
   
-  // If a search term is provided, add the $or conditions for it
   if (search) {
-    const searchRegex = new RegExp(search, 'i');
+    const searchRegex = new RegExp(search.trim(), 'i'); // Added .trim() for better UX
     matchQuery.$or = [
+      { ref_no: { $regex: searchRegex } }, // <-- MODIFIED: Added ref_no to search
       { complainant_display_name: { $regex: searchRegex } },
       { "complainant_details.first_name": { $regex: searchRegex } },
       { "complainant_details.last_name": { $regex: searchRegex } },
@@ -3683,34 +3692,24 @@ app.get('/api/complaints', async (req, res) => {
 
   try {
     const aggregationPipeline = [
-      { // Lookup complainant
-        $lookup: {
-          from: 'residents', localField: 'complainant_resident_id',
-          foreignField: '_id', as: 'complainant_details_array'
-        }
-      },
+      { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } } },
-      { // Lookup person complained against (only if ID exists)
-        $lookup: {
-          from: 'residents', localField: 'person_complained_against_resident_id',
-          foreignField: '_id', as: 'person_complained_details_array'
-        }
-      },
+      { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
-      // Use the combined matchQuery object here
       { $match: matchQuery },
       {
         $project: {
           _id: 1,
+          ref_no: 1, // <-- MODIFIED: Included ref_no in the response
           complainant_name: { 
             $ifNull: [
-                { $concat: [ "$complainant_details.first_name", " ", { $ifNull: ["$complainant_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$complainant_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$complainant_details.last_name"] }, 
+                { $concat: [ "$complainant_details.first_name", " ", "$complainant_details.last_name"] }, 
                 "$complainant_display_name"
             ]
           },
           person_complained_against: {
             $ifNull: [
-              { $concat: [ "$person_complained_details.first_name", " ", { $ifNull: ["$person_complained_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$person_complained_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$person_complained_details.last_name"] },
+              { $concat: [ "$person_complained_details.first_name", " ", "$person_complained_details.last_name"] },
               "$person_complained_against_name"
             ]
           },
@@ -3723,13 +3722,12 @@ app.get('/api/complaints', async (req, res) => {
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
     
-    // The count pipeline also needs to use the same lookups and match query for an accurate total
+    // The count pipeline correctly uses the same `matchQuery`
     const countPipeline = [
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // Use the combined matchQuery object here as well
         { $match: matchQuery },
         { $count: 'total' }
     ];
@@ -3767,6 +3765,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
       const searchRegex = new RegExp(search, 'i');
       searchMatchSubStage = {
         $or: [
+          { ref_no: { $regex: searchRegex } },
           { person_complained_against_name: { $regex: searchRegex } },
           { "person_complained_details.first_name": { $regex: searchRegex } }, // If looking up person complained
           { "person_complained_details.last_name": { $regex: searchRegex } },
@@ -3794,6 +3793,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
       {
         $project: {
           _id: 1,
+          ref_no: 1, 
           // complainant_name is known (it's the current user), but API can return it for consistency
           complainant_display_name: 1, // The stored display name at time of complaint
           person_complained_against_name: { // Show looked-up name if available, else stored name
@@ -3860,148 +3860,180 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
-  const collection = dab.collection('complaints');
+
+  // --- MODIFIED: Create a dynamic query object ---
+  // This allows the frontend to use either the short ref_no or the database _id
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    // Assuming ref_no is always stored uppercase
+    query = { ref_no: id.toUpperCase() };
+  }
+
   try {
+    const collection = dab.collection('complaints');
+    
     const aggregationPipeline = [
-      { $match: { _id: new ObjectId(id) } },
+      { $match: query }, // Use the dynamic query here
       { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
       { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-      { $project: { /* ... project all necessary fields, including from lookups ... */
+      { 
+        $project: {
+          // --- MODIFIED: Added ref_no to the response ---
+          ref_no: 1, 
           // Complaint fields
-          complainant_resident_id: 1, complainant_display_name: 1, complainant_address: 1,
-          contact_number: 1, date_of_complaint: 1, time_of_complaint: 1,
-          person_complained_against_name: 1, person_complained_against_resident_id: 1,
-          status: 1, notes_description: 1, created_at: 1, updated_at: 1,
-          // Complainant details
-          "complainant_details._id": 1, "complainant_details.first_name": 1, /* ... etc ... */
-          // Person complained against details
-          "person_complained_details._id": 1, "person_complained_details.first_name": 1, /* ... etc ... */
+          complainant_resident_id: 1,
+          complainant_display_name: 1,
+          complainant_address: 1,
+          contact_number: 1,
+          date_of_complaint: 1,
+          time_of_complaint: 1,
+          person_complained_against_name: 1,
+          person_complained_against_resident_id: 1,
+          status: 1,
+          notes_description: 1,
+          created_at: 1,
+          updated_at: 1,
           category: 1,
+          // Include details from looked-up documents
+          complainant_details: 1,
+          person_complained_details: 1,
         }
       }
     ];
+
     const result = await collection.aggregate(aggregationPipeline).toArray();
-    if (result.length === 0) return res.status(404).json({ error: 'Complaint not found.' });
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    
     res.json({ complaint: result[0] });
-  } catch (error) { console.error('Error fetching complaint by ID:', error); res.status(500).json({ error: "Failed to fetch complaint." }); }
+
+  } catch (error) {
+    console.error('Error fetching complaint by ID/Ref:', error);
+    res.status(500).json({ error: "Failed to fetch complaint." });
+  }
 });
 
 // UPDATE COMPLAINT REQUEST BY ID (PUT)
 app.put('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
-  const collection = dab.collection('complaints');
+
+  // --- MODIFIED: Create a dynamic query object ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
+  }
+
   const {
     complainant_resident_id, complainant_display_name, complainant_address, contact_number,
-    date_of_complaint, time_of_complaint,
-    person_complained_against_name, person_complained_against_resident_id, // New fields
+    date_of_complaint, time_of_complaint, category,
+    person_complained_against_name, person_complained_against_resident_id,
     status, notes_description,
   } = req.body;
 
+  // Build the $set object with only the fields provided in the request
   const updateFields = {};
-  // Complainant
-  if (complainant_resident_id !== undefined) {
-    if (!ObjectId.isValid(complainant_resident_id)) return res.status(400).json({ error: 'Invalid complainant ID for update.' });
-    updateFields.complainant_resident_id = new ObjectId(complainant_resident_id);
-  }
+  if (complainant_resident_id !== undefined) updateFields.complainant_resident_id = new ObjectId(complainant_resident_id);
   if (complainant_display_name !== undefined) updateFields.complainant_display_name = String(complainant_display_name).trim();
   if (complainant_address !== undefined) updateFields.complainant_address = String(complainant_address).trim();
   if (contact_number !== undefined) updateFields.contact_number = String(contact_number).trim();
-  
-  // Complaint details
   if (date_of_complaint !== undefined) updateFields.date_of_complaint = new Date(date_of_complaint);
   if (time_of_complaint !== undefined) updateFields.time_of_complaint = String(time_of_complaint).trim();
-  
-  // Person Complained Against
   if (person_complained_against_name !== undefined) updateFields.person_complained_against_name = String(person_complained_against_name).trim();
-  if (person_complained_against_resident_id !== undefined) { // Can be null to unset resident link
+  if (person_complained_against_resident_id !== undefined) {
     updateFields.person_complained_against_resident_id = person_complained_against_resident_id && ObjectId.isValid(person_complained_against_resident_id)
-      ? new ObjectId(person_complained_against_resident_id)
-      : null;
+      ? new ObjectId(person_complained_against_resident_id) : null;
   }
-  
+  if (category !== undefined) updateFields.category = String(category).trim();
   if (status !== undefined) updateFields.status = String(status).trim();
   if (notes_description !== undefined) updateFields.notes_description = String(notes_description).trim();
 
-  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  if (Object.keys(updateFields).length === 0) {
+    return res.status(400).json({ error: 'No fields provided to update.' });
+  }
   updateFields.updated_at = new Date();
 
   try {
-    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Complaint not found.' });
+    const collection = dab.collection('complaints');
 
-    // Need audit log
+    // --- MODIFIED: Fetch original document first for audit logging and existence check ---
+    const originalComplaint = await collection.findOne(query);
+    if (!originalComplaint) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
 
-    // Fetch updated doc with lookups for consistent response
+    await collection.updateOne({ _id: originalComplaint._id }, { $set: updateFields });
+
+    // --- MODIFIED: Added a detailed audit log ---
+    await createAuditLog({
+      description: `Updated details for complaint (Ref: ${originalComplaint.ref_no}).`,
+      action: "UPDATE",
+      entityType: "Complaint",
+      entityId: originalComplaint._id.toString(),
+    }, req);
+
+    // Fetch the fully populated, updated document to return to the frontend
     const updatedComplaintResult = await collection.aggregate([
-        { $match: { _id: new ObjectId(id) } },
+        { $match: { _id: originalComplaint._id } }, // Match by the definitive _id
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // Project necessary fields
     ]).toArray();
+
     res.json({ message: 'Complaint updated successfully', complaint: updatedComplaintResult[0] || null });
-  } catch (error) { console.error('Error updating complaint:', error); res.status(500).json({ error: 'Error updating complaint.' }); }
+
+  } catch (error) {
+    console.error('Error updating complaint:', error);
+    res.status(500).json({ error: 'Error updating complaint.' });
+  }
 });
 
 // --- GET ALL NOTES FOR A COMPLAINT ---
 // GET /api/complaints/:id/notes
 app.get('/api/complaints/:id/notes', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid complaint ID format' });
+  const dab = await db();
+
+  // --- MODIFIED: Create a dynamic query object ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
 
-  const dab = await db();
-  const collection = dab.collection('complaints');
-
   try {
+    const collection = dab.collection('complaints');
     const aggregationPipeline = [
-      // 1. Find the specific complaint document
-      { $match: { _id: new ObjectId(id) } },
-      
-      // 2. Deconstruct the investigation_notes array to process each note individually
+      { $match: query },
       { $unwind: { path: '$investigation_notes', preserveNullAndEmptyArrays: true } },
-
-      // 3. If there are no notes, this field will be null, so we can filter them out
       { $match: { 'investigation_notes': { $ne: null } } },
-
-      // 4. Join with the 'users' collection to get the author's details
-      { 
-        $lookup: {
-          from: 'users', // Assumes you have a 'users' collection
-          localField: 'investigation_notes.authorId',
-          foreignField: '_id',
-          as: 'author_details'
-        }
-      },
-      
-      // 5. Shape the final note object
+      { $lookup: { from: 'users', localField: 'investigation_notes.authorId', foreignField: '_id', as: 'author_details' }},
       { 
         $project: {
           _id: '$investigation_notes._id',
           content: '$investigation_notes.content',
           createdAt: '$investigation_notes.createdAt',
-          author: { 
-            name: { $ifNull: [ { $arrayElemAt: ['$author_details.name', 0] }, 'Unknown User' ] }
-          }
+          author: { name: { $ifNull: [ { $arrayElemAt: ['$author_details.name', 0] }, 'Unknown User' ] } }
         }
       }
     ];
 
     const notes = await collection.aggregate(aggregationPipeline).toArray();
-    
-    // The aggregation will return an empty array if the complaint doesn't exist or has no notes, which is a valid response.
     res.json({ notes: notes });
 
   } catch (error) {
-    console.error('Error fetching complaint notes:', error);
+    console.error('Error fetching complaint notes by ID/Ref:', error);
     res.status(500).json({ error: 'Failed to fetch complaint notes.' });
   }
 });
@@ -4009,13 +4041,10 @@ app.get('/api/complaints/:id/notes', async (req, res) => {
 
 // --- ADD A NEW NOTE TO A COMPLAINT ---
 // POST /api/complaints/:id/notes
-app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add your actual authentication middleware here
+app.post('/api/complaints/:id/notes', async (req, res) => {
   const { id } = req.params;
   const { content } = req.body;
   
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid complaint ID format' });
-  }
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ error: 'Note content is required and cannot be empty.' });
   }
@@ -4023,148 +4052,147 @@ app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add yo
   const dab = await db();
   const collection = dab.collection('complaints');
 
-  const newNote = {
-    _id: new ObjectId(),
-    content: content.trim(),
-    createdAt: new Date()
-  };
+  // --- MODIFIED: Dynamic query and pre-fetch for audit log ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
+  }
+
+  const newNote = { _id: new ObjectId(), content: content.trim(), createdAt: new Date() };
 
   try {
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $push: { 
-          investigation_notes: {
-             $each: [newNote],
-             $sort: { createdAt: -1 } // Optional: keep the array sorted on insert
-          }
-        }
-      }
-    );
-
-    if (result.matchedCount === 0) {
+    const originalComplaint = await collection.findOne(query);
+    if (!originalComplaint) {
       return res.status(404).json({ error: 'Complaint not found.' });
     }
 
-    if (result.modifiedCount === 0) {
-      // This might happen if the update fails for some reason, though it's rare with $push.
-      return res.status(500).json({ error: 'Failed to add the note.' });
-    }
-
-    // --- ADD AUDIT LOG HERE ---
+    await collection.updateOne(
+      { _id: originalComplaint._id },
+      { $push: { investigation_notes: { $each: [newNote], $sort: { createdAt: -1 } } } }
+    );
+    
     await createAuditLog({
-        description: `Added a new investigation note to complaint #${id.slice(-6)}.`,
+        description: `Added a new investigation note to complaint (Ref: ${originalComplaint.ref_no}).`,
         action: "UPDATE",
         entityType: "Complaint",
-        entityId: id,
-        // userName: req.user.name // Get acting admin's name from auth context
+        entityId: originalComplaint._id.toString(),
     }, req);
-    // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Note added successfully', note: newNote });
 
   } catch (error) {
-    console.error('Error adding complaint note:', error);
+    console.error('Error adding complaint note by ID/Ref:', error);
     res.status(500).json({ error: 'Error adding complaint note.' });
   }
 });
 
+
+// --- UPDATE COMPLAINT STATUS ---
+// PATCH /api/complaints/:id/status
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid Complaint ID format' });
+  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+  
+  if (!status || !ALLOWED_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
   }
 
-  // Define your allowed statuses
-  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
-  if (!status || !ALLOWED_STATUSES.includes(status)) {
-    return res.status(400).json({ error: 'Validation failed', message: `Status is required and must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+  const dab = await db();
+
+  // --- MODIFIED: Dynamic query and pre-fetch ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
 
   try {
-    const dab = await db();
     const complaintsCollection = dab.collection('complaints');
+    
+    const originalComplaint = await complaintsCollection.findOne(query);
+    if (!originalComplaint) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    const oldStatus = originalComplaint.status;
 
-    const result = await complaintsCollection.updateOne(
-      { _id: new ObjectId(id) },
+    if (oldStatus === status) {
+        return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
+    }
+
+    await complaintsCollection.updateOne(
+      { _id: originalComplaint._id },
       { $set: { status: status, updated_at: new Date() } }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Not found', message: 'Complaint not found.' });
-    }
+    await createAuditLog({
+        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'.`,
+        action: "STATUS_CHANGE",
+        entityType: "Complaint",
+        entityId: originalComplaint._id.toString(),
+    }, req);
 
-    if (result.modifiedCount === 0) {
-      // This means the status was already set to the new value
-      return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
-    }
-
-    // Optionally, send a notification to the complainant about the status change
-    const updatedComplaint = await complaintsCollection.findOne({ _id: new ObjectId(id) });
-    if (updatedComplaint && updatedComplaint.complainant_resident_id) {
+    if (originalComplaint.complainant_resident_id) {
       await createNotification(dab, {
-        name: `Complaint Status Update: Ref #${updatedComplaint._id.toString().slice(-6)}`,
-        content: `Dear ${updatedComplaint.complainant_display_name}, the status of your complaint regarding "${updatedComplaint.person_complained_against_name}" has been updated to: ${status}.`,
-        by: "System Administration", // Or the admin who made the change
+        name: `Complaint Status Update (Ref: ${originalComplaint.ref_no})`,
+        content: `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`,
+        by: "System Administration",
         type: "Notification",
-        target_audience: 'SpecificResidents',
-        recipient_ids: [updatedComplaint.complainant_resident_id.toString()],
+        target_audience: 'Specific Residents', // Ensure this matches your createNotification function
+        target_residents: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
       });
     }
 
     res.json({ message: `Complaint status updated to '${status}' successfully.`, statusChanged: true });
 
   } catch (error) {
-    console.error("Error updating complaint status:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not update complaint status.' });
+    console.error("Error updating complaint status by ID/Ref:", error);
+    res.status(500).json({ error: 'Could not update complaint status.' });
   }
 });
 
 
-// DELETE COMPLAINT REQUEST BY ID (DELETE)
+// --- DELETE COMPLAINT ---
+// DELETE /api/complaints/:id
 app.delete('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+
+  // --- MODIFIED: Dynamic query ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
   
-  const dab = await db();
-  const collection = dab.collection('complaints');
-  
   try {
-    // Step 1: Fetch the document BEFORE deleting it to get its details for logging.
-    const complaintToDelete = await collection.findOne({ _id: new ObjectId(id) });
+    const collection = dab.collection('complaints');
+    
+    const complaintToDelete = await collection.findOne(query);
     if (!complaintToDelete) {
         return res.status(404).json({ error: 'Complaint not found.' });
     }
     
-    // Step 2: Perform the deletion.
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      // This is a failsafe, but the findOne above should have already caught it.
-      return res.status(404).json({ error: 'Complaint not found during deletion process.' });
-    }
+    await collection.deleteOne({ _id: complaintToDelete._id });
     
-    // Step 3: Create the audit log using the fetched data.
     await createAuditLog({
-        description: `Deleted complaint #${id.slice(-6)} (Complainant: ${complaintToDelete.complainant_display_name}).`,
+        description: `Deleted complaint (Ref: ${complaintToDelete.ref_no}, Complainant: ${complaintToDelete.complainant_display_name}).`,
         action: "DELETE",
         entityType: "Complaint",
-        entityId: id,
-        // userName: req.user.name // In a real app with auth context
+        entityId: complaintToDelete._id.toString(),
     }, req);
 
-    // Step 4: Send the success response.
     res.json({ message: 'Complaint deleted successfully' });
 
   } catch (error) {
-    console.error('Error deleting complaint:', error);
+    console.error('Error deleting complaint by ID/Ref:', error);
     res.status(500).json({ error: 'Error deleting complaint: ' + error.message });
   }
 });
-
 
 
 
@@ -4197,35 +4225,41 @@ app.post('/api/document-requests', async (req, res) => {
 
   // Validation
   if (!requestor_resident_id || !request_type) {
-    return res.status(400).json({ error: 'Missing required fields: requestor, type, and purpose are required.' });
+    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
   }
 
   try {
-    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
     const residentsCollection = dab.collection('residents');
+    const requestsCollection = dab.collection('document_requests'); // Get the collection once
+
+    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}` : 'An unknown resident';
     // --- END FETCH ---
 
+    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    const customRefNo = await generateUniqueReference(requestsCollection);
+
+    // --- 2. ADD THE ref_no TO THE NEW REQUEST OBJECT ---
     const newRequest = {
+      ref_no: customRefNo, // Your new user-friendly reference number!
       requestor_resident_id: new ObjectId(requestor_resident_id),
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
-      details: details || {}, // Store the details object, default to empty object
-      document_status: "Pending", // Always start as Pending
+      details: details || {},
+      document_status: "Pending",
       created_at: new Date(),
       updated_at: new Date(),
     };
     
-    const collection = dab.collection('document_requests');
-    const result = await collection.insertOne(newRequest);
+    const result = await requestsCollection.insertOne(newRequest);
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-        description: `New document request for '${request_type}' submitted by ${requestorName}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) submitted by ${requestorName}.`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
@@ -4234,26 +4268,23 @@ app.post('/api/document-requests', async (req, res) => {
     }, req);
     // --- END AUDIT LOG ---
 
-    res.status(201).json({ message: 'Document request added successfully', requestId: result.insertedId });
+    // --- 3. UPDATE THE RESPONSE TO THE FRONTEND ---
+    res.status(201).json({
+      message: 'Document request added successfully',
+      requestId: result.insertedId,
+      refNo: customRefNo // Send the new ref # back to the frontend
+    });
+    
   } catch (error) {
     console.error('Error adding document request:', error);
     res.status(500).json({ error: 'Error adding document request.' });
   }
 });
 
-
 // GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Revised for all filters)
 app.get('/api/document-requests', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
-    const {
-      search,
-      status, // The new status filter from the dashboard and local UI
-      sortBy,
-      sortOrder,
-      byResidentId = '',
-    } = req.query; 
-
+    const { search, status, sortBy, sortOrder, byResidentId = '' } = req.query; 
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
     const skip = (page - 1) * itemsPerPage;
@@ -4261,16 +4292,14 @@ app.get('/api/document-requests', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('document_requests');
 
-    console.log('req, id', byResidentId);
-
-    // --- 2. Build the MongoDB Match Conditions Dynamically ---
     const matchConditions = [];
 
-    // Add search filter if it exists
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       matchConditions.push({
         $or: [
+          // --- MODIFIED: Added ref_no to the search query ---
+          { ref_no: { $regex: searchRegex } }, 
           { request_type: { $regex: searchRegex } },
           { "requestor_details.first_name": { $regex: searchRegex } },
           { "requestor_details.last_name": { $regex: searchRegex } },
@@ -4283,72 +4312,45 @@ app.get('/api/document-requests', async (req, res) => {
     if (byResidentId && byResidentId.trim() !== '') {
       matchConditions.push({ requestor_resident_id: new ObjectId(byResidentId) });
     }
-
-    // Add status filter if it exists
     if (status) {
-      // Direct match is more efficient than regex for status
       matchConditions.push({ document_status: status });
     }
 
-    // Combine all filters into a single $match stage
     const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
     
-    // --- 3. Define Sorting Stage Dynamically ---
-    let sortStage = { $sort: { date_of_request: -1 } }; // Default sort
+    let sortStage = { $sort: { created_at: -1 } }; // Default sort by creation date
     if (sortBy) {
-        // Use the key sent from the frontend to sort
         sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } };
     }
 
-    // --- 4. Construct the Aggregation Pipeline ---
     const aggregationPipeline = [
-      { // First, perform the lookup to get requestor details
-        $lookup: {
-          from: 'residents',
-          localField: 'requestor_resident_id',
-          foreignField: '_id',
-          as: 'requestor_details_array'
-        }
-      },
-      { // Make the details easier to access
-        $addFields: {
-          requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] }
-        }
-      },
-      { // Now, apply the combined match filters
-        $match: mainMatchStage
-      },
+      { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
+      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] }}},
+      { $match: mainMatchStage },
       { // Project the final shape for the frontend
         $project: {
           _id: 1,
+          // --- MODIFIED: Included ref_no in the response ---
+          ref_no: 1, 
           request_type: 1,
           requestor_name: { $concat: ["$requestor_details.first_name", " ", "$requestor_details.last_name"] },
           date_of_request: "$created_at",
-          purpose_of_request: "$purpose",
           document_status: 1,
+          // Note: Removed purpose from here to keep the list view lean. You can add it back if needed.
         }
       },
-      sortStage, // Apply dynamic sorting
+      sortStage,
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
 
     const requests = await collection.aggregate(aggregationPipeline).toArray();
     
-    // --- 5. Get Accurate Total Count for Pagination ---
-    // Re-use the initial stages of the pipeline before projection and pagination
-    const countPipeline = [
-        ...aggregationPipeline.slice(0, 3), // Includes lookup, addFields, and the crucial mainMatchStage
-        { $count: 'total' }
-    ];
+    const countPipeline = [ ...aggregationPipeline.slice(0, 3), { $count: 'total' } ];
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
 
-    // --- 6. Send Response ---
-    res.json({
-      requests,
-      total: totalRequests
-    });
+    res.json({ requests, total: totalRequests });
 
   } catch (error) {
     console.error('Error fetching document requests:', error);
@@ -4358,65 +4360,78 @@ app.get('/api/document-requests', async (req, res) => {
 
 // GET /api/document-requests/:id - GET SINGLE DOCUMENT REQUEST (For Details Page)
 app.get('/api/document-requests/:id', async (req, res) => {
-  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const { id } = req.params;
   const dab = await db();
   const collection = dab.collection('document_requests');
+
   try {
-    const request = await collection.findOne({ _id: new ObjectId(req.params.id) });
-    if (!request) return res.status(404).json({ error: 'Document request not found.' });
-    // Fetch requestor details separately for simplicity, or use a lookup as in the list view
+    // --- MODIFIED: Create a dynamic query object ---
+    // This allows the frontend to use either the short ref_no or the database _id
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query._id = new ObjectId(id);
+    } else {
+      // Assuming ref_no is always uppercase as we defined in the creation logic
+      query.ref_no = id.toUpperCase(); 
+    }
+
+    const request = await collection.findOne(query);
+    if (!request) {
+      return res.status(404).json({ error: 'Document request not found.' });
+    }
+
+    // Fetch requestor details
     const requestor = await dab.collection('residents').findOne({ _id: request.requestor_resident_id });
     request.requestor_details = requestor; // Attach for frontend use
+
     res.json({ request });
-  } catch (error) { console.error('Error fetching document request by ID:', error); res.status(500).json({ error: "Failed to fetch request." }); }
+
+  } catch (error) { 
+    console.error('Error fetching document request by ID/Ref:', error); 
+    res.status(500).json({ error: "Failed to fetch request." }); 
+  }
 });
 
-
-// PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (Handles new 'details' object)
+// PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (No changes needed, correct as is)
 app.put('/api/document-requests/:id', async (req, res) => {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
-    
+    const { id } = req.params;
     const dab = await db();
     const collection = dab.collection('document_requests');
     const { requestor_resident_id, request_type, purpose, details } = req.body;
 
-    // Basic validation on the payload
     if (!requestor_resident_id || !request_type || !purpose) {
         return res.status(400).json({ error: 'Missing required fields for update.' });
     }
-
-    const updateFields = {
-        requestor_resident_id: new ObjectId(requestor_resident_id),
-        request_type, 
-        purpose, 
-        details,
-        updated_at: new Date()
-    };
+    
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query._id = new ObjectId(id);
+    } else {
+      query.ref_no = id.toUpperCase();
+    }
 
     try {
-        // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
-        const originalRequest = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        const originalRequest = await collection.findOne(query);
         if (!originalRequest) {
             return res.status(404).json({ error: 'Document request not found.' });
         }
-        // --- END FETCH ---
-
-        const result = await collection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updateFields });
-        if (result.matchedCount === 0) {
-            // This is a failsafe; the findOne above should catch this.
-            return res.status(404).json({ error: 'Document request not found during update process.' });
-        }
         
-        // --- ADD AUDIT LOG HERE ---
+        const updateFields = {
+            requestor_resident_id: new ObjectId(requestor_resident_id),
+            request_type, 
+            purpose, 
+            details,
+            updated_at: new Date()
+        };
+        
+        await collection.updateOne(query, { $set: updateFields });
+        
         await createAuditLog({
-            description: `Updated details for document request '${originalRequest.request_type}' (#${req.params.id.slice(-6)}).`,
+            description: `Updated details for request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}).`,
             action: "UPDATE",
             entityType: "DocumentRequest",
-            entityId: req.params.id,
-            // In a real app with auth, get the admin's name from the request context
-            // userName: req.user.name 
+            entityId: originalRequest._id.toString(),
         }, req);
-        // --- END AUDIT LOG ---
 
         res.json({ message: 'Document request updated successfully' });
 
@@ -4426,71 +4441,79 @@ app.put('/api/document-requests/:id', async (req, res) => {
     }
 });
 
-// PATCH /api/document-requests/:id/status - UPDATE STATUS
+
+// PATCH /api/document-requests/:id/status - UPDATE STATUS (UPDATED)
 app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status: newStatus } = req.body;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
 
-  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Denied"];
-  if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
-    return res.status(400).json({ error: 'Invalid status value.' });
-  }
+  // --- MODIFIED: Changed "Denied" to "Declined" ---
+  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Declined"];
   
+  if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
+    return res.status(400).json({ error: 'Invalid status value provided.' });
+  }
+
   try {
     const dab = await db();
     const collection = dab.collection('document_requests');
 
-    // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
-    const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      // Assuming ref_no is always uppercase for consistency
+      query = { ref_no: id.toUpperCase() }; 
+    }
+
+    const originalRequest = await collection.findOne(query);
     if (!originalRequest) {
-        return res.status(404).json({ error: 'Request not found.' });
+      return res.status(404).json({ error: 'Request not found.' });
     }
+
     const oldStatus = originalRequest.document_status;
-    // --- END FETCH ---
 
-    // Only perform an update and log if the status is actually changing
     if (oldStatus === newStatus) {
-        return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
+      return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
     }
 
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { document_status: newStatus, updated_at: new Date() } }
-    );
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Request not found during update.' });
-    
-    // --- ADD AUDIT LOG HERE ---
-    await createAuditLog({
-        description: `Status for document request '${originalRequest.request_type}' (#${id.slice(-6)}) changed from '${oldStatus}' to '${newStatus}'.`,
-        action: "STATUS_CHANGE",
-        entityType: "DocumentRequest",
-        entityId: id,
-        // userName: req.user.name // In a real app with auth context
-    }, req);
-    // --- END AUDIT LOG ---
+    const result = await collection.updateOne(query, {
+      $set: {
+        document_status: newStatus,
+        updated_at: new Date()
+      }
+    });
 
-    // TODO: Send notification to user
-    // Send notification to all users
+    if (result.matchedCount === 0) {
+      // This is a failsafe, but findOne should have caught it.
+      return res.status(404).json({ error: 'Request not found during update operation.' });
+    }
+
+    await createAuditLog({
+      description: `Status for document request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) changed from '${oldStatus}' to '${newStatus}'.`,
+      action: "STATUS_CHANGE",
+      entityType: "DocumentRequest",
+      entityId: originalRequest._id.toString(),
+    }, req);
+
     const notificationData = {
-        name: `Status of your document request has been updated to '${newStatus}'.`,
-        content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
-        by: "System",
-        type: "Notification",
-        target_audience: "Specific Residents",
-        target_residents: [originalRequest.requestor_resident_id],
+      name: `Status of your document request has been updated to '${newStatus}'.`,
+      content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
+      by: "System",
+      type: "Notification",
+      target_audience: "Specific Residents",
+      target_residents: [originalRequest.requestor_resident_id],
     };
     await createNotification(dab, notificationData);
 
-
-
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
 
-  } catch (error) { 
-    console.error("Error updating status:", error); 
-    res.status(500).json({ error: 'Could not update status.' }); 
+  } catch (error) {
+    console.error("Error updating status:", error);
+    res.status(500).json({ error: 'Could not update status.' });
   }
 });
+
 
 
 
@@ -5184,6 +5207,32 @@ app.get('/api/demographics/profile', async (req, res) => {
     }
 });
 
+
+// HELPER FUNCTION - CUSTOM REF NUMBER
+
+async function generateUniqueReference(collection) {
+  // nanoid v4+ is ESM, so we use a dynamic import in a CommonJS file.
+  const { nanoid } = await import('nanoid');
+  const ID_LENGTH = 5;
+  let refNo;
+  let isUnique = false;
+
+  // Loop until a unique ID is found
+  while (!isUnique) {
+    // Generate a 5-character alphanumeric ID and convert to uppercase
+    refNo = nanoid(ID_LENGTH).toUpperCase();
+    
+    // Check if a document with this ref_no already exists
+    const existingRequest = await collection.findOne({ ref_no: refNo });
+    
+    if (!existingRequest) {
+      isUnique = true; // The ID is unique, exit the loop
+    }
+    // If it's not unique, the loop will run again to generate a new ID
+  }
+
+  return refNo;
+}
 
 // =================== AUDIT LOG HELPER =================== //
 

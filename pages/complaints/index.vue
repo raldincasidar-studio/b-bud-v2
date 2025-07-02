@@ -19,7 +19,6 @@
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey"
-          
           label="Search by ref #, complainant, etc..."
           prepend-inner-icon="mdi-magnify"
           variant="solo-filled"
@@ -31,16 +30,19 @@
       <div class="pa-4">
         <v-chip-group
           v-model="selectedStatus"
-          selected-class="text-primary"
-          column
           mandatory
+          column
         >
           <v-chip
             v-for="status in statusFilterItems"
             :key="status"
             :value="status"
+            :color="getStatusColor(status)"
+            :prepend-icon="getStatusIcon(status)"
             filter
+            variant="tonal"
             size="large"
+            class="ma-1"
           >
             {{ status }}
           </v-chip>
@@ -56,8 +58,8 @@
         @update:options="loadComplaints"
         item-value="_id"
       >
-        <template v-slot:item.reference_number="{ item }">
-          <span class="font-weight-medium text-caption">{{ item._id }}</span>
+        <template v-slot:item.ref_no="{ item }">
+          <span class="font-weight-medium text-caption">{{ item.ref_no }}</span>
         </template>
         <template v-slot:item.date_of_complaint="{ item }">
           {{ formatDate(item.date_of_complaint) }}
@@ -68,17 +70,23 @@
           </div>
         </template>
 
-        <!-- REWORKED STATUS COLUMN -->
+        <!-- MODIFIED: Status chip in the table now has an icon -->
         <template v-slot:item.status="{ item }">
           <div class="d-flex align-center justify-center">
-            <v-chip :color="getStatusColor(item.status)" label size="small" class="me-2">
+            <v-chip
+              :color="getStatusColor(item.status)"
+              :prepend-icon="getStatusIcon(item.status)"
+              label
+              size="small"
+              class="font-weight-bold"
+            >
               {{ item.status }}
             </v-chip>
           </div>
         </template>
 
         <template v-slot:item.action="{ item }">
-          <v-btn variant="tonal" color="primary" size="small" :to="`/complaints/${item._id}`">
+          <v-btn variant="tonal" color="primary" size="small" :to="`/complaints/${item.ref_no}`">
             View/Manage
           </v-btn>
         </template>
@@ -98,19 +106,28 @@ import { useNuxtApp } from '#app';
 const { $toast } = useNuxtApp();
 
 const searchKey = ref('');
-const selectedStatus = ref('All');
+const selectedStatus = ref('All'); // 'All' is the default selection
 const totalItems = ref(0);
 const complaints = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
 
-// This is no longer used for the UI, but it defines our master list of statuses
-const ALL_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
-const statusFilterItems = ['All', ...ALL_STATUSES];
+// --- Centralized Status Configuration ---
+const STATUS_CONFIG = {
+  'All':                 { color: 'primary', icon: 'mdi-filter-variant' },
+  'New':                 { color: 'info', icon: 'mdi-bell-ring-outline' },
+  'Under Investigation': { color: 'warning', icon: 'mdi-magnify-scan' },
+  'Resolved':            { color: 'success', icon: 'mdi-check-circle-outline' },
+  'Closed':              { color: 'grey-darken-1', icon: 'mdi-archive-outline' },
+  'Dismissed':           { color: 'error', icon: 'mdi-cancel' },
+};
+
+// Use the keys from the config to drive the UI, ensuring 'All' is first.
+const statusFilterItems = ref(Object.keys(STATUS_CONFIG));
 
 const headers = ref([
-  { title: 'Ref #', key: 'reference_number', sortable: false, width: '150px' },
+  { title: 'Ref #', key: 'ref_no', sortable: false, width: '150px' },
   { title: 'Complainant', key: 'complainant_name', sortable: true },
   { title: 'Complained Against', key: 'person_complained_against', sortable: true },
   { title: 'Date Filed', key: 'date_of_complaint', sortable: true },
@@ -119,17 +136,24 @@ const headers = ref([
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);
 
-// --- New function to get available actions ---
+// --- REFACTORED: getAvailableActions now uses STATUS_CONFIG ---
 const getAvailableActions = (currentStatus) => {
   const allActions = {
-    'New': { status: 'New', title: 'Mark as New', icon: 'mdi-new-box', color: 'info' },
-    'Under Investigation': { status: 'Under Investigation', title: 'Start Investigation', icon: 'mdi-magnify-scan', color: 'warning' },
-    'Resolved': { status: 'Resolved', title: 'Mark as Resolved', icon: 'mdi-check-circle-outline', color: 'success' },
-    'Closed': { status: 'Closed', title: 'Mark as Closed', icon: 'mdi-archive-outline', color: 'grey-darken-1' },
-    'Dismissed': { status: 'Dismissed', title: 'Dismiss Complaint', icon: 'mdi-cancel', color: 'error' },
+    'New': { status: 'New', title: 'Mark as New' },
+    'Under Investigation': { status: 'Under Investigation', title: 'Start Investigation' },
+    'Resolved': { status: 'Resolved', title: 'Mark as Resolved' },
+    'Closed': { status: 'Closed', title: 'Mark as Closed' },
+    'Dismissed': { status: 'Dismissed', title: 'Dismiss Complaint' },
   };
-  // Return all actions that are not the current status
-  return Object.values(allActions).filter(action => action.status !== currentStatus);
+
+  // Return all actions that are not the current status, enriching them with color/icon from config
+  return Object.values(allActions)
+    .filter(action => action.status !== currentStatus)
+    .map(action => ({
+      ...action,
+      icon: getStatusIcon(action.status),
+      color: getStatusColor(action.status)
+    }));
 };
 
 // --- Debounced search ---
@@ -202,10 +226,10 @@ const formatDate = (dateString) => {
   return new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
-const getStatusColor = (status) => ({
-    "New": 'info', "Under Investigation": 'warning', "Resolved": 'success',
-    "Closed": 'grey-darken-1', "Dismissed": 'error'
-  }[status] || 'default');
+// Helper functions to use the central STATUS_CONFIG object
+const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
+const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
+
 </script>
 
 <style scoped>

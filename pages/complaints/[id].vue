@@ -16,7 +16,8 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Complaint Details</h2>
-          <p class="text-grey-darken-1">Reference #: {{ complaintId }}</p>
+          <!-- MODIFIED: Display the ref_no from the form data -->
+          <p class="text-grey-darken-1">Reference #: {{ form.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
           <!-- <v-btn v-if="!editMode" color="primary" @click="toggleEditMode(true)" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn> -->
@@ -83,7 +84,7 @@
               </v-col>
               <v-col cols="12" md="6">
                 <label class="v-label mb-1">Status</label>
-                <v-text-field :model-value="form.status" variant="outlined" readonly messages="The status is managed via actions on the main list.">
+                <v-text-field :model-value="form.status" variant="outlined" readonly messages="The status is managed via actions on this page.">
                   <template v-slot:prepend-inner><v-chip :color="getStatusColor(form.status)" label size="small">{{ form.status }}</v-chip></template>
                 </v-text-field>
               </v-col>
@@ -102,12 +103,11 @@
         </v-card-text>
       </v-card>
 
-      <!-- START: ADDED NOTES SECTION -->
+      <!-- Investigation Notes Section -->
       <v-card v-if="form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed'" class="mt-4" flat border>
         <v-card-title>Investigation Notes</v-card-title>
         <v-divider></v-divider>
         <v-card-text>
-          <!-- Display Notes -->
           <div v-if="notesLoading" class="text-center py-4">
             <v-progress-circular indeterminate color="primary"></v-progress-circular>
             <p class="mt-2 text-grey-darken-1 text-caption">Loading Notes...</p>
@@ -136,7 +136,6 @@
 
           <v-divider class="my-4"></v-divider>
           
-          <!-- Add Note Form -->
           <h4 class="text-subtitle-1 font-weight-medium mb-2">Add New Note</h4>
           <v-textarea
             v-model="newNoteContent"
@@ -159,33 +158,30 @@
           </div>
         </v-card-text>
       </v-card>
-      <!-- END: ADDED NOTES SECTION -->
-
-      <!-- add new v-card for actions button -->
+      
+      <!-- Actions Card -->
       <v-card class="mt-4">
-        <v-card-title>Set Action</v-card-title>
+        <v-card-title>Complaint Actions</v-card-title>
         <v-divider></v-divider>
         <v-card-text>
-          <v-card-row>
-            <v-col cols="12">
-              <v-alert v-if="form.status === 'New'" type="info" class="my-2">Current Status: New</v-alert>
-              <v-alert v-else-if="form.status === 'Under Investigation'" type="warning" class="my-2">Current Status: Under Investigation</v-alert>
-              <v-alert v-else-if="form.status === 'Resolved'" type="success" class="my-2">Current Status: Resolved</v-alert>
-              <v-alert v-else-if="form.status === 'Dismissed'" type="success" class="my-2">Current Status: Dismissed</v-alert>
-              <v-alert v-else-if="form.status === 'Closed'" type="error" class="my-2">Current Status: Closed</v-alert>
-              <!-- <v-alert v-if="form.status === 'Dismissed' || form.status === 'Closed' || form.status === 'Resolved'" type="info" class="my-2">No further action is required</v-alert> -->
-            </v-col>
-            <v-col cols="12">
-              <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify">Under Investigation</v-btn>
-              <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle">Resolved</v-btn>
-              <v-btn v-if="form.status === 'New'" color="grey-darken-1" size=large class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline">Close</v-btn>
-              <v-btn v-if="form.status === 'Under Investigation'" color="error" size=large class="ma-2" @click="updateComplaintStatus('Dismissed')" prepend-icon="mdi-cancel">Dismissed</v-btn>
-            </v-col>
-          </v-card-row>
+            <div class="d-flex align-center mb-3">
+              <span class="text-subtitle-1 mr-4">Current Status:</span>
+              <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold">{{ form.status }}</v-chip>
+            </div>
+             <p class="text-caption text-grey-darken-1 mb-3">Select an action to change the complaint's status.</p>
+             <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify">Start Investigation</v-btn>
+             <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle">Mark as Resolved</v-btn>
+             <v-btn v-if="form.status === 'Under Investigation'" color="error" size="large" class="ma-2" @click="updateComplaintStatus('Dismissed')" prepend-icon="mdi-cancel">Dismiss Complaint</v-btn>
+             <v-btn v-if="form.status === 'Resolved' || form.status === 'New' || form.status === 'Dismissed'" color="grey-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline">Close Complaint</v-btn>
+             
+             <v-alert v-if="form.status === 'Closed'" type="info" variant="tonal" class="mt-4">
+               This complaint is closed and no further actions can be taken.
+             </v-alert>
         </v-card-text>
       </v-card>
     </div>
     
+    <!-- Deletion Dialog -->
     <v-dialog v-model="confirmDeleteDialog" persistent max-width="400">
       <v-card>
         <v-card-title class="text-h5">Confirm Deletion</v-card-title>
@@ -215,10 +211,17 @@ const complaintId = route.params.id;
 
 // --- STATE ---
 const form = reactive({
-  complainant_resident_id: null, complainant_display_name: '', complainant_address: '', contact_number: '',
-  date_of_complaint: '', time_of_complaint: '',
-  person_complained_against_resident_id: null, person_complained_against_name: '',
-  status: 'New', notes_description: '',
+  ref_no: '', // <-- MODIFIED: Added ref_no field
+  complainant_resident_id: null,
+  complainant_display_name: '',
+  complainant_address: '',
+  contact_number: '',
+  date_of_complaint: '',
+  time_of_complaint: '',
+  person_complained_against_resident_id: null,
+  person_complained_against_name: '',
+  status: 'New',
+  notes_description: '',
   category: '',
 });
 
@@ -266,7 +269,10 @@ const addingNote = ref(false);
 // --- VUELIDATE ---
 const rules = {
     complainant_resident_id: { required: helpers.withMessage('A complainant must be selected.', required) },
-    complainant_address: { required }, contact_number: { required }, date_of_complaint: { required }, time_of_complaint: { required },
+    complainant_address: { required },
+    contact_number: { required },
+    date_of_complaint: { required },
+    time_of_complaint: { required },
     person_complained_against_name: { required: helpers.withMessage('The person being complained against is required.', required) },
     notes_description: { required },
     category: { required },
@@ -275,14 +281,14 @@ const v$ = useVuelidate(rules, form);
 
 async function updateComplaintStatus(status){
   const {data, error} = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body: { status } });
-  if (error.value) $toast.fire({ title: error.value, icon: 'error' });
-  if (data.value?.error) $toast.fire({ title: data.value?.error, icon: 'success' });
+  if (error.value) $toast.fire({ title: error.value.data?.error || 'Failed to update status', icon: 'error' });
+  if (data.value) $toast.fire({ title: data.value.message, icon: 'success' });
   await fetchComplaint();
 }
 
 // --- LIFECYCLE & DATA FETCHING ---
-onMounted(async () => { 
-  await fetchComplaint(); 
+onMounted(async () => {
+  await fetchComplaint();
 });
 
 async function fetchComplaint(){
@@ -297,12 +303,12 @@ async function fetchComplaint(){
         personComplainedSearchQuery.value = form.person_complained_against_name;
 
         // Fetch notes if status is correct on initial load
-        if (form.status === 'Under Investigation') {
+        if (form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed') {
           await fetchNotes();
         } else {
           investigationNotes.value = []; // Ensure notes are cleared if status is not relevant
         }
-        
+
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/complaints'); }
     finally { loading.value = false; }
 }
@@ -341,10 +347,10 @@ watch(personComplainedSearchQuery, (nq) => {
 
 // START: NOTES WATCHER
 watch(() => form.status, (newStatus, oldStatus) => {
-  if (newStatus === 'Under Investigation' && newStatus !== oldStatus) {
+  if (newStatus !== oldStatus && (newStatus === 'Under Investigation' || newStatus === 'Resolved' || newStatus === 'Dismissed')) {
     fetchNotes();
-  } else if (newStatus !== 'Under Investigation') {
-    investigationNotes.value = []; // Clear notes if status changes away
+  } else if (newStatus === 'New' || newStatus === 'Closed') {
+    investigationNotes.value = []; // Clear notes if status changes to one where notes are not shown
   }
 });
 // END: NOTES WATCHER
@@ -373,7 +379,7 @@ async function saveChanges() {
   saving.value = true;
   try {
     const payload = { ...form, date_of_complaint: new Date(form.date_of_complaint).toISOString() };
-    delete payload.status; 
+    delete payload.status;
     const { error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update complaint.');
     $toast.fire({ title: 'Complaint updated successfully!', icon: 'success' });

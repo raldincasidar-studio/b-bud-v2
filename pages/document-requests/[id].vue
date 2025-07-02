@@ -172,7 +172,6 @@
     </div>
   </v-container>
 </template>
-
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -181,67 +180,75 @@ import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 const route = useRoute();
-const requestId = route.params.id;
+const requestId = route.params.id; // Can be ObjectId or the new ref_no
 
 // --- STATE ---
 const request = ref(null);
 const loading = ref(true);
-const isActing = ref(false);
-const isAutoProcessing = ref(false);
+const isActing = ref(false); // For user-initiated actions
+const isAutoProcessing = ref(false); // For the initial status change
 
-// ✨ NEW STATE for Release Action
-const proofOfReleaseFile = ref([]); // v-file-input model is an array
+// State for Release Action
+const proofOfReleaseFile = ref([]); // v-file-input model
 const proofOfReleaseBase64 = ref('');
 
 // --- COMPUTED PROPERTIES ---
 const requestorName = computed(() => {
-  console.log(request.value.requestor_details); 
-  if (request.value.requestor_details) {
+  if (request.value?.requestor_details) {
     return `${request.value.requestor_details.first_name} ${request.value.requestor_details.last_name}`;
   }
-  return '...'; 
+  return 'Loading...';
 });
 
 // --- LIFECYCLE & DATA FETCHING ---
-onMounted(async () => { await fetchRequest(); });
+onMounted(async () => {
+  await fetchRequest();
+});
 
 async function fetchRequest(showLoading = true) {
-    if(showLoading) loading.value = true;
+    if (showLoading) loading.value = true;
     try {
         const { data, error } = await useMyFetch(`/api/document-requests/${requestId}`);
-        if (error.value || !data.value?.request) throw new Error('Request not found.');
-        
+        if (error.value || !data.value?.request) {
+            throw new Error(`Request '${requestId}' not found.`);
+        }
+
         request.value = data.value.request;
 
+        // Auto-update status from 'Pending' to 'Processing'
         if (request.value.document_status === 'Pending') {
             isAutoProcessing.value = true;
-            const { data: processedData, error: processError } = await useMyFetch(`/api/document-requests/${requestId}/process`, { method: 'PATCH' });
-            if (processError.value) throw new Error('Could not auto-update status to Processing.');
-            fetchRequest(false);
+            try {
+                // This silently updates the status in the background on page load
+                await _updateStatusOnBackend('Processing');
+                await fetchRequest(false); // Refetch to display the new 'Processing' status
+            } catch (processError) {
+                console.error("Failed to auto-update status to 'Processing':", processError);
+                $toast.fire({ title: 'Could not auto-start processing.', icon: 'warning', timer: 3000 });
+            } finally {
+                isAutoProcessing.value = false;
+            }
         }
-        
-    } catch (e) { 
+
+    } catch (e) {
       $toast.fire({ title: e.message, icon: 'error' });
-    } finally { 
-      loading.value = false;
-      isAutoProcessing.value = false;
+    } finally {
+      if (showLoading) loading.value = false;
     }
 }
 
-// ✨ NEW: Watch for file input changes to create Base64 preview
+// --- FILE HANDLING ---
 watch(proofOfReleaseFile, (newFiles) => {
-  console.log(newFiles);
-  const file = newFiles;
+  const file = newFiles[0];
+
   if (!file) {
     proofOfReleaseBase64.value = '';
     return;
   }
-  
-  // Basic validation
+
   if (file.size > 5 * 1024 * 1024) { // 5MB limit
     $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
     proofOfReleaseFile.value = [];
-    proofOfReleaseBase64.value = '';
     return;
   }
 
@@ -259,32 +266,26 @@ watch(proofOfReleaseFile, (newFiles) => {
 
 
 // --- ACTION HANDLERS ---
+
+// Internal helper to call the generic status update endpoint
+async function _updateStatusOnBackend(newStatus) {
+    const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/status`, {
+      method: 'PATCH',
+      body: { status: newStatus }
+    });
+    if (error.value) {
+      throw new Error(error.value.data?.error || `Failed to update status.`);
+    }
+    return data.value;
+}
+
+// Simple wrapper to approve the request (moves to 'Ready for Pickup')
 async function approveRequest() {
   isActing.value = true;
   try {
-    const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/approve`, { method: 'PATCH' });
-    if (error.value) throw new Error('Failed to approve request.');
-    request.value = data.value.request;
-    $toast.fire({ title: 'Request Approved!', icon: 'success' });
-  } catch(e) { 
-    $toast.fire({ title: e.message, icon: 'error' });
-  } finally {
-    isActing.value = false;
-  }
-}
-
-async function generateAndSetToPickup() {
-  isActing.value = true;
-  try {
-    if (request.value.document_status !== 'Ready for Pickup') {
-      const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/generate`, { method: 'PATCH' });
-      if (error.value) throw new Error('Failed to update status to "Ready for Pickup".');
-      request.value = data.value.request;
-    }
-    const baseUrl = process.env.NODE_ENV === 'production' ? '/' : 'http://localhost:3001/'
-    window.open(`${baseUrl}api/document-requests/${requestId}/generate`, '_blank'); // Assuming endpoint is generate-pdf
-
-    $toast.fire({ title: 'Document is now Ready for Pickup!', icon: 'success' });
+    const response = await _updateStatusOnBackend('Ready for Pickup');
+    $toast.fire({ title: response.message, icon: 'success' });
+    await fetchRequest(false);
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
@@ -292,38 +293,43 @@ async function generateAndSetToPickup() {
   }
 }
 
-// async function declineRequest() {
-//     isActing.value = true;
-//     try {
-//         const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/decline`, { method: 'PATCH', body: { reason: 'N/A' } });
-//         if (error.value) throw new Error('Failed to decline request.');
-//         request.value = data.value.request;
-//         $toast.fire({ title: 'Request Declined', icon: 'info' });
-//     } catch(e) {
-//         $toast.fire({ title: e.message, icon: 'error' });
-//     } finally {
-//         isActing.value = false;
-//     }
-// }
-
+// UPDATED: Simple wrapper to decline the request
 async function declineRequest() {
     isActing.value = true;
     try {
-        await $fetch(`/api/document-requests/${requestId}/decline`, {
-            method: 'PATCH',
-            body: { reason: 'Declined by Administrator' }
-        });
-        $toast.fire({ title: 'Request Declined', icon: 'info' });
+        // Use "Declined" instead of "Denied"
+        const response = await _updateStatusOnBackend('Declined');
+        $toast.fire({ title: response.message, icon: 'info' });
         await fetchRequest(false);
     } catch (e) {
-        const errorMessage = e.data?.message || 'Failed to decline request. Please try again.';
-        $toast.fire({ title: errorMessage, icon: 'error' });
+        $toast.fire({ title: e.message, icon: 'error' });
     } finally {
         isActing.value = false;
     }
 }
 
-// ✨ NEW: Release Request Action Handler
+// Updates status and then opens the generation link
+async function generateAndSetToPickup() {
+  isActing.value = true;
+  try {
+    if (request.value.document_status !== 'Ready for Pickup') {
+      const response = await _updateStatusOnBackend('Ready for Pickup');
+      $toast.fire({ title: response.message, icon: 'success' });
+      await fetchRequest(false);
+    }
+
+    const refNo = request.value.ref_no;
+    const baseUrl = window.location.origin;
+    window.open(`${baseUrl}/api/document-requests/${refNo}/generate`, '_blank');
+
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    isActing.value = false;
+  }
+}
+
+// Handles releasing the document with proof
 async function releaseRequest() {
   if (!proofOfReleaseBase64.value) {
     $toast.fire({ title: 'Please upload a proof of release photo.', icon: 'warning' });
@@ -334,19 +340,16 @@ async function releaseRequest() {
   try {
     const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/release`, {
       method: 'PATCH',
-      body: {
-        proof_of_release: proofOfReleaseBase64.value
-      }
+      body: { proof_of_release: proofOfReleaseBase64.value }
     });
 
     if (error.value) {
       throw new Error(error.value.data?.error || 'Failed to release the document.');
     }
 
-    request.value = data.value.request;
     $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
-    
-    // Clean up state
+    await fetchRequest(false);
+
     proofOfReleaseBase64.value = '';
     proofOfReleaseFile.value = [];
 
@@ -358,9 +361,13 @@ async function releaseRequest() {
 }
 
 // --- HELPER FUNCTIONS ---
+// UPDATED: Changed "Denied" to "Declined"
 const getStatusColor = (status) => ({
-    "Pending": 'orange-darken-1', "Processing": 'blue-darken-1', "Approved": 'teal-darken-1',
-    "Ready for Pickup": 'green-darken-1', "Released": 'success', "Denied": 'red-darken-2'
+    "Pending": 'orange-darken-1', 
+    "Processing": 'blue-darken-1', 
+    "Ready for Pickup": 'green-darken-1',
+    "Released": 'success', 
+    "Declined": 'red-darken-2' // Changed from Denied
   }[status] || 'grey');
 
 const formatTimestamp = (dateString) => {
