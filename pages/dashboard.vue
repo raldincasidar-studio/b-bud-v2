@@ -115,7 +115,7 @@
             
             <v-list lines="one"  v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
               <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.itemLinkPrefix}/${item._id}`">
-                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed || 'Untitled Item ada' }}</v-list-item-title>
+                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed || 'Untitled Item' }}</v-list-item-title>
                 <!-- REVISED: Added 'item.dateAdded' to the subtitle chain for pending residents -->
                  
                 <v-list-item-subtitle class="text-truncate">{{ (item.requestor_name || item.complainant_display_name || item.borrower_name) ? `${item.requestor_name || item.complainant_display_name || item.borrower_name}` : (item.created_at || item.dateAdded) ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date( (item.created_at || item.dateAdded) )) : 'N/A' }}</v-list-item-subtitle>

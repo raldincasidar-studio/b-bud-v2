@@ -22,14 +22,32 @@
     <v-card class="mt-6" flat border>
       <v-card-text class="py-6">
         <v-row>
-          <v-col cols="12" md="6">
-            <label class="v-label mb-3 font-weight-bold text-black">Full Name <span class="text-red">*</span></label>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">First Name <span class="text-red">*</span></label>
             <v-text-field
-              v-model="form.name"
-              label="Juan Dela Cruz"
+              v-model="form.firstname"
+              label="Juan"
               variant="outlined"
-              :error-messages="v$.name.$errors.map(e => e.$message)"
-              @blur="v$.name.$touch"
+              :error-messages="v$.firstname.$errors.map(e => e.$message)"
+              @blur="v$.firstname.$touch"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">Middle Name (Optional)</label>
+            <v-text-field
+              v-model="form.middlename"
+              label="Reyes"
+              variant="outlined"
+            ></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">Last Name <span class="text-red">*</span></label>
+            <v-text-field
+              v-model="form.lastname"
+              label="Dela Cruz"
+              variant="outlined"
+              :error-messages="v$.lastname.$errors.map(e => e.$message)"
+              @blur="v$.lastname.$touch"
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
@@ -54,7 +72,6 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
-            <!-- ADDED CONTACT NUMBER FIELD -->
             <label class="v-label mb-3 font-weight-bold text-black">Contact Number <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.contact_number"
@@ -79,7 +96,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
-            <label class="v-label mb-3 font-weight-bold text-black">Reapet Password <span class="text-red">*</span></label>
+            <label class="v-label mb-3 font-weight-bold text-black">Repeat Password <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.repeat_password"
               label="Repeat Password"
@@ -89,17 +106,20 @@
               @blur="v$.repeat_password.$touch"
             ></v-text-field>
           </v-col>
+          
+          <!-- UPDATED: Role dropdown replaced with a readonly input field -->
           <v-col cols="12" md="6">
-             <!-- UPDATED ROLE SELECT -->
-            <v-select
+            <label class="v-label mb-3 font-weight-bold text-black">Role</label>
+            <v-text-field
               v-model="form.role"
-              :items="['Admin']"
-              label="Role"
               variant="outlined"
+              readonly
               :error-messages="v$.role.$errors.map(e => e.$message)"
               @blur="v$.role.$touch"
-            ></v-select>
+            ></v-text-field>
           </v-col>
+          <!-- END OF UPDATE -->
+
         </v-row>
       </v-card-text>
     </v-card>
@@ -107,7 +127,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed } from "vue"; // Import computed
+import { reactive, ref, computed } from "vue";
 import { useMyFetch } from "~/composables/useMyFetch";
 import { useVuelidate } from '@vuelidate/core';
 import { required, email, minLength, sameAs } from '@vuelidate/validators';
@@ -120,27 +140,28 @@ const form = reactive({
   username: "",
   password: "",
   repeat_password: "",
-  name: "",
+  firstname: "",
+  middlename: "",
+  lastname: "",
   email: "",
   contact_number: "",
-  role: "Admin",
+  role: "Admin", // The default value is still set here
 });
 
-// Create a reactive reference to the password field for the validator to watch.
 const passwordRef = computed(() => form.password);
 
-// Define validation rules with the corrected sameAs validator
 const rules = {
-  name: { required },
+  firstname: { required },
+  lastname: { required },
   username: { required },
   email: { required, email },
   contact_number: { required },
   password: { required, minLength: minLength(6) },
   repeat_password: { 
     required, 
-    sameAs: sameAs(passwordRef) // This now correctly tracks the password field
+    sameAs: sameAs(passwordRef)
   },
-  role: { required },
+  role: { required }, // The validation rule still ensures a role is present
 };
 
 const v$ = useVuelidate(rules, form);

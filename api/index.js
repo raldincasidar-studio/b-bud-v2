@@ -1806,86 +1806,114 @@ app.put('/api/documents/:id', async (req, res) => {
 
 // ADD NEW ADMIN (POST)
 app.post('/api/admins', async (req, res) => {
-
   const dab = await db();
 
+  // UPDATED: Validation rules for new name fields
+  const nameRegex = /^[a-zA-Z\s'-]+$/; // Allows letters, spaces, hyphens, apostrophes
   const requiredFields = [
+    { field: 'firstname', value: req.body.firstname, format: nameRegex },
+    { field: 'lastname', value: req.body.lastname, format: nameRegex },
     { field: 'username', value: req.body.username, format: /^[a-zA-Z0-9._%+-]+$/ },
-    { field: 'password', value: req.body.password, format: /^[a-zA-Z0-9._%+-]{6,}$/ },
-    { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'password', value: req.body.password, format: /^.{6,}$/ }, // Simplified to min 6 chars
     { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
     { field: 'role', value: req.body.role, format: /^(Super Admin|Admin)$/ },
   ];
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+  const errors = requiredFields
+    .filter(({ value, format }) => !value || !format.test(value))
+    .map(({ field }) => ({ field, message: `${field} is missing or has an invalid format` }));
 
   if (errors.length > 0) {
-    res.json({error: 'Invalid field format: ' + errors.map(error => error.message).join(', ')});
-    return;
+    return res.status(400).json({ error: 'Invalid field format: ' + errors.map(e => e.message).join(', ') });
   }
+
+  // UPDATED: Construct the new admin object and create a 'fullname' field
+  const { firstname, middlename, lastname, username, email, password, contact_number, role } = req.body;
+  
+  // Creates a full name, intelligently skipping the middle name if it's empty
+  const name = [firstname, middlename, lastname].filter(Boolean).join(' ');
+
+  const newAdminData = {
+    firstname,
+    middlename: middlename || '', // Ensure middlename is stored as an empty string if null/undefined
+    lastname,
+    name, // Store the combined fullname for easy searching/display
+    username,
+    email,
+    contact_number,
+    role,
+    password: md5(password),
+    createdAt: new Date(),
+  };
 
   const adminsCollection = dab.collection('admins');
 
-  // Check for validation
-  if (req.body.role === 'Super Admin') {
-      const existingTechAdmin = await adminsCollection.findOne({ role: 'Super Admin' });
-      if (existingTechAdmin) {
-          return res.status(409).json({ error: 'A Super Admin account already exists.' });
-      }
+  // Check for Super Admin existence
+  if (role === 'Super Admin') {
+    const existingTechAdmin = await adminsCollection.findOne({ role: 'Super Admin' });
+    if (existingTechAdmin) {
+      return res.status(409).json({ error: 'A Super Admin account already exists.' });
+    }
   }
+  
+  // Insert the new structured data
+  await adminsCollection.insertOne(newAdminData);
 
-  await adminsCollection.insertOne({...req.body, password: md5(req.body.password), createdAt: new Date() });
-
-   // --- ADD AUDIT LOG HERE ---
-  // TODO: In a real app with auth middleware, you'd know which admin created this one.
+  // --- ADD AUDIT LOG HERE ---
   await createAuditLog({
-    description: `A new admin account was created: '${req.body.username}'.`,
+    description: `A new admin account was created: '${username}'.`,
     action: 'CREATE',
     entityType: 'Admin'
-    // We don't have the new ID here, but you could fetch it if needed.
   }, req);
   // --- END AUDIT LOG ---
 
-  res.json({message: 'Admin added successfully'});
-})
+  res.json({ message: 'Admin added successfully' });
+});
 
 // GET ALL ADMINS (GET)
 app.get('/api/admins', async (req, res) => {
-
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
 
   const dab = await db();
   const adminsCollection = dab.collection('admins');
+
+  // UPDATED: Search query to use the new 'fullname' field
   const query = search ? {
     $or: [
       { username: { $regex: new RegExp(search, 'i') } },
-      { name: { $regex: new RegExp(search, 'i') } },
+      { name: { $regex: new RegExp(search, 'i') } }, // Search the combined name field
       { email: { $regex: new RegExp(search, 'i') } },
       { role: { $regex: new RegExp(search, 'i') } },
     ]
   } : {};
+
+  // UPDATED: Projection to return the new name fields
   const admins = await adminsCollection.find(query, {
     projection: {
       username: 1,
-      name: 1,
+      firstname: 1,
+      middlename: 1,
+      lastname: 1,
+      name: 1, // Return the full name for display
       email: 1,
       role: 1,
       _id: 1,
       createdAt: 1,
-      action: { $ifNull: [ "$action", "" ] }
+      action: { $ifNull: ["$action", ""] }
     }
   })
     .skip((page - 1) * itemsPerPage)
     .limit(itemsPerPage)
     .toArray();
+
   const totalAdmins = await adminsCollection.countDocuments(query);
   res.json({
     admins: admins,
     totalAdmins: totalAdmins
   });
-})
+});
 
 // GET ADMIN BY ID (GET)
 app.get('/api/admins/:id', async (req, res) => {
@@ -1899,8 +1927,8 @@ app.get('/api/admins/:id', async (req, res) => {
       }
     }
   );
-  res.json({admin});
-})
+  res.json({ admin });
+});
 
 /// DELETE ADMIN BY ID (DELETE)
 app.delete("/api/admins/:id", async (req, res) => {
@@ -1939,60 +1967,77 @@ app.delete("/api/admins/:id", async (req, res) => {
 
 // UPDATE ADMIN BY ID (PUT)
 app.put('/api/admins/:id', async (req, res) => {
-
   const dab = await db();
-
   const adminsCollection = dab.collection('admins');
 
-  const { username, name, email, role, password } = req.body;
+  // Fetch the current admin data first for the audit log
+  const currentAdmin = await adminsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  if (!currentAdmin) {
+    return res.status(404).json({ error: 'Admin not found.' });
+  }
 
+  // --- VALIDATION ---
+  const { firstname, lastname, username, email, password, contact_number } = req.body;
+  const nameRegex = /^[a-zA-Z\s'-]+$/;
   const requiredFields = [
-    { field: 'username', value: username, format: /^[a-zA-Z0-9_]+$/ },
-    { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'firstname', value: firstname, format: nameRegex },
+    { field: 'lastname', value: lastname, format: nameRegex },
+    { field: 'username', value: username, format: /^[a-zA-Z0-9._%+-]+$/ },
     { field: 'email', value: email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: role, format: /^(Admin|Superadmin)$/ },
   ];
 
-  // Check for validation
-  if (req.body.role === 'Technical Admin') {
-      const existingTechAdmin = await adminsCollection.find({ role: 'Technical Admin' }).toArray();
-      if (existingTechAdmin.length > 1) {
-          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
-      }
-  }
-
   if (password) {
-    requiredFields.push({ field: 'password', value: password, format: /^[a-zA-Z0-9_]+$/ });
+    // Only validate password if it's being changed
+    requiredFields.push({ field: 'password', value: password, format: /^.{6,}$/ });
   }
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+  const errors = requiredFields
+    .filter(({ value, format }) => !value || !format.test(value))
+    .map(({ field }) => ({ field, message: `${field} is missing or invalid` }));
 
   if (errors.length > 0) {
-    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
+    return res.status(400).json({ error: 'Invalid field format: ' + errors.map(e => e.message).join(', ') });
   }
+  // --- END VALIDATION ---
 
-  const data = { ...req.body };
-  if (data.password) data.password = md5(data.password);
+
+  // --- DATA PREPARATION ---
+  // Build the update object safely
+  const setData = {
+    firstname,
+    middlename: req.body.middlename || '', // Ensure middlename is at least an empty string
+    lastname,
+    username,
+    email,
+    contact_number,
+    // Generate the fullname for consistent searching
+    name: [firstname, req.body.middlename, lastname].filter(Boolean).join(' '),
+  };
+
+  // Only add the password to the update object if it was provided
+  if (password) {
+    setData.password = md5(password);
+  }
+  // --- END DATA PREPARATION ---
+
 
   await adminsCollection.updateOne(
     { _id: new ObjectId(req.params.id) },
-    { $set: data }
+    { $set: setData }
   );
 
   // --- ADD AUDIT LOG HERE ---
-    await createAuditLog({
-      description: `Admin account updated: '${currentAdmin.username}' information was modified.`,
-      action: "UPDATE",
-      entityType: "Admin",
-      entityId: req.params.id,
-    }, req)
+  // Using the fetched 'currentAdmin' makes the log more descriptive
+  await createAuditLog({
+    description: `Admin account updated: '${currentAdmin.username}' information was modified.`,
+    action: "UPDATE",
+    entityType: "Admin",
+    entityId: req.params.id,
+  }, req);
   // --- END AUDIT LOG ---
 
-  res.json({message: 'Admin updated successfully'});
-})
-
-
+  res.json({ message: 'Admin updated successfully' });
+});
 
 
 
