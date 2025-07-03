@@ -2125,76 +2125,87 @@ app.post('/api/barangay-officials', async (req, res) => {
     }
 });
 
-// 2. READ (List): GET /api/barangay-officials (No changes needed)
-app.get('/api/barangay-officials', async (req, res) => {
+// 2. READ (List): GET /api/assets - REVISED FOR EFFICIENCY
+app.get('/api/assets', async (req, res) => {
     const search = req.query.search || '';
-    const positionFilter = req.query.position || '';
+    const categoryFilter = req.query.category || '';
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
     const skip = (page - 1) * itemsPerPage;
 
     const dab = await db();
-    const collection = dab.collection('barangay_officials');
-    
-    let query = {};
-    const andConditions = [];
+    const collection = dab.collection('assets');
 
+    // --- Build the match conditions for filtering ---
+    let matchConditions = {};
+    const andConditions = [];
     if (search) {
         const searchRegex = new RegExp(search, 'i');
-        andConditions.push({
-            $or: [
-                { first_name: { $regex: searchRegex } },
-                { last_name: { $regex: searchRegex } },
-                { middle_name: { $regex: searchRegex } },
-                { position: { $regex: searchRegex } },
-                { email_address: { $regex: searchRegex } },
-            ]
-        });
+        andConditions.push({ $or: [{ name: searchRegex }, { category: searchRegex }] });
     }
-
-    if (positionFilter) {
-        andConditions.push({ position: positionFilter });
+    if (categoryFilter) {
+        andConditions.push({ category: categoryFilter });
     }
-    
     if (andConditions.length > 0) {
-        query = { $and: andConditions };
+        matchConditions = { $and: andConditions };
     }
 
     try {
-        const officialsFromDb = await collection.find(query)
-            .sort({ position: 1, last_name: 1, first_name: 1 })
-            .skip(skip)
-            .limit(itemsPerPage)
-            .toArray();
+        // --- Aggregation Pipeline ---
+        const aggregationPipeline = [
+            // Stage 1: Initial filtering of assets
+            { $match: matchConditions },
+
+            // Stage 2: Lookup borrowed items
+            {
+                $lookup: {
+                    from: "borrowed_assets",
+                    let: { assetName: "$name" },
+                    pipeline: [
+                        { $match: { 
+                            $expr: { $eq: ["$item_borrowed", "$$assetName"] },
+                            status: { $in: ['Approved', 'Overdue'] } // Only count items that are actively borrowed
+                        }},
+                        { $group: { _id: null, total: { $sum: "$quantity_borrowed" } } }
+                    ],
+                    as: "borrowed_info"
+                }
+            },
+
+            // Stage 3: Add calculated fields
+            {
+                $addFields: {
+                    borrowed: { $ifNull: [{ $arrayElemAt: ["$borrowed_info.total", 0] }, 0] }
+                }
+            },
+            {
+                $addFields: {
+                    available: { $subtract: ["$total_quantity", "$borrowed"] }
+                }
+            },
             
-        // ✅ START: Automatic status update logic for the list
-        const currentDate = new Date();
-        const officials = officialsFromDb.map(official => {
-            // Check if term dates exist and are valid
-            if (official.term_start && official.term_end) {
-                const termStart = new Date(official.term_start);
-                const termEnd = new Date(official.term_end);
+            // Stage 4: Sort before pagination
+            { $sort: { name: 1 } },
 
-                // If current date is within the term, set status to "active"
-                if (currentDate >= termStart && currentDate <= termEnd) {
-                    // Return a new object with the updated status
-                    return { ...official, status: 'Active' };
-                } else {
-                    return { ...official, status: 'Inactive' };
-
+            // Stage 5: Use $facet for pagination and total count in one go
+            {
+                $facet: {
+                    paginatedResults: [ { $skip: skip }, { $limit: itemsPerPage } ],
+                    totalCount: [ { $count: 'total' } ]
                 }
             }
-            // Otherwise, return the official as-is
-            return official;
-        });
-        // ✅ END: Automatic status update logic
+        ];
 
-        const totalOfficials = await collection.countDocuments(query);
+        const result = await collection.aggregate(aggregationPipeline).toArray();
 
-        res.json({ officials, totalOfficials });
+        const assets = result[0].paginatedResults;
+        const totalAssets = result[0].totalCount.length > 0 ? result[0].totalCount[0].total : 0;
+
+        res.json({ assets, totalAssets });
+
     } catch (error) {
-        console.error("Error fetching officials:", error);
-        res.status(500).json({ error: 'Failed to fetch officials.' });
+        console.error("Error fetching assets:", error);
+        res.status(500).json({ error: 'Failed to fetch assets.' });
     }
 });
 

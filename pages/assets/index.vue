@@ -153,11 +153,12 @@ async function loadCategories() {
   }
 }
 
-// --- DATA LOADING ---
+// --- DATA LOADING (REVISED FOR SIMPLICITY) ---
 async function loadAssets(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp } = options;
   
+  // Only one set of query parameters is needed now
   const queryParams = {
     search: searchKey.value,
     page: page,
@@ -166,31 +167,16 @@ async function loadAssets(options) {
   };
   
   try {
-    const assetsPromise = useMyFetch('/api/assets', { query: queryParams });
-    const inventoryPromise = useMyFetch('/api/assets/inventory-status');
-    const [assetsResponse, inventoryResponse] = await Promise.all([assetsPromise, inventoryPromise]);
+    // Only ONE API call is needed!
+    const { data, error } = await useMyFetch('/api/assets', { query: queryParams });
 
-    if (assetsResponse.error.value) throw new Error('Failed to load assets list.');
-    if (inventoryResponse.error.value) throw new Error('Failed to load inventory status.');
+    if (error.value) {
+      throw new Error('Failed to load assets list.');
+    }
 
-    const paginatedAssets = assetsResponse.data.value?.assets || [];
-    const inventoryStatusList = inventoryResponse.data.value?.inventory || [];
-
-    const inventoryMap = new Map(
-      inventoryStatusList.map(item => [item.name, { borrowed: item.borrowed, available: item.available }])
-    );
-
-    const enrichedAssets = paginatedAssets.map(asset => {
-      const status = inventoryMap.get(asset.name);
-      return {
-        ...asset,
-        available: status ? status.available : asset.total_quantity,
-        borrowed: status ? status.borrowed : 0,
-      };
-    });
-
-    assets.value = enrichedAssets;
-    totalAssets.value = assetsResponse.data.value?.totalAssets || 0;
+    // The data is already enriched by the server. No more client-side merging!
+    assets.value = data.value?.assets || [];
+    totalAssets.value = data.value?.totalAssets || 0;
 
   } catch (e) {
     console.error("Data loading error:", e);
