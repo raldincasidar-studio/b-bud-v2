@@ -42,6 +42,7 @@
           v-for="item in NOTIFICATION_TYPE_FILTER_OPTIONS"
           :key="item.title"
           :value="item.value"
+          :prepend-icon="item.icon" 
           class="text-capitalize"
         >
           {{ item.title }}
@@ -124,10 +125,10 @@ let currentSortBy = ref([{ key: 'date', order: 'desc' }]);
 
 // UPDATED: Filter options now match the new notification types
 const NOTIFICATION_TYPE_FILTER_OPTIONS = [
-    { title: 'All', value: null}, 
-    { title: 'News', value: 'News'},
-    { title: 'Events', value: 'Events'},
-    { title: 'Alert', value: 'Alert'},
+    { title: 'All', value: null, icon: 'mdi-filter-variant' }, 
+    { title: 'News', value: 'News', icon: 'mdi-newspaper-variant-outline' },
+    { title: 'Events', value: 'Events', icon: 'mdi-calendar-star' },
+    { title: 'Alert', value: 'Alert', icon: 'mdi-alert-circle-outline' },
 ];
 
 const headers = ref([

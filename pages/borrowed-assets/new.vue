@@ -241,14 +241,27 @@ watch(borrowerSearchQuery, (query) => {
   searchBorrowers(query);
 });
 
+// --- In borrowed-assets/new.vue ---
+
 async function fetchInventory() {
   isLoadingInventory.value = true;
   try {
-    const { data } = await useMyFetch('/api/assets/inventory-status');
-    inventoryItems.value = data.value?.inventory || [];
+    // 1. Call the new, correct endpoint. We use a large itemsPerPage to get all assets.
+    const { data, error } = await useMyFetch('/api/assets', { 
+      query: { itemsPerPage: 1000 } // Get all assets for the dropdown
+    });
+
+    if (error.value) {
+      throw new Error('Failed to load asset inventory.');
+    }
+
+    // 2. The new endpoint returns an 'assets' array, not 'inventory'.
+    // The fields 'name' and 'available' are already calculated correctly by the server.
+    inventoryItems.value = data.value?.assets || [];
+
   } catch(e) {
     console.error("Error fetching inventory:", e);
-    $toast.fire({ title: 'Could not load asset inventory.', icon: 'error' });
+    $toast.fire({ title: e.message || 'Could not load asset inventory.', icon: 'error' });
   } finally {
     isLoadingInventory.value = false;
   }

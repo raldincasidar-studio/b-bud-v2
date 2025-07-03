@@ -35,7 +35,7 @@
 
       <v-card-text>
         <v-chip-group v-model="statusFilter" column>
-          <v-chip filter value="All" color="primary">All</v-chip>
+          <v-chip filter value="All" color="primary" prepend-icon="mdi-filter-variant">All</v-chip>
           <!-- CORRECTED: Comment is now outside the tag -->
           <v-chip
             v-for="status in statusFilters"
