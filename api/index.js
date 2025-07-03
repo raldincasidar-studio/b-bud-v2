@@ -3402,7 +3402,7 @@ app.delete('/api/borrowed-assets/:id', async (req, res) => {
 
 // ================================ INVENTORY MANAGEMENT ================================ //
 
-// NEW ENDPOINT: GET /api/assets/inventory-status
+// NEW ENDPOINT: GET /api/assets/inventory-status - REVISED WITH CORRECT STATUSES
 app.get('/api/assets/inventory-status', async (req, res) => {
     try {
         const dab = await db();
@@ -3412,9 +3412,13 @@ app.get('/api/assets/inventory-status', async (req, res) => {
         // Step 1: Get the master list of all assets and their total quantities
         const allAssets = await assetsCollection.find({}, { projection: { name: 1, total_quantity: 1, _id: 0 } }).toArray();
 
-        // Step 2: Get the count of all items currently borrowed (not Returned, Lost, or Damaged)
+        // Step 2: Get the count of all items currently borrowed (not Returned or Resolved)
         const borrowedCounts = await borrowedAssetsCollection.aggregate([
-            { $match: { status: { $in: ['Borrowed', 'Overdue'] } } },
+            { $match: { 
+                // CORRECTED: Any status that means the item is 'out' should be counted.
+                status: { $in: ['Pending', 'Approved', 'Overdue', 'Lost', 'Damaged'] } 
+              } 
+            },
             { $group: { _id: "$item_borrowed", borrowed: { $sum: "$quantity_borrowed" } } }
         ]).toArray();
 
@@ -3485,7 +3489,7 @@ app.post('/api/assets', async (req, res) => {
     }
 });
 
-// 2. READ (List): GET /api/assets
+// 2. READ (List): GET /api/assets - REVISED WITH SERVER-SIDE CALCULATIONS
 app.get('/api/assets', async (req, res) => {
     const search = req.query.search || '';
     const categoryFilter = req.query.category || '';
@@ -3495,38 +3499,80 @@ app.get('/api/assets', async (req, res) => {
 
     const dab = await db();
     const collection = dab.collection('assets');
-    
-    let query = {};
-    const andConditions = [];
 
+    // --- Build the match conditions for filtering ---
+    let matchConditions = {};
+    const andConditions = [];
     if (search) {
         const searchRegex = new RegExp(search, 'i');
-        andConditions.push({
-            $or: [
-                { name: { $regex: searchRegex } },
-                { category: { $regex: searchRegex } },
-            ]
-        });
+        andConditions.push({ $or: [{ name: searchRegex }, { category: searchRegex }] });
     }
-
     if (categoryFilter) {
         andConditions.push({ category: categoryFilter });
     }
-    
     if (andConditions.length > 0) {
-        query = { $and: andConditions };
+        matchConditions = { $and: andConditions };
     }
 
     try {
-        const assets = await collection.find(query)
-            .sort({ name: 1 })
-            .skip(skip)
-            .limit(itemsPerPage)
-            .toArray();
+        // --- Aggregation Pipeline ---
+        const aggregationPipeline = [
+            // Stage 1: Initial filtering of assets
+            { $match: matchConditions },
+
+            // Stage 2: Lookup borrowed items
+            {
+                $lookup: {
+                    from: "borrowed_assets",
+                    let: { assetName: "$name" },
+                    pipeline: [
+                        { $match: { 
+                            $expr: { $eq: ["$item_borrowed", "$$assetName"] },
+                            // IMPORTANT: Count items that are actually out of inventory
+                            status: { $in: ['Pending', 'Approved', 'Overdue', 'Lost', 'Damaged'] } 
+                        }},
+                        { $group: { _id: null, total: { $sum: "$quantity_borrowed" } } }
+                    ],
+                    as: "borrowed_info"
+                }
+            },
+
+            // Stage 3: Add calculated fields
+            {
+                $addFields: {
+                    borrowed: { $ifNull: [{ $arrayElemAt: ["$borrowed_info.total", 0] }, 0] }
+                }
+            },
+            {
+                $addFields: {
+                    available: { $subtract: ["$total_quantity", "$borrowed"] }
+                }
+            },
             
-        const totalAssets = await collection.countDocuments(query);
+            // Stage 4: Sort before pagination
+            { $sort: { name: 1 } },
+
+            // Stage 5: Use $facet for pagination and total count in one go
+            {
+                $facet: {
+                    paginatedResults: [ 
+                        { $skip: skip }, 
+                        { $limit: itemsPerPage },
+                        // Select only the fields needed by the frontend
+                        { $project: { name: 1, category: 1, total_quantity: 1, available: 1, borrowed: 1 } }
+                    ],
+                    totalCount: [ { $count: 'total' } ]
+                }
+            }
+        ];
+
+        const result = await collection.aggregate(aggregationPipeline).toArray();
+
+        const assets = result[0].paginatedResults;
+        const totalAssets = result[0].totalCount.length > 0 ? result[0].totalCount[0].total : 0;
 
         res.json({ assets, totalAssets });
+
     } catch (error) {
         console.error("Error fetching assets:", error);
         res.status(500).json({ error: 'Failed to fetch assets.' });
