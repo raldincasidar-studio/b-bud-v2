@@ -2125,87 +2125,100 @@ app.post('/api/barangay-officials', async (req, res) => {
     }
 });
 
-// 2. READ (List): GET /api/assets - REVISED FOR EFFICIENCY
-app.get('/api/assets', async (req, res) => {
-    const search = req.query.search || '';
-    const categoryFilter = req.query.category || '';
-    const page = parseInt(req.query.page) || 1;
-    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-    const skip = (page - 1) * itemsPerPage;
-
-    const dab = await db();
-    const collection = dab.collection('assets');
-
-    // --- Build the match conditions for filtering ---
-    let matchConditions = {};
-    const andConditions = [];
-    if (search) {
-        const searchRegex = new RegExp(search, 'i');
-        andConditions.push({ $or: [{ name: searchRegex }, { category: searchRegex }] });
-    }
-    if (categoryFilter) {
-        andConditions.push({ category: categoryFilter });
-    }
-    if (andConditions.length > 0) {
-        matchConditions = { $and: andConditions };
-    }
-
+// 2. READ (List): GET /api/barangay-officials
+app.get('/api/barangay-officials', async (req, res) => {
     try {
-        // --- Aggregation Pipeline ---
-        const aggregationPipeline = [
-            // Stage 1: Initial filtering of assets
-            { $match: matchConditions },
+        const dab = await db();
+        const collection = dab.collection('barangay_officials');
 
-            // Stage 2: Lookup borrowed items
-            {
-                $lookup: {
-                    from: "borrowed_assets",
-                    let: { assetName: "$name" },
-                    pipeline: [
-                        { $match: { 
-                            $expr: { $eq: ["$item_borrowed", "$$assetName"] },
-                            status: { $in: ['Approved', 'Overdue'] } // Only count items that are actively borrowed
-                        }},
-                        { $group: { _id: null, total: { $sum: "$quantity_borrowed" } } }
-                    ],
-                    as: "borrowed_info"
-                }
-            },
+        // --- 1. Extract and Sanitize Query Parameters ---
+        const {
+            search,
+            status: statusFilter,
+            position: positionFilter,
+            sortBy,
+            sortOrder
+        } = req.query;
 
-            // Stage 3: Add calculated fields
-            {
-                $addFields: {
-                    borrowed: { $ifNull: [{ $arrayElemAt: ["$borrowed_info.total", 0] }, 0] }
-                }
-            },
-            {
-                $addFields: {
-                    available: { $subtract: ["$total_quantity", "$borrowed"] }
-                }
-            },
-            
-            // Stage 4: Sort before pagination
-            { $sort: { name: 1 } },
+        const page = parseInt(req.query.page) || 1;
+        const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+        const skip = (page - 1) * itemsPerPage;
 
-            // Stage 5: Use $facet for pagination and total count in one go
-            {
-                $facet: {
-                    paginatedResults: [ { $skip: skip }, { $limit: itemsPerPage } ],
-                    totalCount: [ { $count: 'total' } ]
-                }
-            }
-        ];
+        // --- 2. (Optional but Recommended) Automatic Status Update ---
+        // This ensures the data is always fresh before querying.
+        const currentDate = new Date();
+        // Set to 'Inactive' if their term has ended but they are still 'Active'
+        await collection.updateMany(
+            { status: 'Active', term_end: { $lt: currentDate } },
+            { $set: { status: 'Inactive' } }
+        );
+        // Set to 'Active' if they are within their term but still 'Inactive'
+        await collection.updateMany(
+            { status: 'Inactive', term_start: { $lte: currentDate }, term_end: { $gte: currentDate } },
+            { $set: { status: 'Active' } }
+        );
 
-        const result = await collection.aggregate(aggregationPipeline).toArray();
+        // --- 3. Build the MongoDB Query Dynamically ---
+        let query = {};
+        const conditions = [];
 
-        const assets = result[0].paginatedResults;
-        const totalAssets = result[0].totalCount.length > 0 ? result[0].totalCount[0].total : 0;
+        if (statusFilter) {
+            conditions.push({ status: statusFilter });
+        }
+        if (positionFilter) {
+            conditions.push({ position: positionFilter });
+        }
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            conditions.push({
+                $or: [
+                    { first_name: searchRegex },
+                    { last_name: searchRegex },
+                    { position: searchRegex }
+                ]
+            });
+        }
+        if (conditions.length > 0) {
+            query = { $and: conditions };
+        }
+        
+        // --- 4. Define Sorting Options ---
+        let sortOptions = { term_start: -1 }; // Default sort: newest term first
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
 
-        res.json({ assets, totalAssets });
+        // --- 5. Fetch Paginated Data ---
+        const officials = await collection.find(query)
+            .project({ // Select only necessary fields for the list view
+                first_name: 1,
+                last_name: 1,
+                position: 1,
+                status: 1,
+                term_start: 1,
+                term_end: 1,
+                photo_url: 1
+            })
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        // --- 6. Fetch Total Count for Pagination UI ---
+        const totalOfficials = await collection.countDocuments(query);
+
+        // --- 7. Send the Response ---
+        res.json({
+            officials,
+            total: totalOfficials,
+            page,
+            itemsPerPage,
+            totalPages: Math.ceil(totalOfficials / itemsPerPage)
+        });
 
     } catch (error) {
-        console.error("Error fetching assets:", error);
-        res.status(500).json({ error: 'Failed to fetch assets.' });
+        console.error("Error fetching barangay officials:", error);
+        res.status(500).json({ error: 'Failed to fetch barangay officials.' });
     }
 });
 
@@ -2932,6 +2945,8 @@ app.post('/api/borrowed-assets', async (req, res) => {
     const assetsCollection = dab.collection('assets');
     const borrowedAssetsCollection = dab.collection('borrowed_assets');
 
+    const refNo = await generateUniqueReference(borrowedAssetsCollection);
+
     // Server-side Stock Validation
     const masterAsset = await assetsCollection.findOne({ name: item_borrowed });
     if (!masterAsset) {
@@ -2953,6 +2968,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
 
     // Create New Transaction Document
     const newTransaction = {
+      ref_no: refNo,
       borrower_resident_id: new ObjectId(borrower_resident_id),
       borrower_display_name: String(borrower_display_name).trim(),
       borrow_datetime: new Date(borrow_datetime),
@@ -2969,7 +2985,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
       updated_at: new Date(),
     };
     const result = await borrowedAssetsCollection.insertOne(newTransaction);
-    const insertedDoc = await borrowedAssetsCollection.findOne({ _id: result.insertedId });
+    const insertedDoc = await borrowedAssetsCollection.findOne({ ref_no: refNo });
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
@@ -3021,6 +3037,7 @@ app.get('/api/borrowed-assets', async (req, res) => {
       const searchRegex = new RegExp(search.trim(), 'i');
       matchConditions.push({
         $or: [
+          { ref_no: searchRegex },
           { item_borrowed: searchRegex },
           { "borrower_details.first_name": searchRegex },
           { "borrower_details.last_name": searchRegex },
@@ -3034,11 +3051,14 @@ app.get('/api/borrowed-assets', async (req, res) => {
       matchConditions.push({ borrower_resident_id: new ObjectId(byResidentId) });
     }
 
-    // Add status filter if it exists. Handles single or multiple statuses.
+    // Replace your old "if (status)" block with this one:
     if (status) {
       const statusArray = status.split(',').map(s => s.trim());
-      // Filter against 'current_status' to correctly find 'Overdue' items
-      matchConditions.push({ current_status: { $in: statusArray } });
+      // Only apply the status filter if the array is not empty AND it does not contain "All".
+      if (statusArray.length > 0 && !statusArray.includes('All')) {
+        matchConditions.push({ current_status: { $in: statusArray } });
+      }
+      // If 'All' is present or the array is empty, no status filter will be added, showing all records.
     }
 
     // Combine all filters into a single $match stage
@@ -3063,7 +3083,7 @@ app.get('/api/borrowed-assets', async (req, res) => {
       // Stage 4: Shape the data for the frontend
       {
         $project: {
-          _id: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1,
+          _id: 1, ref_no: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1,
           status: "$current_status", // Use the calculated status
           borrower_name: { $concat: [ { $ifNull: ["$borrower_details.first_name", "Unknown"] }, " ", { $ifNull: ["$borrower_details.last_name", "Resident"] } ] },
         }
@@ -3101,23 +3121,46 @@ app.get('/api/borrowed-assets', async (req, res) => {
   }
 });
 
+const findByRefOrId = (id) => {
+  // If the ID looks like a MongoDB ObjectId, search by both.
+  // Otherwise, assume it's a ref_no. This provides backward compatibility.
+  if (ObjectId.isValid(id)) {
+    return { $or: [{ _id: new ObjectId(id) }, { ref_no: id }] };
+  }
+  // If it's not a valid ObjectId format, it must be a ref_no
+  return { ref_no: id };
+};
+
 // 3. GET TRANSACTION BY ID (GET)
 app.get('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   try {
     const aggregationPipeline = [
-      { $match: { _id: new ObjectId(id) } },
+      { $match: findByRefOrId(id) }, 
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
       { $addFields: { current_status: { $cond: { if: { $and: [ { $eq: ["$status", STATUS.APPROVED] }, { $lt: ["$expected_return_date", new Date()] } ] }, then: STATUS.OVERDUE, else: "$status" } } } },
       {
         $project: {
-          borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1, status: "$current_status", expected_return_date: 1,
-          date_returned: 1, return_proof_image_url: 1, return_condition_notes: 1, notes: 1, created_at: 1, updated_at: 1, borrower_resident_id: 1,
-          borrower_display_name: 1, borrower_details: 1,
+          _id: 1, // <-- THIS IS THE CRITICAL FIX
+          ref_no: 1, 
+          borrow_datetime: 1, 
+          borrowed_from_personnel: 1, 
+          item_borrowed: 1, 
+          quantity_borrowed: 1, 
+          status: "$current_status", 
+          expected_return_date: 1,
+          date_returned: 1, 
+          return_proof_image_url: 1, 
+          return_condition_notes: 1, 
+          notes: 1, 
+          created_at: 1, 
+          updated_at: 1, 
+          borrower_resident_id: 1,
+          borrower_display_name: 1, 
+          borrower_details: 1,
         }
       }
     ];
@@ -3134,12 +3177,15 @@ app.get('/api/borrowed-assets/:id', async (req, res) => {
 // 4. UPDATE TRANSACTION DETAILS (PUT)
 app.put('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
+  // This line should be removed to allow ref_no
+  // if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' }); 
+
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   const { borrow_datetime, item_borrowed, quantity_borrowed, expected_return_date, notes } = req.body;
   
   const updateFields = {};
+  // ... (your updateFields logic is fine) ...
   if (borrow_datetime !== undefined) updateFields.borrow_datetime = new Date(borrow_datetime);
   if (item_borrowed !== undefined) updateFields.item_borrowed = String(item_borrowed);
   if (quantity_borrowed !== undefined) updateFields.quantity_borrowed = parseInt(quantity_borrowed, 10);
@@ -3150,22 +3196,23 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
   updateFields.updated_at = new Date();
 
   try {
-    const transactionToUpdate = await collection.findOne({ _id: new ObjectId(id) });
+    const findQuery = findByRefOrId(id);
+
+    const transactionToUpdate = await collection.findOne(findQuery);
     if (!transactionToUpdate) return res.status(404).json({ error: 'Transaction not found.' });
 
-    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    const result = await collection.updateOne(findQuery, { $set: updateFields });
     if (result.matchedCount === 0) return res.status(404).json({ error: 'Transaction not found during update.' });
     
-    const updatedDoc = await collection.findOne({ _id: new ObjectId(id) });
+    // MODIFIED: Use the reliable findQuery to get the updated document
+    const updatedDoc = await collection.findOne(findQuery);
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `Details updated for borrowed asset transaction: '${updatedDoc.item_borrowed}' (Borrower: ${updatedDoc.borrower_display_name}).`,
+      description: `Details updated for borrowed asset transaction: '${updatedDoc.item_borrowed}' (Ref: ${updatedDoc.ref_no}).`,
       action: "UPDATE",
       entityType: "BorrowTransaction",
-      entityId: id,
-      // In a real app, you'd get the admin's name from auth context
-      // userName: req.user.name 
+      entityId: updatedDoc._id.toString(),
     }, req);
     // --- END AUDIT LOG ---
 
@@ -3180,46 +3227,56 @@ app.put('/api/borrowed-assets/:id', async (req, res) => {
 app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status: newStatus, notes } = req.body;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid Transaction ID format' });
-  if (!newStatus || !Object.values(STATUS).includes(newStatus)) return res.status(400).json({ error: `Status is required and must be one of: ${Object.values(STATUS).join(', ')}` });
+  
+  if (!newStatus || !Object.values(STATUS).includes(newStatus)) {
+    return res.status(400).json({ error: `Status is required and must be one of: ${Object.values(STATUS).join(', ')}` });
+  }
   
   try {
     const dab = await db();
     const borrowedAssetsCollection = dab.collection('borrowed_assets');
     const residentsCollection = dab.collection('residents');
 
-    const transaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
-    if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
-    const oldStatus = transaction.status;
+    // Find the document by ref_no or _id
+    const findQuery = ObjectId.isValid(id) 
+      ? { $or: [{ _id: new ObjectId(id) }, { ref_no: id }] } 
+      : { ref_no: id };
 
-    // Only proceed if status is actually changing
+    const transaction = await borrowedAssetsCollection.findOne(findQuery);
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found.' });
+    }
+    
+    const oldStatus = transaction.status;
     if (oldStatus === newStatus) {
         return res.json({ message: `Transaction status is already '${newStatus}'.`, transaction: transaction });
     }
 
     const updateFields = { status: newStatus, updated_at: new Date() };
     if (notes) {
-      updateFields.notes = transaction.notes ? `${transaction.notes}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}` : `[${new Date().toLocaleString()}] ${notes}`;
+      updateFields.notes = transaction.notes 
+        ? `${transaction.notes}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}` 
+        : `[${new Date().toLocaleString()}] ${notes}`;
     }
     
+    // --- THIS BLOCK IS NOW CORRECTED ---
     // Deactivate/Reactivate resident if item is lost/damaged or resolved
     if ([STATUS.LOST, STATUS.DAMAGED].includes(newStatus)) {
         await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Deactivated' } });
-    } else if (newStatus === STATUS.RESOLVED && [STATUS.LOST, STATUS.DAMAGED].includes(transaction.status)) {
+    } else if (newStatus === STATUS.RESOLVED && [STATUS.LOST, STATUS.DAMAGED].includes(transaction.status)) { // CORRECTED: DAMAGED
         await residentsCollection.updateOne({ _id: transaction.borrower_resident_id }, { $set: { 'account_status': 'Active' } });
     }
+    // --- END OF CORRECTION ---
 
-    await borrowedAssetsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+    await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
       description: `Status for borrowed item '${transaction.item_borrowed}' (Borrower: ${transaction.borrower_display_name}) changed from '${oldStatus}' to '${newStatus}'.`,
       action: "STATUS_CHANGE",
       entityType: "BorrowTransaction",
-      entityId: id,
+      entityId: transaction._id.toString(), // Use the actual _id for consistency
     }, req);
-    // --- END AUDIT LOG ---
-
 
     // Create notification for all status changes
     await createNotification(dab, {
@@ -3231,26 +3288,34 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
       recipient_ids: [transaction.borrower_resident_id],
     });
 
-    const updatedTransaction = await borrowedAssetsCollection.findOne({ _id: new ObjectId(id) });
+    const updatedTransaction = await borrowedAssetsCollection.findOne(findQuery);
     res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
   } catch (error) {
+    // This catch block was being triggered by the typo
     console.error("Error updating transaction status:", error);
     res.status(500).json({ error: 'Database error during status update.' });
   }
 });
 
-// 6. PROCESS ITEM RETURN (PATCH) - UPDATED FOR BASE64
+// 6. PROCESS ITEM RETURN (PATCH)
 app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
     const { id } = req.params;
     const { return_proof_image_base64, return_condition_notes } = req.body;
-    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid transaction ID format.' });
+    
+    // REMOVED: This validation was causing the 400 Bad Request error.
+    // if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid transaction ID format.' });
 
     try {
         const dab = await db();
         const collection = dab.collection('borrowed_assets');
 
-        const transaction = await collection.findOne({ _id: new ObjectId(id) });
-        if (!transaction) return res.status(404).json({ error: 'Transaction not found.' });
+        // This helper function correctly finds the document by ref_no or _id
+        const findQuery = findByRefOrId(id);
+
+        const transaction = await collection.findOne(findQuery);
+        if (!transaction) {
+            return res.status(404).json({ error: 'Transaction not found.' });
+        }
         if (![STATUS.APPROVED, STATUS.OVERDUE].includes(transaction.status)) {
           return res.status(400).json({ error: `Cannot return an item with status '${transaction.status}'.` });
         }
@@ -3263,18 +3328,21 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
             updated_at: new Date(),
         };
 
-        await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        await collection.updateOne(findQuery, { $set: updateFields });
         
         // --- ADD AUDIT LOG HERE ---
         await createAuditLog({
           description: `Item returned for transaction: ${transaction.quantity_borrowed}x '${transaction.item_borrowed}' by ${transaction.borrower_display_name}.`,
           action: "STATUS_CHANGE",
           entityType: "BorrowTransaction",
-          entityId: id,
+          // Use the actual _id for internal consistency
+          entityId: transaction._id.toString(), 
         }, req);
         // --- END AUDIT LOG ---
 
-        const updatedTransaction = await collection.findOne({ _id: new ObjectId(id) });
+        // MODIFIED: Fetch the updated transaction using the same reliable findQuery
+        const updatedTransaction = await collection.findOne(findQuery);
+        
         res.json({ message: 'Item marked as returned successfully.', transaction: updatedTransaction });
     } catch (error) {
         console.error('Error marking item as returned:', error);
@@ -3285,41 +3353,50 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
 
 // 7. DELETE TRANSACTION (DELETE)
 app.delete('/api/borrowed-assets/:id', async (req, res) => {
+  
+  const { id } = req.params; 
+
+  /*
   if (!ObjectId.isValid(req.params.id)) {
     return res.status(400).json({ error: "Invalid ID format." })
   }
+  */
 
   try {
     const dab = await db()
     const collection = dab.collection("borrowed_assets")
 
-    // Get transaction details before deletion for audit log
-    const transaction = await collection.findOne({ _id: new ObjectId(req.params.id) })
+    const findQuery = findByRefOrId(id);
+
+    const transaction = await collection.findOne(findQuery);
     if (!transaction) {
       return res.status(404).json({ error: "Transaction not found." })
     }
 
-    const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) })
+    const result = await collection.deleteOne(findQuery);
+    
+    // This check is technically redundant since we already found it above, but it's safe to keep.
     if (result.deletedCount === 0) {
-      return res.status(404).json({ error: "Transaction not found." })
+      return res.status(404).json({ error: "Transaction not found during deletion." })
     }
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `Borrowed asset transaction deleted: ${transaction.item_borrowed} (ID: ${req.params.id}).`,
+      // Use the ref_no or _id for description, and the real _id for entityId
+      description: `Borrowed asset transaction deleted: ${transaction.item_borrowed} (Ref: ${transaction.ref_no || id}).`,
       action: "DELETE",
       entityType: "BorrowedAsset",
-      entityId: req.params.id,
+      entityId: transaction._id.toString(), // Use the actual MongoDB _id internally
     }, req)
     // --- END AUDIT LOG ---
 
     res.json({ message: "Transaction deleted successfully" })
   } catch (error) {
+    // This catch block was likely triggered by 'findByRefOrId is not defined' before.
     console.error("Error deleting borrowed asset:", error)
     res.status(500).json({ error: "Failed to delete transaction." })
   }
 });
-
 
 
 
@@ -5269,19 +5346,22 @@ async function createAuditLog(logData, req = null) {
     const dab = await db(); // Get DB instance
     const auditLogsCollection = dab.collection('audit_logs');
     
+    // --- START: MODIFICATION ---
+    // 1. Generate a unique reference number for this log entry.
+    const refNo = await generateUniqueReference(auditLogsCollection);
+    // --- END: MODIFICATION ---
+
     let userData = {};
     if (req.headers.cookie) { 
-      // console.log("Cookie:", req?.headers?.cookie);
       const cookieArray = req.headers.cookie.split(";").map(c => c.trim());
       const userDataCookie = cookieArray.find(c => c.startsWith('userData='));
       userData = userDataCookie ? JSON.parse(decodeURIComponent(userDataCookie.split('=')[1])) : null;
-
-      console.log('user data: ', userData);
     }
 
     const logDocument = {
+      ref_no: refNo, // <-- 2. ADD THE NEW FIELD HERE
       user_id: logData.userId || null,
-      user_name: logData.userName || userData?.name || 'System', // Default to 'System' if no user is provided
+      user_name: logData.userName || userData?.name || 'System',
       description: logData.description,
       action: logData.action,
       entityType: logData.entityType || null,
@@ -5290,10 +5370,8 @@ async function createAuditLog(logData, req = null) {
     };
     
     await auditLogsCollection.insertOne(logDocument);
-    // console.log('Audit log created:', logData.description); // Optional: for debugging
 
   } catch (error) {
-    // An audit log failure should not crash the main request.
     console.error('FATAL: Could not create audit log.', error);
   }
 }
