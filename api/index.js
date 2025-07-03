@@ -2352,7 +2352,7 @@ app.delete("/api/barangay-officials/:id", async (req, res) => {
 
 
 
-// =================== NOTIFICATION HELPER =========================== //
+// =================== NOTIFICATION HELPER (UPDATED) =========================== //
 
 /**
  * Creates and saves a new notification.
@@ -2361,8 +2361,8 @@ app.delete("/api/barangay-officials/:id", async (req, res) => {
  * @param {string} notificationData.name - Title of the notification.
  * @param {string} notificationData.content - Body of the notification.
  * @param {string} notificationData.by - Creator (Admin/System).
- * @param {string} notificationData.type - Type: 'Announcement', 'Alert', 'Notification'.
- * @param {string} [notificationData.target_audience='SpecificResidents'] - 'All', 'SpecificResidents'.
+ * @param {string} notificationData.type - Type: 'News', 'Events', 'Alert'.
+ * @param {string} [notificationData.target_audience='SpecificResidents'] - 'All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'.
  * @param {string[]} [notificationData.recipient_ids=[]] - Array of resident ObjectId strings.
  * @param {Date|string} [notificationData.date=new Date()] - Effective date of notification.
  * @returns {Promise<object|null>} The created notification document or null on failure.
@@ -2378,7 +2378,7 @@ async function createNotification(dbInstance, notificationData) {
     type,
     target_audience = 'SpecificResidents',
     recipient_ids = [],
-    date = new Date(), // Default to now if not provided
+    date = new Date(),
   } = notificationData;
 
   // Basic validation for core fields
@@ -2386,47 +2386,65 @@ async function createNotification(dbInstance, notificationData) {
     console.error("Notification creation failed in helper: Missing required fields (name, content, by, type). Data:", notificationData);
     return null;
   }
-  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+  if (!['News', 'Events', 'Alert'].includes(type)) {
     console.error("Notification creation failed in helper: Invalid type. Data:", notificationData);
     return null;
   }
 
   let finalRecipientObjects = [];
 
-  if (target_audience === 'All') {
+  if (target_audience === 'SpecificResidents') {
+    if (Array.isArray(recipient_ids) && recipient_ids.length > 0) {
+      finalRecipientObjects = recipient_ids
+        .filter(id => ObjectId.isValid(id))
+        .map(idStr => ({
+          resident_id: new ObjectId(idStr),
+          status: 'pending',
+          read_at: null,
+        }));
+    }
+  } else {
+    // Handle group-based targeting ('All', 'PWDResidents', etc.)
+    let recipientQuery = { status: 'Approved' }; // Base query: always target approved residents
+
+    switch (target_audience) {
+      case 'All':
+        // The base query is already correct for 'All'
+        break;
+      case 'PWDResidents':
+        // Correct based on your schema
+        recipientQuery.is_pwd = true;
+        break;
+      case 'SeniorResidents':
+        // Correct based on your schema
+        recipientQuery.is_senior_citizen = true;
+        break;
+      case 'VotersResidents':
+        // Correct based on your schema
+        recipientQuery.is_voter = true;
+        break;
+      default:
+        console.error(`Notification creation failed: Unknown target_audience '${target_audience}'.`);
+        return null;
+    }
+
     try {
-      // Fetch all 'Approved' resident IDs. Adjust query if different criteria are needed for "All".
-      const allTargetResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
-      finalRecipientObjects = allTargetResidents.map(r => ({
+      const targetResidents = await residentsCollection.find(recipientQuery, { projection: { _id: 1 } }).toArray();
+      finalRecipientObjects = targetResidents.map(r => ({
         resident_id: r._id,
-        status: 'pending', // Initial delivery/read status
+        status: 'pending',
         read_at: null,
       }));
     } catch (e) {
-      console.error("Error fetching all residents for 'All' audience notification:", e);
-      return null; // Stop if we can't get recipients for 'All'
+      console.error(`Error fetching residents for '${target_audience}' audience notification:`, e);
+      return null;
     }
-  } else if (target_audience === 'SpecificResidents' && Array.isArray(recipient_ids) && recipient_ids.length > 0) {
-    finalRecipientObjects = recipient_ids
-      .filter(id => ObjectId.isValid(id)) // Ensure valid IDs
-      .map(idStr => ({
-        resident_id: new ObjectId(idStr),
-        status: 'pending',
-        read_at: null,
-      }));
-  } else if (Array.isArray(recipient_ids) && recipient_ids.length > 0) { // Fallback if target_audience not 'All' but IDs are provided
-     finalRecipientObjects = recipient_ids
-      .filter(id => ObjectId.isValid(id))
-      .map(idStr => ({
-        resident_id: new ObjectId(idStr),
-        status: 'pending',
-        read_at: null,
-      }));
   }
 
-  // Important: Do not create a notification if it has no one to go to (unless 'All' resulted in 0, which is an edge case for an empty system)
-  if (finalRecipientObjects.length === 0 && target_audience !== 'All') {
-    console.warn("Attempted to create notification with no valid specific recipients and target_audience was not 'All'. Data:", notificationData);
+  // Do not create a notification if 'SpecificResidents' was chosen but no one was selected.
+  // For group targets, it's okay to create a notification for 0 people (e.g., no PWDs registered yet).
+  if (target_audience === 'SpecificResidents' && finalRecipientObjects.length === 0) {
+    console.warn("Attempted to create notification with 'SpecificResidents' targeting, but no valid recipients were provided.");
     return null;
   }
 
@@ -2434,7 +2452,7 @@ async function createNotification(dbInstance, notificationData) {
   const newNotificationDoc = {
     name: String(name).trim(),
     content: String(content).trim(),
-    date: new Date(date), // Ensure it's a Date object
+    date: new Date(date),
     by: String(by).trim(),
     type: String(type).trim(),
     recipients: finalRecipientObjects,
@@ -2446,13 +2464,13 @@ async function createNotification(dbInstance, notificationData) {
   try {
     const result = await notificationsCollection.insertOne(newNotificationDoc);
     console.log(`Notification "${name}" (ID: ${result.insertedId}) created for ${finalRecipientObjects.length} recipient(s).`);
-    // Return the full document with the generated _id
     return { _id: result.insertedId, ...newNotificationDoc };
   } catch (error) {
     console.error("Error inserting notification document in helper:", error);
     return null;
   }
 }
+
 
 
 // =================== NOTIFICATION MODULE CRUD =========================== //
@@ -2479,12 +2497,13 @@ app.get('/api/notifications', async (req, res) => {
           { name: { $regex: searchRegex } },
           { content: { $regex: searchRegex } },
           { by: { $regex: searchRegex } },
-          { type: { $regex: searchRegex } }, // Also search by type
+          { type: { $regex: searchRegex } },
         ],
       });
     }
 
-    if (typeFilter && ['Announcement', 'Alert', 'Notification'].includes(typeFilter)) {
+    // UPDATED: Aligned types with frontend
+    if (typeFilter && ['News', 'Events', 'Alert'].includes(typeFilter)) {
       andConditions.push({ type: typeFilter });
     }
 
@@ -2494,7 +2513,7 @@ app.get('/api/notifications', async (req, res) => {
 
     const notifications = await notificationsCollection
       .find(query)
-      .sort({ date: -1 }) // Sort by effective date descending
+      .sort({ date: -1 })
       .skip(skip)
       .limit(itemsPerPage)
       .toArray();
@@ -2626,60 +2645,63 @@ app.patch('/api/residents/:residentId/notifications/mark-read', async (req, res)
 });
 
 
-// ADD NEW NOTIFICATION (POST) - Uses the helper
+// ADD NEW NOTIFICATION (POST) - UPDATED
 app.post('/api/notifications', async (req, res) => {
   const {
-    name, content, date, by, // Existing fields
-    type,                           // NEW: 'Announcement', 'Alert', 'Notification'
-    target_audience = 'SpecificResidents', // NEW: 'All', 'SpecificResidents', defaults if not provided
-    recipient_ids = []              // NEW: Array of resident ObjectId strings
+    name, content, date, by,
+    type,
+    target_audience = 'SpecificResidents',
+    recipient_ids = []
   } = req.body;
 
-  // Basic Validation
+  // Updated Validation
   if (!name || !content || !by || !type) {
     return res.status(400).json({ error: 'Validation failed', message: 'Name, content, by (creator), and type are required.' });
   }
-  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+
+  const VALID_TYPES = ['News', 'Events', 'Alert'];
+  if (!VALID_TYPES.includes(type)) {
     return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
   }
-  if (!['All', 'SpecificResidents'].includes(target_audience)) {
-    return res.status(400).json({ error: 'Validation failed', message: "Invalid target_audience. Must be 'All' or 'SpecificResidents'." });
-  }
-  if (target_audience === 'SpecificResidents' && (!Array.isArray(recipient_ids) || recipient_ids.some(id => !ObjectId.isValid(id)))) {
-    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids must be an array of valid ObjectIds.' });
-  }
-   if (target_audience === 'SpecificResidents' && recipient_ids.length === 0) {
-    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids array cannot be empty.' });
+
+  const VALID_AUDIENCES = ['All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'];
+  if (!VALID_AUDIENCES.includes(target_audience)) {
+    return res.status(400).json({ error: 'Validation failed', message: `Invalid target_audience. Must be one of: ${VALID_AUDIENCES.join(', ')}` });
   }
 
+  if (target_audience === 'SpecificResidents') {
+    if (!Array.isArray(recipient_ids) || recipient_ids.some(id => !ObjectId.isValid(id))) {
+      return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids must be an array of valid ObjectIds.' });
+    }
+    if (recipient_ids.length === 0) {
+      return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids array cannot be empty.' });
+    }
+  }
 
   try {
     const dab = await db();
     const createdNotification = await createNotification(dab, {
-        name, content, by, type, target_audience, recipient_ids, date // Pass all to helper
+        name, content, by, type, target_audience, recipient_ids, date
     });
 
     if (!createdNotification) {
-        // createNotification returns null on internal failure or if no recipients for specific targeting
         return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
     }
 
-    // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `New notification created: '${name}' targeting ${target_audience === "All" ? "all residents" : `${recipient_ids.length} specific residents`}.`,
+      description: `New notification created: '${name}' targeting '${target_audience}'.`,
       action: "CREATE",
       entityType: "Notification",
       entityId: createdNotification._id.toString(),
     }, req)
-    // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Notification added successfully', notification: createdNotification });
   } catch (error) {
-    // This catch is for unexpected errors not handled by createNotification itself (e.g., db connection issue)
     console.error("Error in POST /api/notifications endpoint:", error);
     res.status(500).json({ error: 'Database error', message: 'Could not add notification.' });
   }
 });
+
 
 
 // GET NOTIFICATION BY ID (GET)
@@ -2708,12 +2730,12 @@ app.get('/api/notifications/:id', async (req, res) => {
   }
 });
 
-/// UPDATE NOTIFICATION BY ID (PUT)
+// UPDATE NOTIFICATION BY ID (PUT) - UPDATED
 app.put('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
   const {
     name, content, date, by,
-    type, target_audience, recipient_ids // Allow updating these as well
+    type, target_audience, recipient_ids
   } = req.body;
 
   if (!ObjectId.isValid(id)) {
@@ -2725,10 +2747,7 @@ app.put('/api/notifications/:id', async (req, res) => {
   const residentsCollection = dab.collection('residents');
 
   try {
-    // 1. Fetch the current state of the notification BEFORE updating it.
-    // This is crucial for the audit log and for comparing changes.
     const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
-
     if (!currentNotification) {
       return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
     }
@@ -2736,55 +2755,44 @@ app.put('/api/notifications/:id', async (req, res) => {
     const updateFields = {};
 
     // Standard field validation and updates
-    if (name !== undefined) {
-      if (typeof name !== 'string' || name.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Name cannot be empty.' });
-      updateFields.name = String(name).trim();
-    }
-    if (content !== undefined) {
-      if (typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Content cannot be empty.' });
-      updateFields.content = String(content).trim();
-    }
-    if (date !== undefined) {
-      const parsedDate = new Date(date);
-      if (isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format.' });
-      updateFields.date = parsedDate;
-    }
-    if (by !== undefined) {
-      if (typeof by !== 'string' || by.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Author (by) cannot be empty.' });
-      updateFields.by = String(by).trim();
-    }
+    if (name !== undefined) updateFields.name = String(name).trim();
+    if (content !== undefined) updateFields.content = String(content).trim();
+    if (date !== undefined) updateFields.date = new Date(date);
+    if (by !== undefined) updateFields.by = String(by).trim();
+
+    // Updated validation for type and target_audience
     if (type !== undefined) {
-      if (!['Announcement', 'Alert', 'Notification'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
+      if (!['News', 'Events', 'Alert'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
       updateFields.type = type;
     }
 
-    // Handle recipients update
-    let needsRecipientRebuild = false;
-    if (target_audience !== undefined) {
-        if (!['All', 'SpecificResidents'].includes(target_audience)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
-        updateFields.target_audience = target_audience;
-        needsRecipientRebuild = true;
-    }
-    if (recipient_ids !== undefined) {
-        if (!Array.isArray(recipient_ids) || recipient_ids.some(rid => !ObjectId.isValid(rid))) {
-            return res.status(400).json({ error: 'Validation failed', message: 'recipient_ids must be an array of valid ObjectIds.' });
-        }
-        if (updateFields.target_audience !== 'All' && recipient_ids.length > 0) {
-            updateFields.target_audience = 'SpecificResidents';
-        }
-        needsRecipientRebuild = true;
-    }
-
+    const needsRecipientRebuild = target_audience !== undefined || recipient_ids !== undefined;
+    
     if (needsRecipientRebuild) {
+      const effectiveTargetAudience = target_audience !== undefined ? target_audience : currentNotification.target_audience;
+      const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : currentNotification.recipients.map(r => r.resident_id.toString());
+      
+      const VALID_AUDIENCES = ['All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'];
+      if (!VALID_AUDIENCES.includes(effectiveTargetAudience)) {
+          return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
+      }
+      updateFields.target_audience = effectiveTargetAudience;
+      
       let finalRecipientObjects = [];
-      const effectiveTargetAudience = updateFields.target_audience || currentNotification.target_audience;
-      const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : [];
-
-      if (effectiveTargetAudience === 'All') {
-        const allApprovedResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
-        finalRecipientObjects = allApprovedResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
-      } else if (effectiveTargetAudience === 'SpecificResidents' && effectiveRecipientIds.length > 0) {
-        finalRecipientObjects = effectiveRecipientIds.map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
+      if (effectiveTargetAudience === 'SpecificResidents') {
+          finalRecipientObjects = effectiveRecipientIds
+              .filter(rid => ObjectId.isValid(rid))
+              .map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
+      } else {
+          let recipientQuery = { status: 'Approved' };
+          switch (effectiveTargetAudience) {
+              case 'All': break;
+              case 'PWDResidents': recipientQuery.is_pwd = true; break;
+              case 'SeniorResidents': recipientQuery.is_senior_citizen = true; break;
+              case 'VotersResidents': recipientQuery.is_voter = true; break;
+          }
+          const targetResidents = await residentsCollection.find(recipientQuery, { projection: { _id: 1 } }).toArray();
+          finalRecipientObjects = targetResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
       }
       updateFields.recipients = finalRecipientObjects;
     }
@@ -2795,22 +2803,15 @@ app.put('/api/notifications/:id', async (req, res) => {
     
     updateFields.updated_at = new Date();
 
-    await notificationsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateFields }
-    );
-    
+    await notificationsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     const updatedNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
 
-    // --- AUDIT LOG ---
-    // `currentNotification` is now correctly defined and holds the pre-update name.
     await createAuditLog({
       description: `Notification updated: '${currentNotification.name}' was modified.`,
       action: "UPDATE",
       entityType: "Notification",
       entityId: id,
     }, req);
-    // --- END AUDIT LOG ---
 
     res.json({ message: 'Notification updated successfully', notification: updatedNotification });
 
