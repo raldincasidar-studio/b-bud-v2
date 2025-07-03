@@ -2,7 +2,7 @@
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
       <v-col>
-        <h2 class="text-h4 font-weight-bold">Resident Account Management</h2>
+        <h2 class="text-h4 font-weight-bold">Household Account Management</h2>
         <p class="text-grey-darken-1">Activate, deactivate, and view resident accounts.</p>
       </v-col>
     </v-row>
@@ -13,9 +13,13 @@
         Find Resident Accounts
         <v-spacer></v-spacer>
         <v-text-field
-          v-model="searchKey"  label="Search by name, email, etc..."
-          prepend-inner-icon="mdi-magnify" variant="solo-filled"
-          flat hide-details single-line
+          v-model="searchKey"
+          label="Search by name, email, etc..."
+          prepend-inner-icon="mdi-magnify"
+          variant="solo-filled"
+          flat
+          hide-details
+          single-line
         ></v-text-field>
       </v-card-title>
       <v-divider></v-divider>
@@ -31,6 +35,7 @@
           <v-chip filter value="Pending">Pending</v-chip>
           <v-chip filter value="Approved">Approved</v-chip>
           <v-chip filter value="Deactivated">Deactivated</v-chip>
+          <v-chip filter value="Declined">Declined</v-chip>
         </v-chip-group>
       </v-card-text>
       <v-divider></v-divider>
@@ -46,9 +51,8 @@
         item-value="_id"
       >
         <template v-slot:item._id="{ item }">
-          # {{ item._id.slice(-4) }}
+          #{{ item._id.slice(-4) }}
         </template>
-
 
         <template v-slot:item.full_name="{ item }">
           {{ item.first_name }} {{ item.last_name }}
@@ -60,16 +64,25 @@
           </v-chip>
         </template>
 
+        <!-- UPDATE: Slots for date_added and date_approved -->
+        <template v-slot:item.date_added="{ item }">
+            {{ formatDate(item.date_added) }}
+        </template>
+
+        <template v-slot:item.date_approved="{ item }">
+            {{ formatDate(item.date_approved) }}
+        </template>
+
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <!-- <v-menu offset-y>
+            <v-menu offset-y>
               <template v-slot:activator="{ props }">
                 <v-btn
                   icon="mdi-dots-vertical" size="small" variant="text" v-bind="props"
                   :loading="updatingStatusFor === item._id" :disabled="updatingStatusFor === item._id"
                 ></v-btn>
               </template>
-              <v-list >
+              <v-list dense>
                 <v-list-item
                   v-for="action in getAvailableActions(item.status)"
                   :key="action.status"
@@ -79,7 +92,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu> -->
+            </v-menu>
         </template>
 
         <template v-slot:no-data>
@@ -88,7 +101,7 @@
       </v-data-table-server>
     </v-card>
 
-    <!-- Decline with Reason Dialog (unchanged) -->
+    <!-- Decline with Reason Dialog -->
     <v-dialog v-model="declineDialog" persistent max-width="500px">
       <v-card>
         <v-card-title class="text-h5">Decline Account</v-card-title>
@@ -118,11 +131,10 @@
 import { ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '~/composables/useMyFetch';
-const { $toast } = useNuxtApp();
 
+const { $toast } = useNuxtApp();
 const route = useRoute();
 
-// --- State Definitions ---
 const searchKey = ref('');
 const statusFilter = ref(route.query.status || 'All');
 const totalItems = ref(0);
@@ -130,8 +142,8 @@ const residents = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
+const currentTableOptions = ref({}); // To store table state for reloading
 
-// State for Decline Dialog (unchanged)
 const declineDialog = ref(false);
 const residentToDecline = ref(null);
 const declineReason = ref('');
@@ -140,13 +152,13 @@ const declineReason = ref('');
 const headers = ref([
   { title: 'Acc Number', key: '_id', sortable: false },
   { title: 'Resident Name', key: 'full_name', sortable: false },
-  { title: 'Email', key: 'email', sortable: true },
-  { title: 'Phone Number', key: 'contact_number', sortable: false },
+  { title: 'Email', key: 'email', sortable: false },
+  { title: 'Date Added', key: 'date_added', sortable: true },
+  { title: 'Date Approved', key: 'date_approved', sortable: true },
   { title: 'Account Status', key: 'status', sortable: true, align: 'center' },
   { title: 'Actions', key: 'actions', sortable: false, align: 'center', width: '150px' },
 ]);
 
-// Action Handlers (unchanged)
 const getAvailableActions = (currentStatus) => {
     const actions = {
         'Approve': { status: 'Approved', title: 'Approve Account', icon: 'mdi-check-circle-outline', color: 'success' },
@@ -183,23 +195,25 @@ const confirmDecline = async () => {
     declineDialog.value = false;
 };
 
+// UPDATE: This function now reloads the table to get fresh data
 async function updateResidentStatus(resident, newStatus, reason = null) {
   updatingStatusFor.value = resident._id;
   try {
     const payload = { status: newStatus };
     if (reason) { payload.reason = reason; }
 
-    const { data, error } = await useMyFetch(`/api/residents/${resident._id}/status`, {
+    const { error } = await useMyFetch(`/api/residents/${resident._id}/status`, {
       method: 'PATCH',
       body: payload,
     });
 
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
-
-    const itemIndex = residents.value.findIndex(r => r._id === resident._id);
-    if (itemIndex > -1) { residents.value[itemIndex].status = newStatus; }
     
     $toast.fire({ title: 'Status updated successfully!', icon: 'success' });
+    
+    // Refresh the table data to show the new date_approved value
+    await loadResidents(currentTableOptions.value);
+
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
@@ -207,14 +221,14 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
   }
 }
 
-// Data Loading Function (unchanged)
+// UPDATE: This function now stores the latest options for refresh
 async function loadResidents(options) {
   loading.value = true;
+  currentTableOptions.value = options; // Store current options for refresh
   const { page, itemsPerPage: rpp, sortBy } = options;
   
   try {
-    const queryFromUrl = { ...route.query };
-    const queryFromUi = {
+    const queryParams = {
       search: searchKey.value,
       page,
       itemsPerPage: rpp,
@@ -222,14 +236,13 @@ async function loadResidents(options) {
     };
 
     if (sortBy && sortBy.length > 0) {
-      queryFromUi.sortBy = sortBy[0].key;
-      queryFromUi.sortOrder = sortBy[0].order;
+      queryParams.sortBy = sortBy[0].key;
+      queryParams.sortOrder = sortBy[0].order;
     }
 
-    const finalQuery = { ...queryFromUrl, ...queryFromUi };
-    Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
+    Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
-    const { data, error } = await useMyFetch('/api/residents', { query: finalQuery });
+    const { data, error } = await useMyFetch('/api/residents', { query: queryParams });
 
     if (error.value) throw new Error('Failed to load residents.');
     
@@ -244,34 +257,31 @@ async function loadResidents(options) {
   }
 }
 
-// Watchers for Local UI Filters (unchanged)
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+    loadResidents({ ...currentTableOptions.value, page: 1 });
   }, 500);
 });
 
 watch(statusFilter, () => {
-  loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+  loadResidents({ ...currentTableOptions.value, page: 1 });
 });
 
-// Watcher for URL changes (unchanged)
-watch(() => route.fullPath, (newPath, oldPath) => {
-    if (newPath === oldPath) return;
+const getStatusColor = (s) => ({
+  'Approved': 'success',
+  'Pending': 'warning',
+  'Declined': 'error',
+  'Deactivated': 'grey'
+}[s] || 'default');
 
-    const newStatus = route.query.status || 'All';
-    if (newStatus !== statusFilter.value) {
-        statusFilter.value = newStatus;
-    } else {
-        loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
-    }
-}, { deep: true });
-
-
-// Helper Functions (unchanged)
-const getStatusColor = (s) => ({ 'Approved': 'success', 'Pending': 'warning', 'Declined': 'error', 'Deactivated': 'grey' }[s] || 'default');
+const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric', month: 'short', day: 'numeric'
+    });
+};
 </script>
 
 <style scoped>

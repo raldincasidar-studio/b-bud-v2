@@ -35,9 +35,17 @@
           hide-details
         ></v-text-field>
 
-        <!-- NEW: Multi-select Filter Chip Group -->
-        <v-chip-group v-model="statusFilter" column multiple color="primary">
-          <v-chip v-for="status in Object.keys(STATUS_CONFIG)" :key="status" filter :value="status">
+        <v-chip-group v-model="statusFilter" column multiple>
+          <v-chip
+            v-for="status in Object.keys(STATUS_CONFIG)"
+            :key="status"
+            filter
+            :value="status"
+            :color="getStatusColor(status)"
+            :prepend-icon="getStatusIcon(status)"
+            variant="tonal"
+            class="ma-1"
+          >
             {{ status }}
           </v-chip>
         </v-chip-group>
@@ -65,8 +73,15 @@
             <span v-else class="text-grey-darken-1">—</span>
           </template>
 
+          <!-- MODIFIED: Status chip in the table now has an icon -->
           <template v-slot:item.status="{ item }">
-            <v-chip :color="getStatusColor(item.status)" label size="small" class="font-weight-bold">
+            <v-chip
+              :color="getStatusColor(item.status)"
+              :prepend-icon="getStatusIcon(item.status)"
+              label
+              size="small"
+              class="font-weight-bold"
+            >
               {{ item.status }}
             </v-chip>
           </template>
@@ -108,8 +123,6 @@ const route = useRoute();
 
 // --- State Definitions ---
 const searchKey = ref('');
-// MODIFIED: Initialize statusFilter as an array by splitting the URL query, or as an empty array.
-// This handles '?status=Borrowed,Overdue' correctly.
 const statusFilter = ref(route.query.status ? String(route.query.status).split(',') : []);
 const totalItems = ref(0);
 const transactions = ref([]);
@@ -137,7 +150,7 @@ const STATUS_CONFIG = {
   Lost:       { color: 'black', icon: 'mdi-help-rhombus-outline' },
   Damaged:    { color: 'amber-darken-4', icon: 'mdi-alert-decagram-outline' },
   Resolved:   { color: 'teal', icon: 'mdi-handshake-outline' },
-  Rejected:   { color: 'red-lighten-1', icon: 'mdi-cancel' },
+  Rejected:   { color: 'red-lighten-1', icon: 'mdi-close-octagon-outline' },
 };
 
 // --- REVISED: Data Loading Function ---
@@ -151,7 +164,6 @@ async function loadTransactions(options) {
     itemsPerPage: rpp,
   };
 
-  // Add status filter if any are selected. Join array into comma-separated string for the API.
   if (statusFilter.value && statusFilter.value.length > 0) {
     queryParams.status = statusFilter.value.join(',');
   }
@@ -185,15 +197,12 @@ watch(searchKey, () => {
   }, 500);
 });
 
-// Watcher for the status filter chips.
 watch(statusFilter, () => {
   loadTransactions({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
-}, { deep: true }); // Use deep watch for array changes
+}, { deep: true });
 
-// Watcher for URL changes to react to navigation.
 watch(() => route.fullPath, (newPath, oldPath) => {
     if (newPath === oldPath) return;
-    // Sync local state with URL. This will trigger the watcher above to reload data.
     statusFilter.value = route.query.status ? String(route.query.status).split(',') : [];
 }, { deep: true });
 

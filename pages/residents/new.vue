@@ -284,7 +284,7 @@
             </template>
           </v-row>
           
-          <template v-if="memberAge >= 15">
+          <!-- <template v-if="memberAge >= 15">
             <v-divider class="my-6"></v-divider>
             <p class="text-subtitle-2 mb-4">Account Creation (Optional, for ages 15+)</p>
             <v-row>
@@ -297,7 +297,7 @@
                 <v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" @blur="vMember$.password.$touch()" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field>
               </v-col>
             </v-row>
-          </template>
+          </template> -->
 
         </v-card-text>
         <v-card-actions>
@@ -480,6 +480,7 @@ const convertFileToBase64 = (file) => {
 
 async function saveResidentAndHousehold() {
   const isFormCorrect = await vHead$.value.$validate();
+  
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct all errors for the Household Head.', icon: 'error' }); return; }
   
   if (headCalculatedAge.value < 15) {

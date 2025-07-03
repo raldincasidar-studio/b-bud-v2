@@ -2,8 +2,9 @@
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
       <v-col>
-        <h2 class="text-h4 font-weight-bold">Announcement</h2>
-        <p class="text-grey-darken-1">Manage and process all resident document requests.</p>
+        <!-- UPDATED: More general title -->
+        <h2 class="text-h4 font-weight-bold">Notifications</h2>
+        <p class="text-grey-darken-1">Manage all news, events, and alerts for residents.</p>
       </v-col>
       <v-col class="text-right">
         <v-btn
@@ -12,7 +13,8 @@
           prepend-icon="mdi-bell-plus-outline"
           color="primary"
         >
-          New Announcement
+          <!-- UPDATED: More general button text -->
+          New Notification
         </v-btn>
       </v-col>
     </v-row>
@@ -20,12 +22,12 @@
     <v-card class="mt-4" flat border>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-bell-ring-outline" class="mr-2"></v-icon>
-        Manage Announcement
+        <!-- UPDATED: More general card title -->
+        Manage Notifications
         <v-spacer></v-spacer>
         <v-text-field
           v-model="searchKey"
-          
-          label="Search Announcements..."
+          label="Search Notifications..."
           prepend-inner-icon="mdi-magnify"
           variant="solo-filled"
           flat hide-details single-line
@@ -34,11 +36,11 @@
       </v-card-title>
       <v-divider></v-divider>
 
-      <!-- REVISION: Replaced v-select with v-tabs for filtering -->
+      <!-- UPDATED: Filter tabs now reflect the new notification types -->
       <v-tabs v-model="typeFilter" color="primary" class="px-4">
         <v-tab
           v-for="item in NOTIFICATION_TYPE_FILTER_OPTIONS"
-          :key="item.value"
+          :key="item.title"
           :value="item.value"
           class="text-capitalize"
         >
@@ -112,8 +114,7 @@ import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 
-// REVISION: The typeFilter model is now used by v-tabs. Defaulting to `null` means "All Types" is selected initially.
-const typeFilter = ref(null); 
+const typeFilter = ref(null); // `null` value corresponds to the "All" tab
 const searchKey = ref('');
 const totalItems = ref(0);
 const notifications = ref([]);
@@ -121,12 +122,12 @@ const loading = ref(true);
 const itemsPerPage = ref(10);
 let currentSortBy = ref([{ key: 'date', order: 'desc' }]);
 
-// REVISION: "title" is used for the tab text, "value" is used for the v-model and API query
+// UPDATED: Filter options now match the new notification types
 const NOTIFICATION_TYPE_FILTER_OPTIONS = [
-    // { title: 'All Types', value: null }, 
-    { title: 'Announcement', value: 'Announcement' },
-    { title: 'Alert', value: 'Alert' },
-    // { title: 'Notification', value: 'Notification' },
+    { title: 'All', value: null}, 
+    { title: 'News', value: 'News'},
+    { title: 'Events', value: 'Events'},
+    { title: 'Alert', value: 'Alert'},
 ];
 
 const headers = ref([
@@ -140,16 +141,12 @@ const headers = ref([
 ]);
 
 let searchDebounceTimer = null;
-// The existing watcher works perfectly with the new v-tabs component
 watch([searchKey, typeFilter], () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
     loadNotifications({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: currentSortBy.value });
   }, 500); 
 });
-
-// REVISION: This function is no longer needed as the watcher handles the logic
-// function filterChanged() { ... }
 
 async function loadNotifications(options) {
   loading.value = true;
@@ -165,11 +162,11 @@ async function loadNotifications(options) {
         page: page,
         itemsPerPage: rpp,
     };
+    // If typeFilter is not null, add it to the query
     if (typeFilter.value) { 
         queryParams.type = typeFilter.value;
     }
     
-    // Add sorting parameters
     if (currentSortBy.value && currentSortBy.value.length > 0) {
       queryParams.sortBy = currentSortBy.value[0].key;
       queryParams.sortOrder = currentSortBy.value[0].order;
@@ -204,19 +201,31 @@ const formatDate = (dateString) => {
   }
 };
 
+// UPDATED: Added colors for the new notification types
 const getTypeColor = (type) => ({
-    'Announcement': 'primary',
+    'News': 'blue-darken-1',
+    'Events': 'deep-purple-accent-2',
     'Alert': 'error',
-    'Notification': 'success'
   }[type] || 'grey');
+  
 
+// UPDATED: Added human-readable names for the new target audiences
 const formatAudience = (target, recipientsArray) => {
-    if (target === 'All') return 'All Approved Residents';
-    if (target === 'SpecificResidents') {
-        const count = Array.isArray(recipientsArray) ? recipientsArray.length : 0;
-        return `Specific (${count} resident${count === 1 ? '' : 's'})`;
+    switch(target) {
+        case 'All':
+            return 'All Approved Residents';
+        case 'PWDResidents':
+            return 'All PWD Residents';
+        case 'SeniorResidents':
+            return 'All Senior Citizens';
+        case 'VotersResidents':
+            return 'All Registered Voters';
+        case 'SpecificResidents':
+            const count = Array.isArray(recipientsArray) ? recipientsArray.length : 0;
+            return `Specific (${count} resident${count === 1 ? '' : 's'})`;
+        default:
+            return target || 'N/A'; // Fallback for any other case
     }
-    return target || 'N/A';
 };
 </script>
 

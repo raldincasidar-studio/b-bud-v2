@@ -22,7 +22,7 @@
       <v-card-text class="py-6">
         <v-row>
           <v-col cols="12" md="6">
-            <label class="v-label mb-1">Asset Name <span class="text-red">*</span></label>
+            <label class="v-label mb-3 font-weight-bold text-black">Asset Name <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.name"
               label="e.g., Plastic Chairs, First Aid Kit"
@@ -32,7 +32,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
-            <label class="v-label mb-1">Category <span class="text-red">*</span></label>
+            <label class="v-label mb-3 font-weight-bold text-black">Category <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.category"
               label="e.g., Furniture, Medical, Equipment"
@@ -44,7 +44,7 @@
         </v-row>
         <v-row>
           <v-col cols="12" md="6">
-            <label class="v-label mb-1">Total Quantity <span class="text-red">*</span></label>
+            <label class="v-label mb-3 font-weight-bold text-black">Total Quantity <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.total_quantity"
               type="number"

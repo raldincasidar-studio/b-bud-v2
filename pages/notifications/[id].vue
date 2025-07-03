@@ -20,8 +20,9 @@
     <div v-else>
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
+            <!-- UPDATED: Title wording and chip -->
             <h2 class="text-truncate" :title="notificationData.name">
-                Announcement: {{ notificationData.name }}
+                Notification: {{ notificationData.name }}
                 <v-chip v-if="!editMode" :color="getTypeColor(notificationData.type)" small label class="ml-2">
                     {{ notificationData.type }}
                 </v-chip>
@@ -35,58 +36,64 @@
         </v-col>
       </v-row>
 
-      <v-card prepend-icon="mdi-bell-outline" :title="editMode ? 'Edit Announcement Details' : 'Announcement Details'">
+      <!-- UPDATED: Card Title -->
+      <v-card prepend-icon="mdi-bell-outline" :title="editMode ? 'Edit Notification Details' : 'Notification Details'">
         <v-card-text>
           <v-form ref="form">
             <v-row>
               <v-col cols="12" md="6">
+                <label class="v-label mb-2 font-weight-bold text-black">Notification Name/Title*</label>
                 <v-text-field
                   v-model="editableNotification.name"
-                  label="Announcement Name/Title*"
+                  label="Notification Name/Title*"
                   :rules="[rules.required, rules.nameLength]"
                   :readonly="!editMode"
-                  variant="outlined" 
+                  variant="outlined"
                 ></v-text-field>
               </v-col>
               <v-col cols="12" md="6">
+                <label class="v-label mb-2 font-weight-bold text-black">Author (Admin)*</label>
                 <v-text-field
                   v-model="editableNotification.by"
                   label="Author (e.g., Admin Name)*"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" 
+                  variant="outlined"
                 ></v-text-field>
               </v-col>
             </v-row>
 
             <v-row>
               <v-col cols="12" md="6">
+                <label class="v-label mb-2 font-weight-bold text-black">Announcement Type*</label>
                 <v-select
                   v-model="editableNotification.type"
                   :items="NOTIFICATION_TYPES"
                   label="Notification Type*"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" 
+                  variant="outlined"
                 ></v-select>
               </v-col>
               <v-col cols="12" md="6">
+                <label class="v-label mb-2 font-weight-bold text-black">Effective Date & Time*</label>
                 <v-text-field
                   v-model="editableNotification.date"
                   label="Effective Date & Time*"
                   type="datetime-local"
                   :rules="[rules.required]"
                   :readonly="!editMode"
-                  variant="outlined" 
+                  variant="outlined"
                 ></v-text-field>
               </v-col>
             </v-row>
 
             <v-row>
               <v-col cols="12">
+                <label class="v-label mb-2 font-weight-bold text-black">Announcement Content*</label>
                 <v-textarea
                   v-model="editableNotification.content"
-                  label="Announcement Content*"
+                  label="Notification Content*"
                   :rules="[rules.required, rules.contentLength]"
                   :readonly="!editMode"
                   variant="outlined" rows="5" auto-grow
@@ -106,7 +113,6 @@
                   :rules="[rules.required]"
                   :readonly="!editMode"
                   variant="outlined"
-                  
                 ></v-select>
               </v-col>
             </v-row>
@@ -126,7 +132,6 @@
                   label="Select Specific Residents (Type to search)"
                   placeholder="Search by name or email..."
                   variant="outlined"
-                  
                   no-filter
                   hide-no-data
                   :readonly="!editMode"
@@ -164,13 +169,23 @@
                     </v-chip>
                 </div>
                 <p v-else-if="Array.isArray(notificationData.recipients) && notificationData.recipients.length > 0 && !loadingRecipients">
-                    <em>Could not load full details for {{ notificationData.recipients.length }} recipient(s). Showing IDs: {{ notificationData.recipients.map(r => r.resident_id).join(', ') }}</em>
+                    <em>Could not load full details for {{ notificationData.recipients.length }} recipient(s).</em>
                 </p>
-                <p v-else><em>No specific residents were targeted, or details are unavailable.</em></p>
+                <p v-else><em>No specific residents were targeted.</em></p>
             </div>
 
-             <small v-if="editableNotification.target_audience === 'All'" class="d-block mt-2 text-info">
-                This announcement targets all 'Approved' residents. The recipient list is managed by the system.
+             <!-- UPDATED: Informational text for all group targets -->
+            <small v-if="editableNotification.target_audience === 'All'" class="d-block mt-2 text-info">
+                This notification targets all 'Approved' residents. The recipient list is managed by the system.
+            </small>
+            <small v-if="editableNotification.target_audience === 'PWDResidents'" class="d-block mt-2 text-info">
+                This notification targets all residents registered as PWD.
+            </small>
+            <small v-if="editableNotification.target_audience === 'SeniorResidents'" class="d-block mt-2 text-info">
+                This notification targets all residents registered as Senior Citizens.
+            </small>
+            <small v-if="editableNotification.target_audience === 'VotersResidents'" class="d-block mt-2 text-info">
+                This notification targets all residents registered as Voters.
             </small>
 
             <v-divider v-if="!editMode" class="my-4"></v-divider>
@@ -193,6 +208,7 @@
       <v-card>
         <v-card-title class="text-h5">Confirm Deletion</v-card-title>
         <v-card-text>
+          <!-- UPDATED: Dialog text -->
           Are you sure you want to delete this notification: "<strong>{{ notificationData.name }}</strong>"? This action cannot be undone.
         </v-card-text>
         <v-card-actions>
@@ -208,29 +224,33 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { useMyFetch } from '../../composables/useMyFetch'; // Adjust path if needed
+import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 const route = useRoute();
 const router = useRouter();
 const notificationId = route.params.id;
-const form = ref(null); // For v-form validation
+const form = ref(null);
 
-const NOTIFICATION_TYPES = ['Announcement', 'Alert', 'Notification'];
+// UPDATED: Constants now reflect the new system
+const NOTIFICATION_TYPES = ['News', 'Events', 'Alert'];
 const TARGET_AUDIENCE_OPTIONS = [
   { title: 'All Approved Residents', value: 'All' },
+  { title: 'All PWD Residents', value: 'PWDResidents' },
+  { title: 'All Senior Citizen Residents', value: 'SeniorResidents' },
+  { title: 'All Residents Voters', value: 'VotersResidents' },
   { title: 'Specific Residents', value: 'SpecificResidents' },
 ];
 
-
-const notificationData = ref({}); // Original fetched data, for display
-const editableNotification = ref({ // For form binding in edit mode
+const notificationData = ref({});
+const editableNotification = ref({
   name: '', content: '', date: '', by: '',
   type: NOTIFICATION_TYPES[0],
   target_audience: TARGET_AUDIENCE_OPTIONS[0].value,
-  recipients: [], // Will hold the raw recipients array from API for reference
+  recipients: [],
 });
+
 const loading = ref(true);
 const errorLoading = ref(false);
 const editMode = ref(false);
@@ -238,15 +258,13 @@ const saving = ref(false);
 const deleting = ref(false);
 const confirmDeleteDialog = ref(false);
 
-// For specific resident selection in EDIT mode
-const editableSelectedRecipientIds = ref([]); // Stores ObjectIds of residents selected in autocomplete
+const editableSelectedRecipientIds = ref([]);
 const residentSearchQueryForEdit = ref('');
-const searchedResidentsForEdit = ref([]); // Results from API for autocomplete
+const searchedResidentsForEdit = ref([]);
 const isSearchingResidentsForEdit = ref(false);
 let searchDebounceTimerEdit = null;
 
-// For displaying recipient details in VIEW mode
-const detailedRecipients = ref([]); // Stores resident objects { _id, first_name, last_name, email }
+const detailedRecipients = ref([]);
 const loadingRecipients = ref(false);
 
 const rules = {
@@ -273,10 +291,9 @@ async function fetchNotification() {
     const { data, error } = await useMyFetch(`/api/notifications/${notificationId}`);
     if (error.value || !data.value?.notification) {
       errorLoading.value = true; notificationData.value = {};
-      console.error('Failed to fetch notification:', error.value || 'No notification data');
     } else {
       notificationData.value = { ...data.value.notification };
-      resetEditableData(); // This will also trigger fetching recipient details if needed
+      resetEditableData();
     }
   } catch (e) {
     errorLoading.value = true; console.error("Exception fetching notification:", e);
@@ -286,90 +303,71 @@ async function fetchNotification() {
 }
 
 async function fetchRecipientDetails(recipientIdObjects) {
-    // recipientIdObjects is expected to be like [{ resident_id: 'someId', status: 'read' }, ...]
-    // or just an array of IDs if that's how it's being populated for editSelected.
-    if (!recipientIdObjects || recipientIdObjects.length === 0) {
+    if (!Array.isArray(recipientIdObjects) || recipientIdObjects.length === 0) {
         detailedRecipients.value = [];
         return;
     }
     loadingRecipients.value = true;
     try {
-        const idsToFetch = recipientIdObjects.map(item => (typeof item === 'object' ? item.resident_id : item)).filter(Boolean);
+        const idsToFetch = recipientIdObjects.map(item => item.resident_id).filter(Boolean);
         if (idsToFetch.length === 0) {
             detailedRecipients.value = [];
             loadingRecipients.value = false;
             return;
         }
+        // Use a batch fetch endpoint for efficiency
+        const { data, error } = await useMyFetch('/api/residents/batch', {
+            method: 'POST',
+            body: { ids: idsToFetch },
+        });
 
-        // In a real app, use a batch fetch endpoint: /api/residents/batch?ids=id1,id2,id3
-        const promises = idsToFetch.map(id =>
-            useMyFetch(`/api/residents/${id}`).then(res => res.data.value?.resident)
-        );
-        const results = (await Promise.all(promises)).filter(resident => resident != null);
-        detailedRecipients.value = results;
+        if (error.value) {
+            console.error('Error fetching recipient details:', error.value);
+            detailedRecipients.value = [];
+        } else {
+            detailedRecipients.value = data.value?.residents || [];
+        }
     } catch (e) {
-        console.error("Error fetching recipient details:", e);
-        detailedRecipients.value = []; // Clear on error
+        console.error("Exception fetching recipient details:", e);
+        detailedRecipients.value = [];
     } finally {
         loadingRecipients.value = false;
     }
 }
 
-
 function resetEditableData() {
-  // Deep copy original data to editable version
   editableNotification.value = JSON.parse(JSON.stringify(notificationData.value));
-
-  // Format date for datetime-local input
   if (editableNotification.value.date) {
     editableNotification.value.date = formatDateTimeForInput(editableNotification.value.date);
   }
-  // Ensure type and target_audience have default values if not present
   if (!editableNotification.value.type) editableNotification.value.type = NOTIFICATION_TYPES[0];
   if (!editableNotification.value.target_audience) editableNotification.value.target_audience = TARGET_AUDIENCE_OPTIONS[0].value;
 
-
-  // Populate editableSelectedRecipientIds from the 'recipients' array for edit mode
   if (editableNotification.value.target_audience === 'SpecificResidents' && Array.isArray(editableNotification.value.recipients)) {
     editableSelectedRecipientIds.value = editableNotification.value.recipients.map(r => r.resident_id);
-    // For edit mode, we might not need to immediately display full details in chips,
-    // as v-autocomplete will fetch/display based on user interaction.
-    // But for VIEW mode, we need to fetch them.
-    fetchRecipientDetails(editableNotification.value.recipients); // Fetch for VIEW mode display
+    fetchRecipientDetails(editableNotification.value.recipients);
   } else {
-    editableSelectedRecipientIds.value = []; // Clear if not 'SpecificResidents'
-    detailedRecipients.value = []; // Clear detailed list for VIEW mode
+    editableSelectedRecipientIds.value = [];
+    detailedRecipients.value = [];
   }
 
-  // Reset search state for edit mode
   residentSearchQueryForEdit.value = '';
   searchedResidentsForEdit.value = [];
 }
 
-// Watcher to clear specific recipients if target_audience changes during edit
 watch(() => editableNotification.value.target_audience, (newVal, oldVal) => {
-  if (editMode.value && newVal !== oldVal) { // Only if in edit mode and value actually changed
+  if (editMode.value && newVal !== oldVal) {
     if (newVal !== 'SpecificResidents') {
       editableSelectedRecipientIds.value = [];
       residentSearchQueryForEdit.value = '';
       searchedResidentsForEdit.value = [];
-    } else {
-      // If changing TO 'SpecificResidents', try to repopulate from original data if it had specific recipients
-      if (notificationData.value.target_audience === 'SpecificResidents' && Array.isArray(notificationData.value.recipients)) {
-          editableSelectedRecipientIds.value = notificationData.value.recipients.map(r => r.resident_id);
-          // Optionally pre-fetch these to show in autocomplete if needed, or let user search
-      } else {
-          editableSelectedRecipientIds.value = []; // Start fresh if original wasn't specific
-      }
     }
   }
 });
 
-
 const searchResidentsAPIEdit = async (query) => {
   if (!query || query.trim().length < 2) {
-    searchedResidentsForEdit.value = [];
-    isSearchingResidentsForEdit.value = false;
+    searchedResidentsForEdit.value = []; isSearchingResidentsForEdit.value = false;
     return;
   }
   isSearchingResidentsForEdit.value = true;
@@ -378,7 +376,6 @@ const searchResidentsAPIEdit = async (query) => {
       query: { q: query, limit: 15 },
     });
     if (error.value) {
-      console.error('Error searching residents for edit:', error.value);
       searchedResidentsForEdit.value = [];
     } else {
       searchedResidentsForEdit.value = (data.value?.residents || []).map(r => ({
@@ -387,7 +384,6 @@ const searchResidentsAPIEdit = async (query) => {
       }));
     }
   } catch (e) {
-    console.error('Exception searching residents for edit:', e);
     searchedResidentsForEdit.value = [];
   } finally {
     isSearchingResidentsForEdit.value = false;
@@ -396,12 +392,12 @@ const searchResidentsAPIEdit = async (query) => {
 
 const debouncedSearchResidentsForEdit = (query) => {
   clearTimeout(searchDebounceTimerEdit);
-  if (query && query.trim().length > 1) { // Ensure query has some substance
+  if (query && query.trim().length > 1) {
     isSearchingResidentsForEdit.value = true;
     searchDebounceTimerEdit = setTimeout(() => {
       searchResidentsAPIEdit(query);
     }, 500);
-  } else if (!query || query.trim().length <=1 ) { // Clear results if query is too short or empty
+  } else {
     searchedResidentsForEdit.value = [];
     isSearchingResidentsForEdit.value = false;
   }
@@ -416,7 +412,7 @@ function toggleEditMode(enable) {
 
 function cancelEdit() {
   toggleEditMode(false);
-  resetEditableData(); // Revert to original display data
+  resetEditableData();
 }
 
 async function saveChanges() {
@@ -429,41 +425,26 @@ async function saveChanges() {
     $toast.fire({ title: 'Please select at least one resident if targeting specific residents.', icon: 'error' });
     return;
   }
-
   saving.value = true;
   try {
-    // Construct payload from editableNotification and editableSelectedRecipientIds
     const payload = {
-      name: editableNotification.value.name,
-      content: editableNotification.value.content,
-      date: new Date(editableNotification.value.date).toISOString(), // Ensure ISO format
-      by: editableNotification.value.by,
-      type: editableNotification.value.type,
-      target_audience: editableNotification.value.target_audience,
+      ...editableNotification.value,
+      date: new Date(editableNotification.value.date).toISOString(),
       recipient_ids: editableNotification.value.target_audience === 'SpecificResidents' ? editableSelectedRecipientIds.value : [],
     };
-    // Exclude fields that shouldn't be sent for an update or are managed by backend
-    // delete payload._id; // Usually not needed for PUT body
-    // delete payload.created_at;
-    // delete payload.updated_at;
-    // delete payload.recipients; // Send recipient_ids instead for update
-
-
+    delete payload.recipients;
+    
     const { data, error } = await useMyFetch(`/api/notifications/${notificationId}`, {
-      method: 'PUT',
-      body: payload,
+      method: 'PUT', body: payload,
     });
-
     if (error.value || data.value?.error) {
-      $toast.fire({ title: data.value?.message || data.value?.error || 'Failed to update notification', icon: 'error' });
+      $toast.fire({ title: data.value?.message || 'Failed to update notification', icon: 'error' });
     } else {
       $toast.fire({ title: 'Notification updated successfully!', icon: 'success' });
-      notificationData.value = { ...data.value.notification }; // Update main data with response
-      // toggleEditMode(false); will call resetEditableData() which re-populates from notificationData
+      notificationData.value = { ...data.value.notification };
       toggleEditMode(false);
     }
   } catch (e) {
-    console.error("Exception saving notification changes:", e);
     $toast.fire({ title: 'An error occurred while saving changes.', icon: 'error' });
   } finally {
     saving.value = false;
@@ -473,9 +454,7 @@ async function saveChanges() {
 async function deleteNotification() {
   deleting.value = true;
   try {
-    const { error } = await useMyFetch(`/api/notifications/${notificationId}`, {
-      method: 'DELETE',
-    });
+    const { error } = await useMyFetch(`/api/notifications/${notificationId}`, { method: 'DELETE' });
     if (error.value) {
       $toast.fire({ title: 'Failed to delete notification', icon: 'error' });
     } else {
@@ -483,7 +462,6 @@ async function deleteNotification() {
       router.push('/notifications');
     }
   } catch (e) {
-    console.error("Exception deleting notification:", e);
     $toast.fire({ title: 'An error occurred during deletion.', icon: 'error' });
   } finally {
     deleting.value = false;
@@ -493,28 +471,22 @@ async function deleteNotification() {
 
 const formatDate = (dateString, includeTime = false) => {
   if (!dateString) return 'N/A';
-  try {
-    const options = { year: 'numeric', month: 'long', day: 'numeric' };
-    if (includeTime) {
-      options.hour = '2-digit';
-      options.minute = '2-digit';
-      // options.second = '2-digit'; // Optional: include seconds
-    }
-    return new Date(dateString).toLocaleDateString(undefined, options);
-  } catch (e) {
-    return dateString; // Fallback
+  const options = { year: 'numeric', month: 'long', day: 'numeric' };
+  if (includeTime) {
+    options.hour = '2-digit'; options.minute = '2-digit';
   }
+  return new Date(dateString).toLocaleDateString(undefined, options);
 };
 
+// UPDATED: Added colors for new types
 const getTypeColor = (type) => {
   switch (type) {
-    case 'Announcement': return 'primary';
+    case 'News': return 'blue-darken-1';
+    case 'Events': return 'deep-purple-accent-2';
     case 'Alert': return 'error';
-    case 'Notification': return 'success';
     default: return 'grey';
   }
 };
-
 </script>
 
 <style scoped>
@@ -524,11 +496,7 @@ const getTypeColor = (type) => {
   text-overflow: ellipsis;
   display: block;
 }
-.bordered-image { /* If you display images for anything */
-  border: 1px solid #e0e0e0;
-  border-radius: 4px;
-}
 .v-chip.ma-1 {
-    margin: 4px; /* Vuetify 3 default margin for ma-1 */
+  margin: 4px;
 }
 </style>

@@ -7,7 +7,7 @@
       </v-col>
       <v-col class="text-right">
         <v-btn
-          v-if="form.role == 'Admin'"
+          v-if="form.role === 'Admin'"
           @click="deleteAdmin"
           color="error"
           variant="outlined"
@@ -31,21 +31,42 @@
     </v-row>
 
     <v-card v-if="!dataLoaded" class="mt-6" flat border>
-        <v-skeleton-loader type="card-avatar, article, actions"></v-skeleton-loader>
+      <v-skeleton-loader type="card-avatar, article, actions"></v-skeleton-loader>
     </v-card>
     <v-card v-else class="mt-6" flat border>
       <v-card-text class="py-6">
         <v-row>
-          <v-col cols="12" md="6">
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">First Name <span class="text-red">*</span></label>
             <v-text-field
-              v-model="form.name"
-              label="Full Name"
+              v-model="form.firstname"
+              label="First Name"
               variant="outlined"
-              :error-messages="v$.name.$errors.map(e => e.$message)"
-              @blur="v$.name.$touch"
+              :error-messages="v$.firstname.$errors.map(e => e.$message)"
+              @blur="v$.firstname.$touch"
             ></v-text-field>
           </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">Middle Name (Optional)</label>
+            <v-text-field
+              v-model="form.middlename"
+              label="Middle Name"
+              variant="outlined"
+            ></v-text-field> <!-- CORRECTED THIS LINE -->
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label mb-3 font-weight-bold text-black">Last Name <span class="text-red">*</span></label>
+            <v-text-field
+              v-model="form.lastname"
+              label="Last Name"
+              variant="outlined"
+              :error-messages="v$.lastname.$errors.map(e => e.$message)"
+              @blur="v$.lastname.$touch"
+            ></v-text-field>
+          </v-col>
+
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Username <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.username"
               label="Username"
@@ -55,6 +76,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Email Address <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.email"
               label="Email Address"
@@ -65,6 +87,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Contact Number <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.contact_number"
               label="Contact Number"
@@ -74,8 +97,21 @@
               @blur="v$.contact_number.$touch"
             ></v-text-field>
           </v-col>
-          <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
+          
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Role</label>
+            <v-text-field
+              v-model="form.role"
+              label="Role"
+              variant="outlined"
+              readonly
+            ></v-text-field>
+          </v-col>
+
+          <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
+
+          <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">New Password</label>
             <v-text-field
               v-model="form.password"
               label="New Password"
@@ -90,6 +126,7 @@
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
+            <label class="v-label mb-3 font-weight-bold text-black">Repeat New Password</label>
             <v-text-field
               v-model="form.repeat_password"
               label="Repeat New Password"
@@ -100,18 +137,6 @@
               :append-inner-icon="showRepeatPassword ? 'mdi-eye-off' : 'mdi-eye'"
               @click:append-inner="showRepeatPassword = !showRepeatPassword"
             ></v-text-field>
-          </v-col>
-          <v-col cols="12"> <v-divider class="my-2"></v-divider> </v-col>
-          <v-col cols="12" md="6">
-            <v-select
-              readonly
-              v-model="form.role"
-              :items="['Admin', 'Technical Admin']"
-              label="Role"
-              variant="outlined"
-              :error-messages="v$.role.$errors.map(e => e.$message)"
-              @blur="v$.role.$touch"
-            ></v-select>
           </v-col>
         </v-row>
       </v-card-text>
@@ -139,7 +164,9 @@ const form = reactive({
   username: "",
   password: "",
   repeat_password: "",
-  name: "",
+  firstname: "",
+  middlename: "",
+  lastname: "",
   email: "",
   contact_number: "",
   role: "",
@@ -147,18 +174,16 @@ const form = reactive({
 
 const passwordRef = computed(() => form.password);
 
-// Validation rules for editing
 const rules = {
-  name: { required },
+  firstname: { required },
+  lastname: { required },
   username: { required },
   email: { required, email },
   contact_number: { required },
-  // Password is only validated if the user types in it
   password: { minLength: minLength(6) },
-  // Repeat password is only required if the main password field is not empty
-  repeat_password: { 
-    requiredIf: requiredIf(passwordRef), 
-    sameAs: sameAs(passwordRef) 
+  repeat_password: {
+    requiredIf: requiredIf(passwordRef),
+    sameAs: sameAs(passwordRef)
   },
   role: { required },
 };
@@ -173,16 +198,16 @@ onMounted(async () => {
   }
   try {
     const { data, error } = await useMyFetch(`/api/admins/${adminId}`);
-    
     if (error.value) throw new Error(error.value.data?.message || 'Error fetching data');
-
     const admin = data.value.admin;
-    // Populate the form with fetched data
+
     form.username = admin.username;
-    form.name = admin.name;
+    form.firstname = admin.firstname || '';
+    form.middlename = admin.middlename || '';
+    form.lastname = admin.lastname || '';
     form.email = admin.email;
     form.role = admin.role;
-    form.contact_number = admin.contact_number || ''; // Set to empty string if null/undefined
+    form.contact_number = admin.contact_number || '';
 
     dataLoaded.value = true;
   } catch (err) {
@@ -198,17 +223,16 @@ const saveAdmin = async () => {
   }
 
   loading.value = true;
-  
-  // Build the payload with only the fields that can be updated.
+
   const updateData = {
     username: form.username,
-    name: form.name,
+    firstname: form.firstname,
+    middlename: form.middlename,
+    lastname: form.lastname,
     email: form.email,
-    role: form.role,
     contact_number: form.contact_number,
   };
 
-  // Only include the password in the payload if the user has entered a new one.
   if (form.password) {
     updateData.password = form.password;
   }
@@ -232,7 +256,6 @@ const saveAdmin = async () => {
 };
 
 const deleteAdmin = async () => {
-  // A better confirmation dialog can be used here (e.g., a v-dialog)
   if (!confirm('Are you sure you want to permanently delete this admin? This action cannot be undone.')) {
     return;
   }

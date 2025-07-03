@@ -33,15 +33,21 @@
       </v-card-title>
       <v-divider></v-divider>
 
-      <!-- NEW: Filter Chip Group for Status -->
       <v-card-text>
-        <v-chip-group v-model="statusFilter" column color="primary">
-          <v-chip filter value="All">All</v-chip>
-          <v-chip filter value="Pending">Pending</v-chip>
-          <v-chip filter value="Processing">Processing</v-chip>
-          <v-chip filter value="Ready for Pickup">Ready for Pickup</v-chip>
-          <v-chip filter value="Released">Released</v-chip>
-          <v-chip filter value="Declined">Declined</v-chip>
+        <v-chip-group v-model="statusFilter" column>
+          <v-chip filter value="All" color="primary">All</v-chip>
+          <!-- CORRECTED: Comment is now outside the tag -->
+          <v-chip
+            v-for="status in statusFilters"
+            :key="status.name"
+            filter
+            variant="tonal" 
+            :value="status.name"
+            :color="status.color"
+            :prepend-icon="status.icon"
+          >
+            {{ status.name }}
+          </v-chip>
         </v-chip-group>
       </v-card-text>
       <v-divider></v-divider>
@@ -53,10 +59,10 @@
         :items-length="totalItems"
         :loading="loading"
         @update:options="loadRequests"
-        item-value="_id"
+        item-value="ref_no"
       >
-        <template v-slot:item._id="{ item }">
-          <span class="font-weight-medium text-caption">{{ item._id }}</span>
+        <template v-slot:item.ref_no="{ item }">
+          <span class="font-weight-medium text-caption">{{ item.ref_no }}</span>
         </template>
         
         <template v-slot:item.requestor_name="{ item }">{{ item.requestor_name || 'N/A' }}</template>
@@ -70,13 +76,19 @@
         </template>
 
         <template v-slot:item.document_status="{ item }">
-          <v-chip :color="getStatusColor(item.document_status)" label size="small" class="font-weight-medium">
+          <v-chip
+            :color="getStatusInfo(item.document_status).color"
+            :prepend-icon="getStatusInfo(item.document_status).icon"
+            label
+            size="small"
+            class="font-weight-medium"
+          >
             {{ item.document_status }}
           </v-chip>
         </template>
         
         <template v-slot:item.action="{ item }">
-          <v-btn variant="tonal" color="primary" size="small" :to="`/document-requests/${item._id}`">
+          <v-btn variant="tonal" color="primary" size="small" :to="`/document-requests/${item.ref_no}`">
             View / Manage
           </v-btn>
         </template>
@@ -91,24 +103,32 @@
 
 <script setup>
 import { ref, watch } from 'vue';
-import { useRoute } from 'vue-router'; // <-- ADDED: To access URL query parameters
+import { useRoute } from 'vue-router'; 
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
-const route = useRoute(); // <-- ADDED: Get access to the current route
+const route = useRoute();
 
 // --- State Definitions ---
 const searchKey = ref('');
-// --- NEW: State for the status filter, initialized from the URL query ---
 const statusFilter = ref(route.query.status || 'All');
 const totalItems = ref(0);
 const requests = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 
+const statusFilters = ref([
+  { name: 'Pending', color: 'orange-darken-1', icon: 'mdi-clock-outline' },
+  { name: 'Processing', color: 'blue-darken-1', icon: 'mdi-cogs' },
+  { name: 'Approved', color: 'cyan-darken-1', icon: 'mdi-check-circle-outline' },
+  { name: 'Ready for Pickup', color: 'teal-darken-1', icon: 'mdi-package-variant-closed' },
+  { name: 'Released', color: 'green-darken-1', icon: 'mdi-check-decagram-outline' },
+  { name: 'Declined', color: 'red-darken-2', icon: 'mdi-close-octagon-outline' }
+]);
+
 const headers = ref([
-  { title: 'Ref #', key: '_id', sortable: false, width: '150px' },
+  { title: 'Ref #', key: 'ref_no', sortable: false, width: '150px' },
   { title: 'Request Type', key: 'request_type', sortable: true },
   { title: 'Requestor', key: 'requestor_name', sortable: true },
   { title: 'Date of Request', key: 'date_of_request', sortable: true },
@@ -116,16 +136,13 @@ const headers = ref([
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);
 
-// --- REVISED: Data Loading Function ---
-// This function is now aware of all filters (URL and local UI).
+// --- Data Loading Function ---
 async function loadRequests(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
   
-  // 1. Start with base filters from the URL.
   const queryFromUrl = { ...route.query };
 
-  // 2. Build query from local UI state. These will override URL params if keys are the same.
   const queryFromUi = {
     search: searchKey.value,
     page,
@@ -138,10 +155,8 @@ async function loadRequests(options) {
     queryFromUi.sortOrder = sortBy[0].order;
   }
   
-  // 3. Merge, giving local UI filters precedence.
   const finalQuery = { ...queryFromUrl, ...queryFromUi };
   
-  // Clean up any empty values before sending to API
   Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
 
   try {
@@ -158,7 +173,7 @@ async function loadRequests(options) {
   }
 }
 
-// --- Watchers for UI Filters and URL Changes ---
+// --- Watchers ---
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
@@ -167,26 +182,22 @@ watch(searchKey, () => {
   }, 500);
 });
 
-// NEW: Watcher for the status filter chips
 watch(statusFilter, () => {
   loadRequests({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
 
-// NEW: Watcher for URL changes to react to browser navigation or links
 watch(() => route.fullPath, (newPath, oldPath) => {
-    if (newPath === oldPath) return; // Prevent unnecessary reloads
+    if (newPath === oldPath) return; 
     const newStatus = route.query.status || 'All';
     if (newStatus !== statusFilter.value) {
-        // This updates the UI (chip group), and its own watcher will trigger the data reload.
         statusFilter.value = newStatus;
     } else {
-        // If status didn't change but another param did, trigger reload manually.
         loadRequests({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
     }
 }, { deep: true });
 
 
-// --- Helper Functions (Unchanged) ---
+// --- Helper Functions ---
 const formatTimestamp = (dateString) => {
   if (!dateString) return 'N/A';
   try {
@@ -197,14 +208,10 @@ const formatTimestamp = (dateString) => {
   } catch (e) { return dateString; }
 };
 
-const getStatusColor = (status) => ({
-    "Pending": 'orange-darken-1', 
-    "Processing": 'blue-darken-1', 
-    "Approved": 'cyan-darken-1',
-    "Ready for Pickup": 'teal-darken-1',
-    "Released": 'green-darken-1', 
-    "Declined": 'red-darken-2'
-  }[status] || 'grey');
+const getStatusInfo = (status) => {
+  const foundStatus = statusFilters.value.find(s => s.name === status);
+  return foundStatus || { color: 'grey', icon: 'mdi-help-circle-outline' };
+};
 </script>
 
 <style scoped>

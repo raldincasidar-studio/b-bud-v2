@@ -676,8 +676,13 @@ app.post('/api/residents', async (req, res) => {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
             }
 
-            // Create head document using the helper function
             const headResidentDocument = createResidentDocument(headData, true);
+            
+            // --- UPDATE: Set created_at and initialize date_approved ---
+            headResidentDocument.created_at = new Date();
+            headResidentDocument.updated_at = new Date();
+            headResidentDocument.date_approved = null;
+            // --- END UPDATE ---
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
@@ -693,7 +698,6 @@ app.post('/api/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                // REVISION: Validate member account creation (age 15+)
                 if (memberAge >= 15 && (memberData.email || memberData.password)) {
                     if (!memberData.email || !memberData.password) {
                         throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
@@ -708,13 +712,17 @@ app.post('/api/residents', async (req, res) => {
                     }
                     processedEmails.add(memberEmail);
                 } else {
-                    // If no account is being created, ensure email/pass are null
                     memberData.email = null;
                     memberData.password = null;
                 }
                 
-                // REVISION: Create full member document using helper, passing head's address
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
+
+                // --- UPDATE: Set created_at and initialize date_approved ---
+                newMemberDoc.created_at = new Date();
+                newMemberDoc.updated_at = new Date();
+                newMemberDoc.date_approved = null;
+                // --- END UPDATE ---
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -731,7 +739,6 @@ app.post('/api/residents', async (req, res) => {
             }
         });
 
-        // --- ADD AUDIT LOG HERE ---
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
@@ -740,7 +747,6 @@ app.post('/api/residents', async (req, res) => {
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
         }, req)
-        // --- END AUDIT LOG ---
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending approval.',
@@ -761,21 +767,58 @@ app.post('/api/residents', async (req, res) => {
     }
 });
 
+
+// PATCH /api/residents/:id/status - APPROVE/DECLINE/DEACTIVATE A RESIDENT
+// This route is CRUCIAL for the date_approved logic to work.
+app.patch('/api/residents/:id/status', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { status, reason } = req.body; // reason is optional, for declines
+
+        if (!status) {
+            return res.status(400).json({ message: 'Status is required.' });
+        }
+
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        const updateData = {
+            status: status,
+            updated_at: new Date()
+        };
+
+        // --- UPDATE: Set date_approved only when status is 'Approved' ---
+        if (status === 'Approved') {
+            updateData.date_approved = new Date();
+        }
+
+        const result = await residentsCollection.updateOne(
+            { _id: new ObjectId(id) },
+            { $set: updateData }
+        );
+
+        if (result.matchedCount === 0) {
+            return res.status(404).json({ message: 'Resident not found.' });
+        }
+
+        // You can add audit logging and notifications here
+        // await createAuditLog(...)
+
+        res.status(200).json({ message: `Resident status updated to ${status}.` });
+
+    } catch (error) {
+        console.error("Error updating resident status:", error);
+        res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
+    }
+});
+
+
 // GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
     const {
-      search,
-      status,
-      is_voter,
-      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
-      is_pwd,
-      occupation, // Assumes a field 'occupation_status' in your DB schema
-      minAge,
-      maxAge,
-      sortBy,   // For dynamic sorting
-      sortOrder // 'asc' or 'desc'
+      search, status, is_voter, is_senior, is_pwd,
+      occupation, minAge, maxAge, sortBy, sortOrder
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
@@ -784,99 +827,59 @@ app.get('/api/residents', async (req, res) => {
 
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-
-    // --- 2. Build the MongoDB Filter Array Dynamically ---
-    // This approach is robust and cleanly handles multiple optional filters.
     const filters = [];
 
-    // Status Filter
-    if (status) {
-      filters.push({ status: status });
-    }
-
-    // Boolean Filters (query params are strings, so we check for 'true')
-    if (is_voter === 'true') {
-      filters.push({ is_registered_voter: true });
-    }
-    if (is_pwd === 'true') {
-      filters.push({ is_pwd: true });
-    }
-    if (is_senior === 'true') {
-      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
-      // If not, you'd need to calculate based on date_of_birth.
-      filters.push({ is_senior_citizen: true });
-    }
-
-    // Occupation Filter
-    if (occupation) {
-      // Assumes your schema has an 'occupation_status' field.
-      filters.push({ occupation_status: occupation });
-    }
+    if (status) filters.push({ status: status });
+    if (is_voter === 'true') filters.push({ is_registered_voter: true });
+    if (is_pwd === 'true') filters.push({ is_pwd: true });
+    if (is_senior === 'true') filters.push({ is_senior_citizen: true });
+    if (occupation) filters.push({ occupation_status: occupation });
     
-    // Age Range Filter (calculates based on date_of_birth)
     if (minAge || maxAge) {
       const ageFilter = {};
       const now = new Date();
       if (maxAge) {
-        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
         const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
         ageFilter.$gte = minBirthDate;
       }
       if (minAge) {
-        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
         const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
         ageFilter.$lte = maxBirthDate;
       }
       filters.push({ date_of_birth: ageFilter });
     }
 
-    // General Text Search Filter
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       filters.push({
         $or: [
-          { first_name: searchRegex },
-          { middle_name: searchRegex },
-          { last_name: searchRegex },
-          { email: searchRegex },
-          { contact_number: searchRegex },
-          { address_street: searchRegex },
-          { address_subdivision_zone: searchRegex },
-          { precinct_number: searchRegex },
+          { first_name: searchRegex }, { middle_name: searchRegex }, { last_name: searchRegex },
+          { email: searchRegex }, { contact_number: searchRegex }, { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex }, { precinct_number: searchRegex },
         ],
       });
     }
 
-    // Combine all filters with $and. If filters is empty, query will be {} (match all).
     const finalQuery = filters.length > 0 ? { $and: filters } : {};
 
-    // --- 3. Define Sorting Options ---
-    let sortOptions = { created_at: -1 }; // Default sort
+    // --- UPDATE: Use 'created_at' for 'date_added' sorting ---
+    let sortOptions = { created_at: -1 }; 
     if (sortBy) {
-        // Use dynamic key for the field to sort by
-        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        // Map frontend key 'date_added' to backend field 'created_at'
+        const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
+        sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- 4. Define Projection (Fields to Return) ---
-    // This is the same as your original code, which is good practice.
+    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1,
-        middle_name: 1,
-        last_name: 1,
-        sex: 1,
-        date_of_birth: 1,
-        is_household_head: 1,
-        address_house_number: 1,
-        address_street: 1,
-        address_subdivision_zone: 1,
-        contact_number: 1,
-        email: 1,
-        status: 1,
-        created_at: 1,
-        _id: 1,
+        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        date_of_birth: 1, is_household_head: 1, address_house_number: 1,
+        address_street: 1, address_subdivision_zone: 1, contact_number: 1,
+        email: 1, status: 1, _id: 1,
+        date_added: "$created_at", // Rename field in output
+        date_approved: 1
     };
     
-    // --- 5. Execute Queries ---
     const residents = await residentsCollection
       .find(finalQuery)
       .project(projection)
@@ -885,10 +888,8 @@ app.get('/api/residents', async (req, res) => {
       .limit(itemsPerPage)
       .toArray();
 
-    // Get total count based on the same filters for accurate pagination
     const totalResidents = await residentsCollection.countDocuments(finalQuery);
 
-    // --- 6. Send Response ---
     res.json({
       residents: residents,
       total: totalResidents,
@@ -903,20 +904,13 @@ app.get('/api/residents', async (req, res) => {
   }
 });
 
+
 // GET ALL APPROVED RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents/approved', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
     const {
-      search,
-      is_voter,
-      is_senior, // Assumes a boolean field 'is_senior_citizen' in your DB schema
-      is_pwd,
-      occupation, // Assumes a field 'occupation_status' in your DB schema
-      minAge,
-      maxAge,
-      sortBy,   // For dynamic sorting
-      sortOrder // 'asc' or 'desc'
+      search, is_voter, is_senior, is_pwd,
+      occupation, minAge, maxAge, sortBy, sortOrder
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
@@ -926,94 +920,58 @@ app.get('/api/residents/approved', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
 
-    // --- 2. Build the MongoDB Filter Array Dynamically ---
-    // This approach is robust and cleanly handles multiple optional filters.
-    const filters = [
-      { $or: [{ status: 'Approved' }] },
-    ]; // Show both approved and deactivated residents
+    // --- UPDATE: Simplified filter to only get Approved residents ---
+    const filters = [ { status: 'Approved' } ];
 
-    // Boolean Filters (query params are strings, so we check for 'true')
-    if (is_voter === 'true') {
-      filters.push({ is_registered_voter: true });
-    }
-    if (is_pwd === 'true') {
-      filters.push({ is_pwd: true });
-    }
-    if (is_senior === 'true') {
-      // Assumes your schema has a boolean 'is_senior_citizen' field for performance.
-      // If not, you'd need to calculate based on date_of_birth.
-      filters.push({ is_senior_citizen: true });
-    }
-
-    // Occupation Filter
-    if (occupation) {
-      // Assumes your schema has an 'occupation_status' field.
-      filters.push({ occupation_status: occupation });
-    }
+    if (is_voter === 'true') filters.push({ is_registered_voter: true });
+    if (is_pwd === 'true') filters.push({ is_pwd: true });
+    if (is_senior === 'true') filters.push({ is_senior_citizen: true });
+    if (occupation) filters.push({ occupation_status: occupation });
     
-    // Age Range Filter (calculates based on date_of_birth)
     if (minAge || maxAge) {
       const ageFilter = {};
       const now = new Date();
       if (maxAge) {
-        // To be AT MOST `maxAge` years old, one must be born AFTER this date.
         const minBirthDate = new Date(now.getFullYear() - parseInt(maxAge) - 1, now.getMonth(), now.getDate());
         ageFilter.$gte = minBirthDate;
       }
       if (minAge) {
-        // To be AT LEAST `minAge` years old, one must be born BEFORE this date.
         const maxBirthDate = new Date(now.getFullYear() - parseInt(minAge), now.getMonth(), now.getDate());
         ageFilter.$lte = maxBirthDate;
       }
       filters.push({ date_of_birth: ageFilter });
     }
 
-    // General Text Search Filter
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       filters.push({
         $or: [
-          { first_name: searchRegex },
-          { middle_name: searchRegex },
-          { last_name: searchRegex },
-          { email: searchRegex },
-          { contact_number: searchRegex },
-          { address_street: searchRegex },
-          { address_subdivision_zone: searchRegex },
-          { precinct_number: searchRegex },
+          { first_name: searchRegex }, { middle_name: searchRegex }, { last_name: searchRegex },
+          { email: searchRegex }, { contact_number: searchRegex }, { address_street: searchRegex },
+          { address_subdivision_zone: searchRegex }, { precinct_number: searchRegex },
         ],
       });
     }
 
-    // Combine all filters with $and. If filters is empty, query will be {} (match all).
     const finalQuery = { $and: filters };
 
-    // --- 3. Define Sorting Options ---
-    let sortOptions = { created_at: -1 }; // Default sort
+    // --- UPDATE: Default sort is by 'date_approved' for this endpoint ---
+    let sortOptions = { date_approved: -1 };
     if (sortBy) {
-        // Use dynamic key for the field to sort by
-        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
+        sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- 4. Define Projection (Fields to Return) ---
+    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1,
-        middle_name: 1,
-        last_name: 1,
-        sex: 1,
-        date_of_birth: 1,
-        is_household_head: 1,
-        address_house_number: 1,
-        address_street: 1,
-        address_subdivision_zone: 1,
-        contact_number: 1,
-        email: 1,
-        status: 1,
-        created_at: 1,
-        _id: 1,
+        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        date_of_birth: 1, is_household_head: 1, address_house_number: 1,
+        address_street: 1, address_subdivision_zone: 1, contact_number: 1,
+        email: 1, status: 1, _id: 1,
+        date_added: "$created_at", // Rename field in output
+        date_approved: 1
     };
     
-    // --- 5. Execute Queries ---
     const residents = await residentsCollection
       .find(finalQuery)
       .project(projection)
@@ -1022,10 +980,8 @@ app.get('/api/residents/approved', async (req, res) => {
       .limit(itemsPerPage)
       .toArray();
 
-    // Get total count based on the same filters for accurate pagination
     const totalResidents = await residentsCollection.countDocuments(finalQuery);
 
-    // --- 6. Send Response ---
     res.json({
       residents: residents,
       total: totalResidents,
@@ -1850,85 +1806,114 @@ app.put('/api/documents/:id', async (req, res) => {
 
 // ADD NEW ADMIN (POST)
 app.post('/api/admins', async (req, res) => {
-
   const dab = await db();
 
+  // UPDATED: Validation rules for new name fields
+  const nameRegex = /^[a-zA-Z\s'-]+$/; // Allows letters, spaces, hyphens, apostrophes
   const requiredFields = [
+    { field: 'firstname', value: req.body.firstname, format: nameRegex },
+    { field: 'lastname', value: req.body.lastname, format: nameRegex },
     { field: 'username', value: req.body.username, format: /^[a-zA-Z0-9._%+-]+$/ },
-    { field: 'password', value: req.body.password, format: /^[a-zA-Z0-9._%+-]{6,}$/ },
-    { field: 'name', value: req.body.name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'password', value: req.body.password, format: /^.{6,}$/ }, // Simplified to min 6 chars
     { field: 'email', value: req.body.email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: req.body.role, format: /^(Technical Admin|Admin)$/ },
+    { field: 'role', value: req.body.role, format: /^(Super Admin|Admin)$/ },
   ];
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+  const errors = requiredFields
+    .filter(({ value, format }) => !value || !format.test(value))
+    .map(({ field }) => ({ field, message: `${field} is missing or has an invalid format` }));
 
   if (errors.length > 0) {
-    res.json({error: 'Invalid field format: ' + errors.map(error => error.message).join(', ')});
-    return;
+    return res.status(400).json({ error: 'Invalid field format: ' + errors.map(e => e.message).join(', ') });
   }
+
+  // UPDATED: Construct the new admin object and create a 'fullname' field
+  const { firstname, middlename, lastname, username, email, password, contact_number, role } = req.body;
+  
+  // Creates a full name, intelligently skipping the middle name if it's empty
+  const name = [firstname, middlename, lastname].filter(Boolean).join(' ');
+
+  const newAdminData = {
+    firstname,
+    middlename: middlename || '', // Ensure middlename is stored as an empty string if null/undefined
+    lastname,
+    name, // Store the combined fullname for easy searching/display
+    username,
+    email,
+    contact_number,
+    role,
+    password: md5(password),
+    createdAt: new Date(),
+  };
 
   const adminsCollection = dab.collection('admins');
 
-  // Check for validation
-  if (req.body.role === 'Technical Admin') {
-      const existingTechAdmin = await adminsCollection.findOne({ role: 'Technical Admin' });
-      if (existingTechAdmin) {
-          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
-      }
+  // Check for Super Admin existence
+  if (role === 'Super Admin') {
+    const existingTechAdmin = await adminsCollection.findOne({ role: 'Super Admin' });
+    if (existingTechAdmin) {
+      return res.status(409).json({ error: 'A Super Admin account already exists.' });
+    }
   }
+  
+  // Insert the new structured data
+  await adminsCollection.insertOne(newAdminData);
 
-  await adminsCollection.insertOne({...req.body, password: md5(req.body.password)});
-
-   // --- ADD AUDIT LOG HERE ---
-  // TODO: In a real app with auth middleware, you'd know which admin created this one.
+  // --- ADD AUDIT LOG HERE ---
   await createAuditLog({
-    description: `A new admin account was created: '${req.body.username}'.`,
+    description: `A new admin account was created: '${username}'.`,
     action: 'CREATE',
     entityType: 'Admin'
-    // We don't have the new ID here, but you could fetch it if needed.
   }, req);
   // --- END AUDIT LOG ---
 
-  res.json({message: 'Admin added successfully'});
-})
+  res.json({ message: 'Admin added successfully' });
+});
 
 // GET ALL ADMINS (GET)
 app.get('/api/admins', async (req, res) => {
-
   const search = req.query.search || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
 
   const dab = await db();
   const adminsCollection = dab.collection('admins');
+
+  // UPDATED: Search query to use the new 'fullname' field
   const query = search ? {
     $or: [
       { username: { $regex: new RegExp(search, 'i') } },
-      { name: { $regex: new RegExp(search, 'i') } },
+      { name: { $regex: new RegExp(search, 'i') } }, // Search the combined name field
       { email: { $regex: new RegExp(search, 'i') } },
       { role: { $regex: new RegExp(search, 'i') } },
     ]
   } : {};
+
+  // UPDATED: Projection to return the new name fields
   const admins = await adminsCollection.find(query, {
     projection: {
       username: 1,
-      name: 1,
+      firstname: 1,
+      middlename: 1,
+      lastname: 1,
+      name: 1, // Return the full name for display
       email: 1,
       role: 1,
       _id: 1,
-      action: { $ifNull: [ "$action", "" ] }
+      createdAt: 1,
+      action: { $ifNull: ["$action", ""] }
     }
   })
     .skip((page - 1) * itemsPerPage)
     .limit(itemsPerPage)
     .toArray();
+
   const totalAdmins = await adminsCollection.countDocuments(query);
   res.json({
     admins: admins,
     totalAdmins: totalAdmins
   });
-})
+});
 
 // GET ADMIN BY ID (GET)
 app.get('/api/admins/:id', async (req, res) => {
@@ -1942,8 +1927,8 @@ app.get('/api/admins/:id', async (req, res) => {
       }
     }
   );
-  res.json({admin});
-})
+  res.json({ admin });
+});
 
 /// DELETE ADMIN BY ID (DELETE)
 app.delete("/api/admins/:id", async (req, res) => {
@@ -1982,60 +1967,77 @@ app.delete("/api/admins/:id", async (req, res) => {
 
 // UPDATE ADMIN BY ID (PUT)
 app.put('/api/admins/:id', async (req, res) => {
-
   const dab = await db();
-
   const adminsCollection = dab.collection('admins');
 
-  const { username, name, email, role, password } = req.body;
+  // Fetch the current admin data first for the audit log
+  const currentAdmin = await adminsCollection.findOne({ _id: new ObjectId(req.params.id) });
+  if (!currentAdmin) {
+    return res.status(404).json({ error: 'Admin not found.' });
+  }
 
+  // --- VALIDATION ---
+  const { firstname, lastname, username, email, password, contact_number } = req.body;
+  const nameRegex = /^[a-zA-Z\s'-]+$/;
   const requiredFields = [
-    { field: 'username', value: username, format: /^[a-zA-Z0-9_]+$/ },
-    { field: 'name', value: name, format: /^[a-zA-Z\s]+$/ },
+    { field: 'firstname', value: firstname, format: nameRegex },
+    { field: 'lastname', value: lastname, format: nameRegex },
+    { field: 'username', value: username, format: /^[a-zA-Z0-9._%+-]+$/ },
     { field: 'email', value: email, format: /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/ },
-    { field: 'role', value: role, format: /^(Admin|Superadmin)$/ },
   ];
 
-  // Check for validation
-  if (req.body.role === 'Technical Admin') {
-      const existingTechAdmin = await adminsCollection.find({ role: 'Technical Admin' }).toArray();
-      if (existingTechAdmin.length > 1) {
-          return res.status(409).json({ error: 'A Technical Admin account already exists.' });
-      }
-  }
-
   if (password) {
-    requiredFields.push({ field: 'password', value: password, format: /^[a-zA-Z0-9_]+$/ });
+    // Only validate password if it's being changed
+    requiredFields.push({ field: 'password', value: password, format: /^.{6,}$/ });
   }
 
-  const errors = requiredFields.filter(({ field, value, format }) => !format.test(value)).map(({ field }) => ({ field, message: `${field} is invalid format` }));
+  const errors = requiredFields
+    .filter(({ value, format }) => !value || !format.test(value))
+    .map(({ field }) => ({ field, message: `${field} is missing or invalid` }));
 
   if (errors.length > 0) {
-    res.json({ error: 'Invalid field format: ' + errors.map(error => error.message).join(', ') });
-    return;
+    return res.status(400).json({ error: 'Invalid field format: ' + errors.map(e => e.message).join(', ') });
   }
+  // --- END VALIDATION ---
 
-  const data = { ...req.body };
-  if (data.password) data.password = md5(data.password);
+
+  // --- DATA PREPARATION ---
+  // Build the update object safely
+  const setData = {
+    firstname,
+    middlename: req.body.middlename || '', // Ensure middlename is at least an empty string
+    lastname,
+    username,
+    email,
+    contact_number,
+    // Generate the fullname for consistent searching
+    name: [firstname, req.body.middlename, lastname].filter(Boolean).join(' '),
+  };
+
+  // Only add the password to the update object if it was provided
+  if (password) {
+    setData.password = md5(password);
+  }
+  // --- END DATA PREPARATION ---
+
 
   await adminsCollection.updateOne(
     { _id: new ObjectId(req.params.id) },
-    { $set: data }
+    { $set: setData }
   );
 
   // --- ADD AUDIT LOG HERE ---
-    await createAuditLog({
-      description: `Admin account updated: '${currentAdmin.username}' information was modified.`,
-      action: "UPDATE",
-      entityType: "Admin",
-      entityId: req.params.id,
-    }, req)
+  // Using the fetched 'currentAdmin' makes the log more descriptive
+  await createAuditLog({
+    description: `Admin account updated: '${currentAdmin.username}' information was modified.`,
+    action: "UPDATE",
+    entityType: "Admin",
+    entityId: req.params.id,
+  }, req);
   // --- END AUDIT LOG ---
 
-  res.json({message: 'Admin updated successfully'});
-})
-
-
+  res.json({ message: 'Admin updated successfully' });
+});
 
 
 
@@ -2350,7 +2352,7 @@ app.delete("/api/barangay-officials/:id", async (req, res) => {
 
 
 
-// =================== NOTIFICATION HELPER =========================== //
+// =================== NOTIFICATION HELPER (UPDATED) =========================== //
 
 /**
  * Creates and saves a new notification.
@@ -2359,8 +2361,8 @@ app.delete("/api/barangay-officials/:id", async (req, res) => {
  * @param {string} notificationData.name - Title of the notification.
  * @param {string} notificationData.content - Body of the notification.
  * @param {string} notificationData.by - Creator (Admin/System).
- * @param {string} notificationData.type - Type: 'Announcement', 'Alert', 'Notification'.
- * @param {string} [notificationData.target_audience='SpecificResidents'] - 'All', 'SpecificResidents'.
+ * @param {string} notificationData.type - Type: 'News', 'Events', 'Alert'.
+ * @param {string} [notificationData.target_audience='SpecificResidents'] - 'All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'.
  * @param {string[]} [notificationData.recipient_ids=[]] - Array of resident ObjectId strings.
  * @param {Date|string} [notificationData.date=new Date()] - Effective date of notification.
  * @returns {Promise<object|null>} The created notification document or null on failure.
@@ -2376,7 +2378,7 @@ async function createNotification(dbInstance, notificationData) {
     type,
     target_audience = 'SpecificResidents',
     recipient_ids = [],
-    date = new Date(), // Default to now if not provided
+    date = new Date(),
   } = notificationData;
 
   // Basic validation for core fields
@@ -2384,47 +2386,65 @@ async function createNotification(dbInstance, notificationData) {
     console.error("Notification creation failed in helper: Missing required fields (name, content, by, type). Data:", notificationData);
     return null;
   }
-  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+  if (!['News', 'Events', 'Alert'].includes(type)) {
     console.error("Notification creation failed in helper: Invalid type. Data:", notificationData);
     return null;
   }
 
   let finalRecipientObjects = [];
 
-  if (target_audience === 'All') {
+  if (target_audience === 'SpecificResidents') {
+    if (Array.isArray(recipient_ids) && recipient_ids.length > 0) {
+      finalRecipientObjects = recipient_ids
+        .filter(id => ObjectId.isValid(id))
+        .map(idStr => ({
+          resident_id: new ObjectId(idStr),
+          status: 'pending',
+          read_at: null,
+        }));
+    }
+  } else {
+    // Handle group-based targeting ('All', 'PWDResidents', etc.)
+    let recipientQuery = { status: 'Approved' }; // Base query: always target approved residents
+
+    switch (target_audience) {
+      case 'All':
+        // The base query is already correct for 'All'
+        break;
+      case 'PWDResidents':
+        // Correct based on your schema
+        recipientQuery.is_pwd = true;
+        break;
+      case 'SeniorResidents':
+        // Correct based on your schema
+        recipientQuery.is_senior_citizen = true;
+        break;
+      case 'VotersResidents':
+        // Correct based on your schema
+        recipientQuery.is_voter = true;
+        break;
+      default:
+        console.error(`Notification creation failed: Unknown target_audience '${target_audience}'.`);
+        return null;
+    }
+
     try {
-      // Fetch all 'Approved' resident IDs. Adjust query if different criteria are needed for "All".
-      const allTargetResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
-      finalRecipientObjects = allTargetResidents.map(r => ({
+      const targetResidents = await residentsCollection.find(recipientQuery, { projection: { _id: 1 } }).toArray();
+      finalRecipientObjects = targetResidents.map(r => ({
         resident_id: r._id,
-        status: 'pending', // Initial delivery/read status
+        status: 'pending',
         read_at: null,
       }));
     } catch (e) {
-      console.error("Error fetching all residents for 'All' audience notification:", e);
-      return null; // Stop if we can't get recipients for 'All'
+      console.error(`Error fetching residents for '${target_audience}' audience notification:`, e);
+      return null;
     }
-  } else if (target_audience === 'SpecificResidents' && Array.isArray(recipient_ids) && recipient_ids.length > 0) {
-    finalRecipientObjects = recipient_ids
-      .filter(id => ObjectId.isValid(id)) // Ensure valid IDs
-      .map(idStr => ({
-        resident_id: new ObjectId(idStr),
-        status: 'pending',
-        read_at: null,
-      }));
-  } else if (Array.isArray(recipient_ids) && recipient_ids.length > 0) { // Fallback if target_audience not 'All' but IDs are provided
-     finalRecipientObjects = recipient_ids
-      .filter(id => ObjectId.isValid(id))
-      .map(idStr => ({
-        resident_id: new ObjectId(idStr),
-        status: 'pending',
-        read_at: null,
-      }));
   }
 
-  // Important: Do not create a notification if it has no one to go to (unless 'All' resulted in 0, which is an edge case for an empty system)
-  if (finalRecipientObjects.length === 0 && target_audience !== 'All') {
-    console.warn("Attempted to create notification with no valid specific recipients and target_audience was not 'All'. Data:", notificationData);
+  // Do not create a notification if 'SpecificResidents' was chosen but no one was selected.
+  // For group targets, it's okay to create a notification for 0 people (e.g., no PWDs registered yet).
+  if (target_audience === 'SpecificResidents' && finalRecipientObjects.length === 0) {
+    console.warn("Attempted to create notification with 'SpecificResidents' targeting, but no valid recipients were provided.");
     return null;
   }
 
@@ -2432,7 +2452,7 @@ async function createNotification(dbInstance, notificationData) {
   const newNotificationDoc = {
     name: String(name).trim(),
     content: String(content).trim(),
-    date: new Date(date), // Ensure it's a Date object
+    date: new Date(date),
     by: String(by).trim(),
     type: String(type).trim(),
     recipients: finalRecipientObjects,
@@ -2444,13 +2464,13 @@ async function createNotification(dbInstance, notificationData) {
   try {
     const result = await notificationsCollection.insertOne(newNotificationDoc);
     console.log(`Notification "${name}" (ID: ${result.insertedId}) created for ${finalRecipientObjects.length} recipient(s).`);
-    // Return the full document with the generated _id
     return { _id: result.insertedId, ...newNotificationDoc };
   } catch (error) {
     console.error("Error inserting notification document in helper:", error);
     return null;
   }
 }
+
 
 
 // =================== NOTIFICATION MODULE CRUD =========================== //
@@ -2477,12 +2497,13 @@ app.get('/api/notifications', async (req, res) => {
           { name: { $regex: searchRegex } },
           { content: { $regex: searchRegex } },
           { by: { $regex: searchRegex } },
-          { type: { $regex: searchRegex } }, // Also search by type
+          { type: { $regex: searchRegex } },
         ],
       });
     }
 
-    if (typeFilter && ['Announcement', 'Alert', 'Notification'].includes(typeFilter)) {
+    // UPDATED: Aligned types with frontend
+    if (typeFilter && ['News', 'Events', 'Alert'].includes(typeFilter)) {
       andConditions.push({ type: typeFilter });
     }
 
@@ -2492,7 +2513,7 @@ app.get('/api/notifications', async (req, res) => {
 
     const notifications = await notificationsCollection
       .find(query)
-      .sort({ date: -1 }) // Sort by effective date descending
+      .sort({ date: -1 })
       .skip(skip)
       .limit(itemsPerPage)
       .toArray();
@@ -2624,60 +2645,63 @@ app.patch('/api/residents/:residentId/notifications/mark-read', async (req, res)
 });
 
 
-// ADD NEW NOTIFICATION (POST) - Uses the helper
+// ADD NEW NOTIFICATION (POST) - UPDATED
 app.post('/api/notifications', async (req, res) => {
   const {
-    name, content, date, by, // Existing fields
-    type,                           // NEW: 'Announcement', 'Alert', 'Notification'
-    target_audience = 'SpecificResidents', // NEW: 'All', 'SpecificResidents', defaults if not provided
-    recipient_ids = []              // NEW: Array of resident ObjectId strings
+    name, content, date, by,
+    type,
+    target_audience = 'SpecificResidents',
+    recipient_ids = []
   } = req.body;
 
-  // Basic Validation
+  // Updated Validation
   if (!name || !content || !by || !type) {
     return res.status(400).json({ error: 'Validation failed', message: 'Name, content, by (creator), and type are required.' });
   }
-  if (!['Announcement', 'Alert', 'Notification'].includes(type)) {
+
+  const VALID_TYPES = ['News', 'Events', 'Alert'];
+  if (!VALID_TYPES.includes(type)) {
     return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
   }
-  if (!['All', 'SpecificResidents'].includes(target_audience)) {
-    return res.status(400).json({ error: 'Validation failed', message: "Invalid target_audience. Must be 'All' or 'SpecificResidents'." });
-  }
-  if (target_audience === 'SpecificResidents' && (!Array.isArray(recipient_ids) || recipient_ids.some(id => !ObjectId.isValid(id)))) {
-    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids must be an array of valid ObjectIds.' });
-  }
-   if (target_audience === 'SpecificResidents' && recipient_ids.length === 0) {
-    return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids array cannot be empty.' });
+
+  const VALID_AUDIENCES = ['All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'];
+  if (!VALID_AUDIENCES.includes(target_audience)) {
+    return res.status(400).json({ error: 'Validation failed', message: `Invalid target_audience. Must be one of: ${VALID_AUDIENCES.join(', ')}` });
   }
 
+  if (target_audience === 'SpecificResidents') {
+    if (!Array.isArray(recipient_ids) || recipient_ids.some(id => !ObjectId.isValid(id))) {
+      return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids must be an array of valid ObjectIds.' });
+    }
+    if (recipient_ids.length === 0) {
+      return res.status(400).json({ error: 'Validation failed', message: 'For specific residents, recipient_ids array cannot be empty.' });
+    }
+  }
 
   try {
     const dab = await db();
     const createdNotification = await createNotification(dab, {
-        name, content, by, type, target_audience, recipient_ids, date // Pass all to helper
+        name, content, by, type, target_audience, recipient_ids, date
     });
 
     if (!createdNotification) {
-        // createNotification returns null on internal failure or if no recipients for specific targeting
         return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
     }
 
-    // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `New notification created: '${name}' targeting ${target_audience === "All" ? "all residents" : `${recipient_ids.length} specific residents`}.`,
+      description: `New notification created: '${name}' targeting '${target_audience}'.`,
       action: "CREATE",
       entityType: "Notification",
       entityId: createdNotification._id.toString(),
     }, req)
-    // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Notification added successfully', notification: createdNotification });
   } catch (error) {
-    // This catch is for unexpected errors not handled by createNotification itself (e.g., db connection issue)
     console.error("Error in POST /api/notifications endpoint:", error);
     res.status(500).json({ error: 'Database error', message: 'Could not add notification.' });
   }
 });
+
 
 
 // GET NOTIFICATION BY ID (GET)
@@ -2706,12 +2730,12 @@ app.get('/api/notifications/:id', async (req, res) => {
   }
 });
 
-// UPDATE NOTIFICATION BY ID (PUT)
+// UPDATE NOTIFICATION BY ID (PUT) - UPDATED
 app.put('/api/notifications/:id', async (req, res) => {
   const { id } = req.params;
   const {
     name, content, date, by,
-    type, target_audience, recipient_ids // Allow updating these as well
+    type, target_audience, recipient_ids
   } = req.body;
 
   if (!ObjectId.isValid(id)) {
@@ -2720,97 +2744,74 @@ app.put('/api/notifications/:id', async (req, res) => {
 
   const dab = await db();
   const notificationsCollection = dab.collection('notifications');
-  const residentsCollection = dab.collection('residents'); // Needed if target_audience changes to 'All'
-
-  const updateFields = {};
-
-  // Standard field updates
-  if (name !== undefined) {
-    if (typeof name !== 'string' || name.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Name cannot be empty.' });
-    updateFields.name = String(name).trim();
-  }
-  if (content !== undefined) {
-    if (typeof content !== 'string' || content.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Content cannot be empty.' });
-    updateFields.content = String(content).trim();
-  }
-  if (date !== undefined) {
-    const parsedDate = new Date(date);
-    if (isNaN(parsedDate.getTime())) return res.status(400).json({ error: 'Validation failed', message: 'Invalid date format.' });
-    updateFields.date = parsedDate;
-  }
-  if (by !== undefined) {
-     if (typeof by !== 'string' || by.trim() === '') return res.status(400).json({ error: 'Validation failed', message: 'Author (by) cannot be empty.' });
-    updateFields.by = String(by).trim();
-  }
-  if (type !== undefined) {
-    if (!['Announcement', 'Alert', 'Notification'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
-    updateFields.type = type;
-  }
-
-  // Handle recipients update - If target_audience or recipient_ids are in the payload, rebuild recipients array.
-  // This is a simplification. A more complex update might involve adding/removing specific recipients.
-  let needsRecipientRebuild = false;
-  if (target_audience !== undefined) {
-      if (!['All', 'SpecificResidents'].includes(target_audience)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
-      updateFields.target_audience = target_audience;
-      needsRecipientRebuild = true;
-  }
-  if (recipient_ids !== undefined) { // Even if empty array, it means intent to change
-      if (!Array.isArray(recipient_ids) || recipient_ids.some(rid => !ObjectId.isValid(rid))) {
-          return res.status(400).json({ error: 'Validation failed', message: 'recipient_ids must be an array of valid ObjectIds.' });
-      }
-      // If target_audience is not changing to 'SpecificResidents' but recipient_ids are sent,
-      // we might assume it's for 'SpecificResidents' or ignore if target is 'All'.
-      // Forcing target_audience to 'SpecificResidents' if recipient_ids are provided and target_audience is not 'All'.
-      if (updateFields.target_audience !== 'All' && recipient_ids.length > 0) {
-          updateFields.target_audience = 'SpecificResidents';
-      }
-      needsRecipientRebuild = true;
-  }
-
-  if (needsRecipientRebuild) {
-    let finalRecipientObjects = [];
-    const effectiveTargetAudience = updateFields.target_audience || (await notificationsCollection.findOne({_id: new ObjectId(id)}, {projection: {target_audience:1}})).target_audience;
-    const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : [];
-
-
-    if (effectiveTargetAudience === 'All') {
-      const allApprovedResidents = await residentsCollection.find({ status: 'Approved' }, { projection: { _id: 1 } }).toArray();
-      finalRecipientObjects = allApprovedResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
-    } else if (effectiveTargetAudience === 'SpecificResidents' && effectiveRecipientIds.length > 0) {
-      finalRecipientObjects = effectiveRecipientIds.map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
-    }
-    // If specific and empty, recipients will be an empty array
-    updateFields.recipients = finalRecipientObjects;
-  }
-
-
-  if (Object.keys(updateFields).length === 0) {
-    const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
-    return res.json({ message: 'No changes provided to update.', notification: currentNotification });
-  }
-  updateFields.updated_at = new Date();
+  const residentsCollection = dab.collection('residents');
 
   try {
-    const result = await notificationsCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: updateFields }
-    );
-
-    if (result.matchedCount === 0) {
+    const currentNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+    if (!currentNotification) {
       return res.status(404).json({ error: 'Not found', message: 'Notification not found.' });
     }
     
+    const updateFields = {};
+
+    // Standard field validation and updates
+    if (name !== undefined) updateFields.name = String(name).trim();
+    if (content !== undefined) updateFields.content = String(content).trim();
+    if (date !== undefined) updateFields.date = new Date(date);
+    if (by !== undefined) updateFields.by = String(by).trim();
+
+    // Updated validation for type and target_audience
+    if (type !== undefined) {
+      if (!['News', 'Events', 'Alert'].includes(type)) return res.status(400).json({ error: 'Validation failed', message: 'Invalid notification type.' });
+      updateFields.type = type;
+    }
+
+    const needsRecipientRebuild = target_audience !== undefined || recipient_ids !== undefined;
+    
+    if (needsRecipientRebuild) {
+      const effectiveTargetAudience = target_audience !== undefined ? target_audience : currentNotification.target_audience;
+      const effectiveRecipientIds = recipient_ids !== undefined ? recipient_ids : currentNotification.recipients.map(r => r.resident_id.toString());
+      
+      const VALID_AUDIENCES = ['All', 'SpecificResidents', 'PWDResidents', 'SeniorResidents', 'VotersResidents'];
+      if (!VALID_AUDIENCES.includes(effectiveTargetAudience)) {
+          return res.status(400).json({ error: 'Validation failed', message: 'Invalid target_audience.' });
+      }
+      updateFields.target_audience = effectiveTargetAudience;
+      
+      let finalRecipientObjects = [];
+      if (effectiveTargetAudience === 'SpecificResidents') {
+          finalRecipientObjects = effectiveRecipientIds
+              .filter(rid => ObjectId.isValid(rid))
+              .map(ridStr => ({ resident_id: new ObjectId(ridStr), status: 'pending', read_at: null }));
+      } else {
+          let recipientQuery = { status: 'Approved' };
+          switch (effectiveTargetAudience) {
+              case 'All': break;
+              case 'PWDResidents': recipientQuery.is_pwd = true; break;
+              case 'SeniorResidents': recipientQuery.is_senior_citizen = true; break;
+              case 'VotersResidents': recipientQuery.is_voter = true; break;
+          }
+          const targetResidents = await residentsCollection.find(recipientQuery, { projection: { _id: 1 } }).toArray();
+          finalRecipientObjects = targetResidents.map(r => ({ resident_id: r._id, status: 'pending', read_at: null }));
+      }
+      updateFields.recipients = finalRecipientObjects;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      return res.json({ message: 'No changes provided to update.', notification: currentNotification });
+    }
+    
+    updateFields.updated_at = new Date();
+
+    await notificationsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
     const updatedNotification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
 
-    // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
       description: `Notification updated: '${currentNotification.name}' was modified.`,
       action: "UPDATE",
       entityType: "Notification",
       entityId: id,
-    }, req)
-    // --- END AUDIT LOG ---
+    }, req);
 
     res.json({ message: 'Notification updated successfully', notification: updatedNotification });
 
@@ -3577,9 +3578,12 @@ app.delete('/api/assets/:id', async (req, res) => {
 
 // ====================== COMPLAINT REQUESTS CRUD (REVISED) =========================== //
 
-// ADD NEW COMPLAINT REQUEST (POST)
+// MODIFIED: ADD NEW COMPLAINT REQUEST (POST)
+// We no longer need the `upload.none()` middleware because the frontend is sending a JSON body.
 app.post('/api/complaints', async (req, res) => {
   const dab = await db();
+  
+  // MODIFIED: Destructuring now includes `proofs_base64` and removes `person_complained_against_resident_id`.
   const {
     complainant_resident_id,
     complainant_display_name,
@@ -3588,28 +3592,33 @@ app.post('/api/complaints', async (req, res) => {
     category,
     date_of_complaint,
     time_of_complaint,
-    person_complained_against_name, // Name (can be manual or from resident search)
-    person_complained_against_resident_id, // Optional ObjectId
+    person_complained_against_name,
     status,
     notes_description,
+    proofs_base64, // NEW: Expecting an array of Base64 strings
   } = req.body;
 
-  // Validation
-  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category || 
+  // --- Start of Validation ---
+  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category ||
       !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
   if (!ObjectId.isValid(complainant_resident_id)) {
     return res.status(400).json({ error: 'Invalid complainant resident ID format.' });
   }
-  if (person_complained_against_resident_id && !ObjectId.isValid(person_complained_against_resident_id)) {
-    return res.status(400).json({ error: 'Invalid person complained against resident ID format.' });
-  }
+  // MODIFIED: Removed validation for the obsolete person_complained_against_resident_id
+  // --- End of Validation ---
 
   try {
+    const collection = dab.collection('complaints');
     const complaintDate = new Date(date_of_complaint);
 
+    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    const customRefNo = await generateUniqueReference(collection);
+
+    // --- 2. ADD ref_no AND PROOFS TO THE NEW COMPLAINT OBJECT ---
     const newComplaint = {
+      ref_no: customRefNo,
       complainant_resident_id: new ObjectId(complainant_resident_id),
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
@@ -3617,29 +3626,37 @@ app.post('/api/complaints', async (req, res) => {
       date_of_complaint: complaintDate,
       time_of_complaint: String(time_of_complaint).trim(),
       person_complained_against_name: String(person_complained_against_name).trim(),
-      person_complained_against_resident_id: person_complained_against_resident_id ? new ObjectId(person_complained_against_resident_id) : null,
+      // MODIFIED: This is now always null as it's no longer linked to a resident.
+      person_complained_against_resident_id: null,
       status: String(status).trim(),
       category: String(category).trim(),
       notes_description: String(notes_description).trim(),
+      // NEW: Store the array of Base64 proofs.
+      // Use a check to ensure it's an array, defaulting to an empty one if not.
+      proofs_base64: Array.isArray(proofs_base64) ? proofs_base64 : [],
       created_at: new Date(),
       updated_at: new Date(),
     };
-    const collection = dab.collection('complaints');
+    
     const result = await collection.insertOne(newComplaint);
-    const insertedDoc = await collection.findOne({ _id: result.insertedId });
 
-    // --- ADD AUDIT LOG HERE ---
+    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION --- (No changes needed here)
     await createAuditLog({
-      userId: newComplaint.complainant_resident_id, // The complainant is the user in this context
+      userId: newComplaint.complainant_resident_id,
       userName: newComplaint.complainant_display_name,
-      description: `New complaint filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
+      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
       action: 'CREATE',
       entityType: 'Complaint',
       entityId: result.insertedId.toString()
     }, req);
-    // --- END AUDIT LOG ---
 
-    res.status(201).json({ message: 'Complaint request added successfully', complaint: insertedDoc });
+    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND --- (No changes needed here)
+    res.status(201).json({
+      message: 'Complaint request added successfully',
+      complaintId: result.insertedId,
+      refNo: customRefNo
+    });
+    
   } catch (error) {
     console.error('Error adding complaint request:', error);
     res.status(500).json({ error: 'Error adding complaint: ' + error.message });
@@ -3649,7 +3666,7 @@ app.post('/api/complaints', async (req, res) => {
 // GET ALL COMPLAINT REQUESTS (GET)
 app.get('/api/complaints', async (req, res) => {
   const search = req.query.search || '';
-  const status = req.query.status || ''; // <-- Read the new status parameter
+  const status = req.query.status || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -3657,18 +3674,16 @@ app.get('/api/complaints', async (req, res) => {
   const dab = await db();
   const collection = dab.collection('complaints');
   
-  // This object will hold all our matching conditions
   let matchQuery = {};
 
-  // If a specific status is provided, add it to the query
   if (status) {
     matchQuery.status = status;
   }
   
-  // If a search term is provided, add the $or conditions for it
   if (search) {
-    const searchRegex = new RegExp(search, 'i');
+    const searchRegex = new RegExp(search.trim(), 'i'); // Added .trim() for better UX
     matchQuery.$or = [
+      { ref_no: { $regex: searchRegex } }, // <-- MODIFIED: Added ref_no to search
       { complainant_display_name: { $regex: searchRegex } },
       { "complainant_details.first_name": { $regex: searchRegex } },
       { "complainant_details.last_name": { $regex: searchRegex } },
@@ -3683,34 +3698,24 @@ app.get('/api/complaints', async (req, res) => {
 
   try {
     const aggregationPipeline = [
-      { // Lookup complainant
-        $lookup: {
-          from: 'residents', localField: 'complainant_resident_id',
-          foreignField: '_id', as: 'complainant_details_array'
-        }
-      },
+      { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } } },
-      { // Lookup person complained against (only if ID exists)
-        $lookup: {
-          from: 'residents', localField: 'person_complained_against_resident_id',
-          foreignField: '_id', as: 'person_complained_details_array'
-        }
-      },
+      { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
-      // Use the combined matchQuery object here
       { $match: matchQuery },
       {
         $project: {
           _id: 1,
+          ref_no: 1, // <-- MODIFIED: Included ref_no in the response
           complainant_name: { 
             $ifNull: [
-                { $concat: [ "$complainant_details.first_name", " ", { $ifNull: ["$complainant_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$complainant_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$complainant_details.last_name"] }, 
+                { $concat: [ "$complainant_details.first_name", " ", "$complainant_details.last_name"] }, 
                 "$complainant_display_name"
             ]
           },
           person_complained_against: {
             $ifNull: [
-              { $concat: [ "$person_complained_details.first_name", " ", { $ifNull: ["$person_complained_details.middle_name", ""] }, { $cond: { if: { $eq: [{ $ifNull: ["$person_complained_details.middle_name", ""] }, ""] }, then: "", else: " " } }, "$person_complained_details.last_name"] },
+              { $concat: [ "$person_complained_details.first_name", " ", "$person_complained_details.last_name"] },
               "$person_complained_against_name"
             ]
           },
@@ -3723,13 +3728,12 @@ app.get('/api/complaints', async (req, res) => {
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
     
-    // The count pipeline also needs to use the same lookups and match query for an accurate total
+    // The count pipeline correctly uses the same `matchQuery`
     const countPipeline = [
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // Use the combined matchQuery object here as well
         { $match: matchQuery },
         { $count: 'total' }
     ];
@@ -3767,6 +3771,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
       const searchRegex = new RegExp(search, 'i');
       searchMatchSubStage = {
         $or: [
+          { ref_no: { $regex: searchRegex } },
           { person_complained_against_name: { $regex: searchRegex } },
           { "person_complained_details.first_name": { $regex: searchRegex } }, // If looking up person complained
           { "person_complained_details.last_name": { $regex: searchRegex } },
@@ -3794,6 +3799,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
       {
         $project: {
           _id: 1,
+          ref_no: 1, 
           // complainant_name is known (it's the current user), but API can return it for consistency
           complainant_display_name: 1, // The stored display name at time of complaint
           person_complained_against_name: { // Show looked-up name if available, else stored name
@@ -3860,148 +3866,181 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
-  const collection = dab.collection('complaints');
+
+  // --- MODIFIED: Create a dynamic query object ---
+  // This allows the frontend to use either the short ref_no or the database _id
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    // Assuming ref_no is always stored uppercase
+    query = { ref_no: id.toUpperCase() };
+  }
+
   try {
+    const collection = dab.collection('complaints');
+    
     const aggregationPipeline = [
-      { $match: { _id: new ObjectId(id) } },
+      { $match: query }, // Use the dynamic query here
       { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
       { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-      { $project: { /* ... project all necessary fields, including from lookups ... */
+      { 
+        $project: {
+          // --- MODIFIED: Added ref_no to the response ---
+          ref_no: 1, 
           // Complaint fields
-          complainant_resident_id: 1, complainant_display_name: 1, complainant_address: 1,
-          contact_number: 1, date_of_complaint: 1, time_of_complaint: 1,
-          person_complained_against_name: 1, person_complained_against_resident_id: 1,
-          status: 1, notes_description: 1, created_at: 1, updated_at: 1,
-          // Complainant details
-          "complainant_details._id": 1, "complainant_details.first_name": 1, /* ... etc ... */
-          // Person complained against details
-          "person_complained_details._id": 1, "person_complained_details.first_name": 1, /* ... etc ... */
+          complainant_resident_id: 1,
+          complainant_display_name: 1,
+          complainant_address: 1,
+          contact_number: 1,
+          date_of_complaint: 1,
+          time_of_complaint: 1,
+          person_complained_against_name: 1,
+          person_complained_against_resident_id: 1,
+          status: 1,
+          notes_description: 1,
+          created_at: 1,
+          updated_at: 1,
           category: 1,
+          // Include details from looked-up documents
+          proofs_base64: 1, 
+          complainant_details: 1,
+          person_complained_details: 1,
         }
       }
     ];
+
     const result = await collection.aggregate(aggregationPipeline).toArray();
-    if (result.length === 0) return res.status(404).json({ error: 'Complaint not found.' });
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    
     res.json({ complaint: result[0] });
-  } catch (error) { console.error('Error fetching complaint by ID:', error); res.status(500).json({ error: "Failed to fetch complaint." }); }
+
+  } catch (error) {
+    console.error('Error fetching complaint by ID/Ref:', error);
+    res.status(500).json({ error: "Failed to fetch complaint." });
+  }
 });
 
 // UPDATE COMPLAINT REQUEST BY ID (PUT)
 app.put('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
-  const collection = dab.collection('complaints');
+
+  // --- MODIFIED: Create a dynamic query object ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
+  }
+
   const {
     complainant_resident_id, complainant_display_name, complainant_address, contact_number,
-    date_of_complaint, time_of_complaint,
-    person_complained_against_name, person_complained_against_resident_id, // New fields
+    date_of_complaint, time_of_complaint, category,
+    person_complained_against_name, person_complained_against_resident_id,
     status, notes_description,
   } = req.body;
 
+  // Build the $set object with only the fields provided in the request
   const updateFields = {};
-  // Complainant
-  if (complainant_resident_id !== undefined) {
-    if (!ObjectId.isValid(complainant_resident_id)) return res.status(400).json({ error: 'Invalid complainant ID for update.' });
-    updateFields.complainant_resident_id = new ObjectId(complainant_resident_id);
-  }
+  if (complainant_resident_id !== undefined) updateFields.complainant_resident_id = new ObjectId(complainant_resident_id);
   if (complainant_display_name !== undefined) updateFields.complainant_display_name = String(complainant_display_name).trim();
   if (complainant_address !== undefined) updateFields.complainant_address = String(complainant_address).trim();
   if (contact_number !== undefined) updateFields.contact_number = String(contact_number).trim();
-  
-  // Complaint details
   if (date_of_complaint !== undefined) updateFields.date_of_complaint = new Date(date_of_complaint);
   if (time_of_complaint !== undefined) updateFields.time_of_complaint = String(time_of_complaint).trim();
-  
-  // Person Complained Against
   if (person_complained_against_name !== undefined) updateFields.person_complained_against_name = String(person_complained_against_name).trim();
-  if (person_complained_against_resident_id !== undefined) { // Can be null to unset resident link
+  if (person_complained_against_resident_id !== undefined) {
     updateFields.person_complained_against_resident_id = person_complained_against_resident_id && ObjectId.isValid(person_complained_against_resident_id)
-      ? new ObjectId(person_complained_against_resident_id)
-      : null;
+      ? new ObjectId(person_complained_against_resident_id) : null;
   }
-  
+  if (category !== undefined) updateFields.category = String(category).trim();
   if (status !== undefined) updateFields.status = String(status).trim();
   if (notes_description !== undefined) updateFields.notes_description = String(notes_description).trim();
 
-  if (Object.keys(updateFields).length === 0) return res.status(400).json({ error: 'No fields to update.' });
+  if (Object.keys(updateFields).length === 0) {
+    return res.status(400).json({ error: 'No fields provided to update.' });
+  }
   updateFields.updated_at = new Date();
 
   try {
-    const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Complaint not found.' });
+    const collection = dab.collection('complaints');
 
-    // Need audit log
+    // --- MODIFIED: Fetch original document first for audit logging and existence check ---
+    const originalComplaint = await collection.findOne(query);
+    if (!originalComplaint) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
 
-    // Fetch updated doc with lookups for consistent response
+    await collection.updateOne({ _id: originalComplaint._id }, { $set: updateFields });
+
+    // --- MODIFIED: Added a detailed audit log ---
+    await createAuditLog({
+      description: `Updated details for complaint (Ref: ${originalComplaint.ref_no}).`,
+      action: "UPDATE",
+      entityType: "Complaint",
+      entityId: originalComplaint._id.toString(),
+    }, req);
+
+    // Fetch the fully populated, updated document to return to the frontend
     const updatedComplaintResult = await collection.aggregate([
-        { $match: { _id: new ObjectId(id) } },
+        { $match: { _id: originalComplaint._id } }, // Match by the definitive _id
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // Project necessary fields
     ]).toArray();
+
     res.json({ message: 'Complaint updated successfully', complaint: updatedComplaintResult[0] || null });
-  } catch (error) { console.error('Error updating complaint:', error); res.status(500).json({ error: 'Error updating complaint.' }); }
+
+  } catch (error) {
+    console.error('Error updating complaint:', error);
+    res.status(500).json({ error: 'Error updating complaint.' });
+  }
 });
 
 // --- GET ALL NOTES FOR A COMPLAINT ---
 // GET /api/complaints/:id/notes
 app.get('/api/complaints/:id/notes', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid complaint ID format' });
+  const dab = await db();
+
+  // --- MODIFIED: Create a dynamic query object ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
 
-  const dab = await db();
-  const collection = dab.collection('complaints');
-
   try {
+    const collection = dab.collection('complaints');
     const aggregationPipeline = [
-      // 1. Find the specific complaint document
-      { $match: { _id: new ObjectId(id) } },
-      
-      // 2. Deconstruct the investigation_notes array to process each note individually
+      { $match: query },
       { $unwind: { path: '$investigation_notes', preserveNullAndEmptyArrays: true } },
-
-      // 3. If there are no notes, this field will be null, so we can filter them out
       { $match: { 'investigation_notes': { $ne: null } } },
-
-      // 4. Join with the 'users' collection to get the author's details
-      { 
-        $lookup: {
-          from: 'users', // Assumes you have a 'users' collection
-          localField: 'investigation_notes.authorId',
-          foreignField: '_id',
-          as: 'author_details'
-        }
-      },
-      
-      // 5. Shape the final note object
+      { $lookup: { from: 'users', localField: 'investigation_notes.authorId', foreignField: '_id', as: 'author_details' }},
       { 
         $project: {
           _id: '$investigation_notes._id',
           content: '$investigation_notes.content',
           createdAt: '$investigation_notes.createdAt',
-          author: { 
-            name: { $ifNull: [ { $arrayElemAt: ['$author_details.name', 0] }, 'Unknown User' ] }
-          }
+          author: { name: { $ifNull: [ { $arrayElemAt: ['$author_details.name', 0] }, 'Unknown User' ] } }
         }
       }
     ];
 
     const notes = await collection.aggregate(aggregationPipeline).toArray();
-    
-    // The aggregation will return an empty array if the complaint doesn't exist or has no notes, which is a valid response.
     res.json({ notes: notes });
 
   } catch (error) {
-    console.error('Error fetching complaint notes:', error);
+    console.error('Error fetching complaint notes by ID/Ref:', error);
     res.status(500).json({ error: 'Failed to fetch complaint notes.' });
   }
 });
@@ -4009,13 +4048,10 @@ app.get('/api/complaints/:id/notes', async (req, res) => {
 
 // --- ADD A NEW NOTE TO A COMPLAINT ---
 // POST /api/complaints/:id/notes
-app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add your actual authentication middleware here
+app.post('/api/complaints/:id/notes', async (req, res) => {
   const { id } = req.params;
   const { content } = req.body;
   
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid complaint ID format' });
-  }
   if (!content || typeof content !== 'string' || content.trim().length === 0) {
     return res.status(400).json({ error: 'Note content is required and cannot be empty.' });
   }
@@ -4023,148 +4059,147 @@ app.post('/api/complaints/:id/notes', async (req, res) => { // IMPORTANT: Add yo
   const dab = await db();
   const collection = dab.collection('complaints');
 
-  const newNote = {
-    _id: new ObjectId(),
-    content: content.trim(),
-    createdAt: new Date()
-  };
+  // --- MODIFIED: Dynamic query and pre-fetch for audit log ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
+  }
+
+  const newNote = { _id: new ObjectId(), content: content.trim(), createdAt: new Date() };
 
   try {
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { 
-        $push: { 
-          investigation_notes: {
-             $each: [newNote],
-             $sort: { createdAt: -1 } // Optional: keep the array sorted on insert
-          }
-        }
-      }
-    );
-
-    if (result.matchedCount === 0) {
+    const originalComplaint = await collection.findOne(query);
+    if (!originalComplaint) {
       return res.status(404).json({ error: 'Complaint not found.' });
     }
 
-    if (result.modifiedCount === 0) {
-      // This might happen if the update fails for some reason, though it's rare with $push.
-      return res.status(500).json({ error: 'Failed to add the note.' });
-    }
-
-    // --- ADD AUDIT LOG HERE ---
+    await collection.updateOne(
+      { _id: originalComplaint._id },
+      { $push: { investigation_notes: { $each: [newNote], $sort: { createdAt: -1 } } } }
+    );
+    
     await createAuditLog({
-        description: `Added a new investigation note to complaint #${id.slice(-6)}.`,
+        description: `Added a new investigation note to complaint (Ref: ${originalComplaint.ref_no}).`,
         action: "UPDATE",
         entityType: "Complaint",
-        entityId: id,
-        // userName: req.user.name // Get acting admin's name from auth context
+        entityId: originalComplaint._id.toString(),
     }, req);
-    // --- END AUDIT LOG ---
 
     res.status(201).json({ message: 'Note added successfully', note: newNote });
 
   } catch (error) {
-    console.error('Error adding complaint note:', error);
+    console.error('Error adding complaint note by ID/Ref:', error);
     res.status(500).json({ error: 'Error adding complaint note.' });
   }
 });
 
+
+// --- UPDATE COMPLAINT STATUS ---
+// PATCH /api/complaints/:id/status
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status } = req.body;
-
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid Complaint ID format' });
+  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+  
+  if (!status || !ALLOWED_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
   }
 
-  // Define your allowed statuses
-  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
-  if (!status || !ALLOWED_STATUSES.includes(status)) {
-    return res.status(400).json({ error: 'Validation failed', message: `Status is required and must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+  const dab = await db();
+
+  // --- MODIFIED: Dynamic query and pre-fetch ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
 
   try {
-    const dab = await db();
     const complaintsCollection = dab.collection('complaints');
+    
+    const originalComplaint = await complaintsCollection.findOne(query);
+    if (!originalComplaint) {
+      return res.status(404).json({ error: 'Complaint not found.' });
+    }
+    const oldStatus = originalComplaint.status;
 
-    const result = await complaintsCollection.updateOne(
-      { _id: new ObjectId(id) },
+    if (oldStatus === status) {
+        return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
+    }
+
+    await complaintsCollection.updateOne(
+      { _id: originalComplaint._id },
       { $set: { status: status, updated_at: new Date() } }
     );
 
-    if (result.matchedCount === 0) {
-      return res.status(404).json({ error: 'Not found', message: 'Complaint not found.' });
-    }
+    await createAuditLog({
+        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'.`,
+        action: "STATUS_CHANGE",
+        entityType: "Complaint",
+        entityId: originalComplaint._id.toString(),
+    }, req);
 
-    if (result.modifiedCount === 0) {
-      // This means the status was already set to the new value
-      return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
-    }
-
-    // Optionally, send a notification to the complainant about the status change
-    const updatedComplaint = await complaintsCollection.findOne({ _id: new ObjectId(id) });
-    if (updatedComplaint && updatedComplaint.complainant_resident_id) {
+    if (originalComplaint.complainant_resident_id) {
       await createNotification(dab, {
-        name: `Complaint Status Update: Ref #${updatedComplaint._id.toString().slice(-6)}`,
-        content: `Dear ${updatedComplaint.complainant_display_name}, the status of your complaint regarding "${updatedComplaint.person_complained_against_name}" has been updated to: ${status}.`,
-        by: "System Administration", // Or the admin who made the change
+        name: `Complaint Status Update (Ref: ${originalComplaint.ref_no})`,
+        content: `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`,
+        by: "System Administration",
         type: "Notification",
-        target_audience: 'SpecificResidents',
-        recipient_ids: [updatedComplaint.complainant_resident_id.toString()],
+        target_audience: 'Specific Residents', // Ensure this matches your createNotification function
+        target_residents: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
       });
     }
 
     res.json({ message: `Complaint status updated to '${status}' successfully.`, statusChanged: true });
 
   } catch (error) {
-    console.error("Error updating complaint status:", error);
-    res.status(500).json({ error: 'Database error', message: 'Could not update complaint status.' });
+    console.error("Error updating complaint status by ID/Ref:", error);
+    res.status(500).json({ error: 'Could not update complaint status.' });
   }
 });
 
 
-// DELETE COMPLAINT REQUEST BY ID (DELETE)
+// --- DELETE COMPLAINT ---
+// DELETE /api/complaints/:id
 app.delete('/api/complaints/:id', async (req, res) => {
   const { id } = req.params;
-  if (!ObjectId.isValid(id)) {
-    return res.status(400).json({ error: 'Invalid ID format' });
+  const dab = await db();
+
+  // --- MODIFIED: Dynamic query ---
+  let query = {};
+  if (ObjectId.isValid(id)) {
+    query = { _id: new ObjectId(id) };
+  } else {
+    query = { ref_no: id.toUpperCase() };
   }
   
-  const dab = await db();
-  const collection = dab.collection('complaints');
-  
   try {
-    // Step 1: Fetch the document BEFORE deleting it to get its details for logging.
-    const complaintToDelete = await collection.findOne({ _id: new ObjectId(id) });
+    const collection = dab.collection('complaints');
+    
+    const complaintToDelete = await collection.findOne(query);
     if (!complaintToDelete) {
         return res.status(404).json({ error: 'Complaint not found.' });
     }
     
-    // Step 2: Perform the deletion.
-    const result = await collection.deleteOne({ _id: new ObjectId(id) });
-    if (result.deletedCount === 0) {
-      // This is a failsafe, but the findOne above should have already caught it.
-      return res.status(404).json({ error: 'Complaint not found during deletion process.' });
-    }
+    await collection.deleteOne({ _id: complaintToDelete._id });
     
-    // Step 3: Create the audit log using the fetched data.
     await createAuditLog({
-        description: `Deleted complaint #${id.slice(-6)} (Complainant: ${complaintToDelete.complainant_display_name}).`,
+        description: `Deleted complaint (Ref: ${complaintToDelete.ref_no}, Complainant: ${complaintToDelete.complainant_display_name}).`,
         action: "DELETE",
         entityType: "Complaint",
-        entityId: id,
-        // userName: req.user.name // In a real app with auth context
+        entityId: complaintToDelete._id.toString(),
     }, req);
 
-    // Step 4: Send the success response.
     res.json({ message: 'Complaint deleted successfully' });
 
   } catch (error) {
-    console.error('Error deleting complaint:', error);
+    console.error('Error deleting complaint by ID/Ref:', error);
     res.status(500).json({ error: 'Error deleting complaint: ' + error.message });
   }
 });
-
 
 
 
@@ -4197,35 +4232,41 @@ app.post('/api/document-requests', async (req, res) => {
 
   // Validation
   if (!requestor_resident_id || !request_type) {
-    return res.status(400).json({ error: 'Missing required fields: requestor, type, and purpose are required.' });
+    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
   }
 
   try {
-    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
     const residentsCollection = dab.collection('residents');
+    const requestsCollection = dab.collection('document_requests'); // Get the collection once
+
+    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}` : 'An unknown resident';
     // --- END FETCH ---
 
+    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    const customRefNo = await generateUniqueReference(requestsCollection);
+
+    // --- 2. ADD THE ref_no TO THE NEW REQUEST OBJECT ---
     const newRequest = {
+      ref_no: customRefNo, // Your new user-friendly reference number!
       requestor_resident_id: new ObjectId(requestor_resident_id),
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
-      details: details || {}, // Store the details object, default to empty object
-      document_status: "Pending", // Always start as Pending
+      details: details || {},
+      document_status: "Pending",
       created_at: new Date(),
       updated_at: new Date(),
     };
     
-    const collection = dab.collection('document_requests');
-    const result = await collection.insertOne(newRequest);
+    const result = await requestsCollection.insertOne(newRequest);
 
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-        description: `New document request for '${request_type}' submitted by ${requestorName}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) submitted by ${requestorName}.`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
@@ -4234,26 +4275,23 @@ app.post('/api/document-requests', async (req, res) => {
     }, req);
     // --- END AUDIT LOG ---
 
-    res.status(201).json({ message: 'Document request added successfully', requestId: result.insertedId });
+    // --- 3. UPDATE THE RESPONSE TO THE FRONTEND ---
+    res.status(201).json({
+      message: 'Document request added successfully',
+      requestId: result.insertedId,
+      refNo: customRefNo // Send the new ref # back to the frontend
+    });
+    
   } catch (error) {
     console.error('Error adding document request:', error);
     res.status(500).json({ error: 'Error adding document request.' });
   }
 });
 
-
 // GET /api/document-requests - GET ALL DOCUMENT REQUESTS (Revised for all filters)
 app.get('/api/document-requests', async (req, res) => {
   try {
-    // --- 1. Extract and Sanitize All Potential Query Parameters ---
-    const {
-      search,
-      status, // The new status filter from the dashboard and local UI
-      sortBy,
-      sortOrder,
-      byResidentId = '',
-    } = req.query; 
-
+    const { search, status, sortBy, sortOrder, byResidentId = '' } = req.query; 
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
     const skip = (page - 1) * itemsPerPage;
@@ -4261,16 +4299,14 @@ app.get('/api/document-requests', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('document_requests');
 
-    console.log('req, id', byResidentId);
-
-    // --- 2. Build the MongoDB Match Conditions Dynamically ---
     const matchConditions = [];
 
-    // Add search filter if it exists
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
       matchConditions.push({
         $or: [
+          // --- MODIFIED: Added ref_no to the search query ---
+          { ref_no: { $regex: searchRegex } }, 
           { request_type: { $regex: searchRegex } },
           { "requestor_details.first_name": { $regex: searchRegex } },
           { "requestor_details.last_name": { $regex: searchRegex } },
@@ -4283,72 +4319,45 @@ app.get('/api/document-requests', async (req, res) => {
     if (byResidentId && byResidentId.trim() !== '') {
       matchConditions.push({ requestor_resident_id: new ObjectId(byResidentId) });
     }
-
-    // Add status filter if it exists
     if (status) {
-      // Direct match is more efficient than regex for status
       matchConditions.push({ document_status: status });
     }
 
-    // Combine all filters into a single $match stage
     const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
     
-    // --- 3. Define Sorting Stage Dynamically ---
-    let sortStage = { $sort: { date_of_request: -1 } }; // Default sort
+    let sortStage = { $sort: { created_at: -1 } }; // Default sort by creation date
     if (sortBy) {
-        // Use the key sent from the frontend to sort
         sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } };
     }
 
-    // --- 4. Construct the Aggregation Pipeline ---
     const aggregationPipeline = [
-      { // First, perform the lookup to get requestor details
-        $lookup: {
-          from: 'residents',
-          localField: 'requestor_resident_id',
-          foreignField: '_id',
-          as: 'requestor_details_array'
-        }
-      },
-      { // Make the details easier to access
-        $addFields: {
-          requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] }
-        }
-      },
-      { // Now, apply the combined match filters
-        $match: mainMatchStage
-      },
+      { $lookup: { from: 'residents', localField: 'requestor_resident_id', foreignField: '_id', as: 'requestor_details_array' }},
+      { $addFields: { requestor_details: { $arrayElemAt: ['$requestor_details_array', 0] }}},
+      { $match: mainMatchStage },
       { // Project the final shape for the frontend
         $project: {
           _id: 1,
+          // --- MODIFIED: Included ref_no in the response ---
+          ref_no: 1, 
           request_type: 1,
           requestor_name: { $concat: ["$requestor_details.first_name", " ", "$requestor_details.last_name"] },
           date_of_request: "$created_at",
-          purpose_of_request: "$purpose",
           document_status: 1,
+          // Note: Removed purpose from here to keep the list view lean. You can add it back if needed.
         }
       },
-      sortStage, // Apply dynamic sorting
+      sortStage,
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
 
     const requests = await collection.aggregate(aggregationPipeline).toArray();
     
-    // --- 5. Get Accurate Total Count for Pagination ---
-    // Re-use the initial stages of the pipeline before projection and pagination
-    const countPipeline = [
-        ...aggregationPipeline.slice(0, 3), // Includes lookup, addFields, and the crucial mainMatchStage
-        { $count: 'total' }
-    ];
+    const countPipeline = [ ...aggregationPipeline.slice(0, 3), { $count: 'total' } ];
     const countResult = await collection.aggregate(countPipeline).toArray();
     const totalRequests = countResult.length > 0 ? countResult[0].total : 0;
 
-    // --- 6. Send Response ---
-    res.json({
-      requests,
-      total: totalRequests
-    });
+    res.json({ requests, total: totalRequests });
 
   } catch (error) {
     console.error('Error fetching document requests:', error);
@@ -4358,65 +4367,78 @@ app.get('/api/document-requests', async (req, res) => {
 
 // GET /api/document-requests/:id - GET SINGLE DOCUMENT REQUEST (For Details Page)
 app.get('/api/document-requests/:id', async (req, res) => {
-  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+  const { id } = req.params;
   const dab = await db();
   const collection = dab.collection('document_requests');
+
   try {
-    const request = await collection.findOne({ _id: new ObjectId(req.params.id) });
-    if (!request) return res.status(404).json({ error: 'Document request not found.' });
-    // Fetch requestor details separately for simplicity, or use a lookup as in the list view
+    // --- MODIFIED: Create a dynamic query object ---
+    // This allows the frontend to use either the short ref_no or the database _id
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query._id = new ObjectId(id);
+    } else {
+      // Assuming ref_no is always uppercase as we defined in the creation logic
+      query.ref_no = id.toUpperCase(); 
+    }
+
+    const request = await collection.findOne(query);
+    if (!request) {
+      return res.status(404).json({ error: 'Document request not found.' });
+    }
+
+    // Fetch requestor details
     const requestor = await dab.collection('residents').findOne({ _id: request.requestor_resident_id });
     request.requestor_details = requestor; // Attach for frontend use
+
     res.json({ request });
-  } catch (error) { console.error('Error fetching document request by ID:', error); res.status(500).json({ error: "Failed to fetch request." }); }
+
+  } catch (error) { 
+    console.error('Error fetching document request by ID/Ref:', error); 
+    res.status(500).json({ error: "Failed to fetch request." }); 
+  }
 });
 
-
-// PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (Handles new 'details' object)
+// PUT /api/document-requests/:id - UPDATE DOCUMENT REQUEST (No changes needed, correct as is)
 app.put('/api/document-requests/:id', async (req, res) => {
-    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
-    
+    const { id } = req.params;
     const dab = await db();
     const collection = dab.collection('document_requests');
     const { requestor_resident_id, request_type, purpose, details } = req.body;
 
-    // Basic validation on the payload
     if (!requestor_resident_id || !request_type || !purpose) {
         return res.status(400).json({ error: 'Missing required fields for update.' });
     }
-
-    const updateFields = {
-        requestor_resident_id: new ObjectId(requestor_resident_id),
-        request_type, 
-        purpose, 
-        details,
-        updated_at: new Date()
-    };
+    
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query._id = new ObjectId(id);
+    } else {
+      query.ref_no = id.toUpperCase();
+    }
 
     try {
-        // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
-        const originalRequest = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        const originalRequest = await collection.findOne(query);
         if (!originalRequest) {
             return res.status(404).json({ error: 'Document request not found.' });
         }
-        // --- END FETCH ---
-
-        const result = await collection.updateOne({ _id: new ObjectId(req.params.id) }, { $set: updateFields });
-        if (result.matchedCount === 0) {
-            // This is a failsafe; the findOne above should catch this.
-            return res.status(404).json({ error: 'Document request not found during update process.' });
-        }
         
-        // --- ADD AUDIT LOG HERE ---
+        const updateFields = {
+            requestor_resident_id: new ObjectId(requestor_resident_id),
+            request_type, 
+            purpose, 
+            details,
+            updated_at: new Date()
+        };
+        
+        await collection.updateOne(query, { $set: updateFields });
+        
         await createAuditLog({
-            description: `Updated details for document request '${originalRequest.request_type}' (#${req.params.id.slice(-6)}).`,
+            description: `Updated details for request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}).`,
             action: "UPDATE",
             entityType: "DocumentRequest",
-            entityId: req.params.id,
-            // In a real app with auth, get the admin's name from the request context
-            // userName: req.user.name 
+            entityId: originalRequest._id.toString(),
         }, req);
-        // --- END AUDIT LOG ---
 
         res.json({ message: 'Document request updated successfully' });
 
@@ -4426,71 +4448,79 @@ app.put('/api/document-requests/:id', async (req, res) => {
     }
 });
 
-// PATCH /api/document-requests/:id/status - UPDATE STATUS
+
+// PATCH /api/document-requests/:id/status - UPDATE STATUS (UPDATED)
 app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status: newStatus } = req.body;
-  if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format' });
 
-  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Denied"];
-  if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
-    return res.status(400).json({ error: 'Invalid status value.' });
-  }
+  // --- MODIFIED: Changed "Denied" to "Declined" ---
+  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Declined"];
   
+  if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
+    return res.status(400).json({ error: 'Invalid status value provided.' });
+  }
+
   try {
     const dab = await db();
     const collection = dab.collection('document_requests');
 
-    // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
-    const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+    let query = {};
+    if (ObjectId.isValid(id)) {
+      query = { _id: new ObjectId(id) };
+    } else {
+      // Assuming ref_no is always uppercase for consistency
+      query = { ref_no: id.toUpperCase() }; 
+    }
+
+    const originalRequest = await collection.findOne(query);
     if (!originalRequest) {
-        return res.status(404).json({ error: 'Request not found.' });
+      return res.status(404).json({ error: 'Request not found.' });
     }
+
     const oldStatus = originalRequest.document_status;
-    // --- END FETCH ---
 
-    // Only perform an update and log if the status is actually changing
     if (oldStatus === newStatus) {
-        return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
+      return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
     }
 
-    const result = await collection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { document_status: newStatus, updated_at: new Date() } }
-    );
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Request not found during update.' });
-    
-    // --- ADD AUDIT LOG HERE ---
-    await createAuditLog({
-        description: `Status for document request '${originalRequest.request_type}' (#${id.slice(-6)}) changed from '${oldStatus}' to '${newStatus}'.`,
-        action: "STATUS_CHANGE",
-        entityType: "DocumentRequest",
-        entityId: id,
-        // userName: req.user.name // In a real app with auth context
-    }, req);
-    // --- END AUDIT LOG ---
+    const result = await collection.updateOne(query, {
+      $set: {
+        document_status: newStatus,
+        updated_at: new Date()
+      }
+    });
 
-    // TODO: Send notification to user
-    // Send notification to all users
+    if (result.matchedCount === 0) {
+      // This is a failsafe, but findOne should have caught it.
+      return res.status(404).json({ error: 'Request not found during update operation.' });
+    }
+
+    await createAuditLog({
+      description: `Status for document request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) changed from '${oldStatus}' to '${newStatus}'.`,
+      action: "STATUS_CHANGE",
+      entityType: "DocumentRequest",
+      entityId: originalRequest._id.toString(),
+    }, req);
+
     const notificationData = {
-        name: `Status of your document request has been updated to '${newStatus}'.`,
-        content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
-        by: "System",
-        type: "Notification",
-        target_audience: "Specific Residents",
-        target_residents: [originalRequest.requestor_resident_id],
+      name: `Status of your document request has been updated to '${newStatus}'.`,
+      content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
+      by: "System",
+      type: "Notification",
+      target_audience: "Specific Residents",
+      target_residents: [originalRequest.requestor_resident_id],
     };
     await createNotification(dab, notificationData);
 
-
-
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
 
-  } catch (error) { 
-    console.error("Error updating status:", error); 
-    res.status(500).json({ error: 'Could not update status.' }); 
+  } catch (error) {
+    console.error("Error updating status:", error);
+    res.status(500).json({ error: 'Could not update status.' });
   }
 });
+
 
 
 
@@ -5184,6 +5214,32 @@ app.get('/api/demographics/profile', async (req, res) => {
     }
 });
 
+
+// HELPER FUNCTION - CUSTOM REF NUMBER
+
+async function generateUniqueReference(collection) {
+  // nanoid v4+ is ESM, so we use a dynamic import in a CommonJS file.
+  const { nanoid } = await import('nanoid');
+  const ID_LENGTH = 5;
+  let refNo;
+  let isUnique = false;
+
+  // Loop until a unique ID is found
+  while (!isUnique) {
+    // Generate a 5-character alphanumeric ID and convert to uppercase
+    refNo = nanoid(ID_LENGTH).toUpperCase();
+    
+    // Check if a document with this ref_no already exists
+    const existingRequest = await collection.findOne({ ref_no: refNo });
+    
+    if (!existingRequest) {
+      isUnique = true; // The ID is unique, exit the loop
+    }
+    // If it's not unique, the loop will run again to generate a new ID
+  }
+
+  return refNo;
+}
 
 // =================== AUDIT LOG HELPER =================== //
 

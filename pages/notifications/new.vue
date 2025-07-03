@@ -14,31 +14,35 @@
         <v-form ref="form">
           <v-row>
             <v-col cols="12" md="6">
+              <label class="v-label mb-2 font-weight-bold text-black">Announcement Name/Title*</label>
               <v-text-field v-model="notification.name" label="Announcement Name/Title*" :rules="[rules.required, rules.nameLength]" variant="outlined" ></v-text-field>
             </v-col>
             <v-col cols="12" md="6">
-              <v-text-field v-model="notification.by" label="Author (e.g., Admin Name)*" :rules="[rules.required]" variant="outlined" ></v-text-field>
+              <label class="v-label mb-2 font-weight-bold text-black">Author (Admin)*</label>
+              <v-text-field v-model="notification.by" label="Author (e.g., Admin Name)*" :rules="[rules.required]" readonly variant="outlined" ></v-text-field>
             </v-col>
           </v-row>
 
           <v-row>
             <v-col cols="12" md="6">
+              <label class="v-label mb-2 font-weight-bold text-black">Announcement Type*</label>
               <v-select
                 v-model="notification.type"
                 :items="NOTIFICATION_TYPES"
-                label="Announcemnent Type*"
+                label="Announcement Type*"
                 :rules="[rules.required]"
                 variant="outlined"
-                
               ></v-select>
             </v-col>
             <v-col cols="12" md="6">
+              <label class="v-label mb-2 font-weight-bold text-black">Effective Date & Time*</label>
               <v-text-field v-model="notification.date" label="Effective Date & Time*" type="datetime-local" :rules="[rules.required]" variant="outlined" ></v-text-field>
             </v-col>
           </v-row>
 
           <v-row>
             <v-col cols="12">
+              <label class="v-label mb-2 font-weight-bold text-black">Announcement Content*</label>
               <v-textarea v-model="notification.content" label="Announcement Content*" :rules="[rules.required, rules.contentLength]" variant="outlined" rows="5" auto-grow></v-textarea>
             </v-col>
           </v-row>
@@ -54,7 +58,6 @@
                 label="Target Audience*"
                 :rules="[rules.required]"
                 variant="outlined"
-                
               ></v-select>
             </v-col>
           </v-row>
@@ -74,8 +77,7 @@
                 label="Select Specific Residents (Type to search)"
                 placeholder="Search by name or email..."
                 variant="outlined"
-                
-                no-filter 
+                no-filter
                 hide-no-data
                 @update:search="debouncedSearchResidents"
               >
@@ -98,10 +100,20 @@
               </small>
             </v-col>
           </v-row>
+          
+          <!-- Informational Text for different audiences -->
            <small v-if="notification.target_audience === 'All'" class="d-block mt-2 text-info">
               This announcement will be sent to all 'Approved' residents.
             </small>
-
+            <small v-if="notification.target_audience === 'PWDResidents'" class="d-block mt-2 text-info">
+              This announcement will be sent to all residents registered as PWD.
+            </small>
+            <small v-if="notification.target_audience === 'SeniorResidents'" class="d-block mt-2 text-info">
+              This announcement will be sent to all residents registered as Senior Citizens.
+            </small>
+            <small v-if="notification.target_audience === 'VotersResidents'" class="d-block mt-2 text-info">
+              This announcement will be sent to all residents registered as Voters.
+            </small>
 
         </v-form>
       </v-card-text>
@@ -119,14 +131,17 @@ const { $toast } = useNuxtApp();
 const router = useRouter();
 const form = ref(null);
 
-const NOTIFICATION_TYPES = ['Announcement', 'Alert'];
+// Your existing types already included 'News' and 'Events'. No changes needed here.
+const NOTIFICATION_TYPES = ['News', 'Events', 'Alert'];
+
+// UPDATED: Added your new target audience options
 const TARGET_AUDIENCE_OPTIONS = [
   { title: 'All Approved Residents', value: 'All' },
+  { title: 'All PWD Residents', value: 'PWDResidents' },
+  { title: 'All Senior Citizen Residents', value: 'SeniorResidents' },
+  { title: 'All Residents Voters', value: 'VotersResidents' },
   { title: 'Specific Residents', value: 'SpecificResidents' },
-  // Add more target groups here if your API supports them, e.g.:
-  // { title: 'Household Heads', value: 'HouseholdHeads' },
 ];
-
 
 const userData = useCookie('userData');
 
@@ -134,7 +149,7 @@ const notification = ref({
   name: '',
   content: '',
   date: new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16), // Default to current local time
-  by: userData.value.name, // TODO: Prefill with logged-in admin's name
+  by: userData.value.name,
   type: NOTIFICATION_TYPES[0], // Default type
   target_audience: TARGET_AUDIENCE_OPTIONS[0].value, // Default target
   // recipient_ids will be derived from selectedRecipientIds
@@ -221,10 +236,12 @@ async function saveNotification() {
     const payload = {
       ...notification.value,
       date: new Date(notification.value.date).toISOString(),
-      recipient_ids: notification.value.target_audience === 'SpecificResidents' ? selectedRecipientIds.value : [], // Send selected IDs or empty if 'All'
+      // Send selected IDs ONLY if targeting specific residents.
+      // For 'All', 'PWDResidents', etc., send an empty array.
+      // The backend will use the 'target_audience' value to find recipients.
+      recipient_ids: notification.value.target_audience === 'SpecificResidents' ? selectedRecipientIds.value : [],
     };
-    // The API will handle populating recipients for 'All'
-
+    
     const { data, error } = await useMyFetch('/api/notifications', {
       method: 'POST',
       body: payload,
