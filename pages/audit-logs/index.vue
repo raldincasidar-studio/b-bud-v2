@@ -32,11 +32,11 @@
         :items-length="totalItems"
         :loading="loading"
         @update:options="loadLogs"
-        item-value="_id"
+        item-value="ref_no"
       >
         <!-- Custom slot for Ref # -->
-        <template v-slot:item._id="{ item }">
-          <span class="font-weight-medium text-caption text-grey-darken-1">{{ item._id }}</span>
+        <template v-slot:item.ref_no="{ item }">
+          <span class="font-weight-medium text-caption text-black-darken-1">{{ item.ref_no }}</span>
         </template>
         
         <!-- Custom slot for User Name -->
@@ -86,8 +86,8 @@ const itemsPerPage = ref(10);
 // --- TABLE HEADERS ---
 // Updated to include the 'User' column
 const headers = ref([
-  { title: 'Ref #', key: '_id', sortable: false, width: '18%' },
-  { title: 'User', key: 'user_name', sortable: true, width: '15%' }, // Added User column
+  { title: 'Ref #', key: 'ref_no', sortable: false, width: '10%' },
+  { title: 'User', key: 'user_name', sortable: true, width: '20%' }, // Added User column
   { title: 'Description', key: 'description', sortable: true, width: '45%' },
   { title: 'Date', key: 'date', sortable: true, width: '12%' },
   { title: 'Time', key: 'time', sortable: false, align: 'end', width: '10%' },

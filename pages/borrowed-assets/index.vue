@@ -1,5 +1,6 @@
 <template>
   <v-container class="my-10">
+    <!-- Page Header -->
     <v-row justify="space-between" align="center" class="mb-5">
       <v-col>
         <h2 class="text-h4 font-weight-bold">Borrowed Assets Log</h2>
@@ -17,24 +18,27 @@
       </v-col>
     </v-row>
 
+    <!-- Main Card -->
     <v-card elevation="2" border>
       <v-card-title class="d-flex align-center pa-4">
         <v-icon icon="mdi-archive-arrow-down-outline" class="mr-2"></v-icon>
         Transaction History
-      </v-card-title>
-      <v-card-text>
+        <v-spacer></v-spacer>
+        <!-- Search Field -->
         <v-text-field
           v-model="searchKey"
           prepend-inner-icon="mdi-magnify"
-          variant="outlined"
-          color="primary"
-          label="Search by Borrower, Item, or Status..."
-          clearable
-          
-          class="mb-4"
-          hide-details
+          variant="solo-filled"
+          label="Search by Ref #, Borrower, Item, or Status..."
+          flat hide-details single-lines
         ></v-text-field>
+      </v-card-title>
+      <v-divider></v-divider>
+      
+      <v-card-text>
+        
 
+        <!-- Status Filter Chips -->
         <v-chip-group v-model="statusFilter" column multiple>
           <v-chip
             v-for="status in Object.keys(STATUS_CONFIG)"
@@ -50,6 +54,7 @@
           </v-chip>
         </v-chip-group>
 
+        <!-- Data Table -->
         <v-data-table-server
           v-model:items-per-page="itemsPerPage"
           :headers="headers"
@@ -58,8 +63,14 @@
           :loading="loading"
           @update:options="loadTransactions"
           class="elevation-1 mt-4"
-          item-value="_id"
+          item-value="ref_no" 
         >
+          <!-- NEW: Custom slot for Ref # -->
+          <template v-slot:item.ref_no="{ item }">
+            <span class="font-weight-medium text-caption">{{ item.ref_no }}</span>
+          </template>
+
+          <!-- Custom slots for dates -->
           <template v-slot:item.borrow_datetime="{ item }">
             {{ formatDate(item.borrow_datetime) }}
           </template>
@@ -73,7 +84,7 @@
             <span v-else class="text-grey-darken-1">—</span>
           </template>
 
-          <!-- MODIFIED: Status chip in the table now has an icon -->
+          <!-- Custom slot for Status -->
           <template v-slot:item.status="{ item }">
             <v-chip
               :color="getStatusColor(item.status)"
@@ -86,13 +97,14 @@
             </v-chip>
           </template>
 
+          <!-- Custom slot for Actions -->
           <template v-slot:item.action="{ item }">
             <div class="d-flex justify-center align-center">
               <v-btn
                 variant="tonal"
                 color="primary"
                 size="small"
-                :to="`/borrowed-assets/${item._id}`"
+                :to="`/borrowed-assets/${item.ref_no}`" 
                 class="me-2 text-capitalize"
               >
                 Manage
@@ -100,6 +112,7 @@
             </div>
           </template>
 
+          <!-- No Data Template -->
            <template v-slot:no-data>
             <v-alert type="info" class="ma-3" border="start" prominent>
                 No borrowing transactions found for the selected filters.
@@ -131,17 +144,20 @@ const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
 
 // --- Table and UI Configuration ---
+// MODIFIED: Added 'Ref #' column and adjusted widths
 const headers = ref([
+  { title: 'Ref #', key: 'ref_no', sortable: true, width: '10%' },
   { title: 'Borrower', key: 'borrower_name', sortable: true, width: '15%' },
   { title: 'Item', key: 'item_borrowed', sortable: true, width: '15%' },
   { title: 'Date Borrowed', key: 'borrow_datetime', sortable: true, width: '15%' },
   { title: 'Expected Return', key: 'expected_return_date', sortable: true, width: '15%' },
-  { title: 'Actual Return', key: 'date_returned', sortable: true, width: '15%' },
-  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '12%' },
-  { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '13%' },
+  { title: 'Actual Return', key: 'date_returned', sortable: true, width: '10%' },
+  { title: 'Status', key: 'status', sortable: true, align: 'center', width: '10%' },
+  { title: 'Actions', key: 'action', sortable: false, align: 'center', width: '10%' },
 ]);
 
 const STATUS_CONFIG = {
+  All:        { color: 'primary', icon: 'mdi-filter-variant' },
   Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
   Processing: { color: 'blue', icon: 'mdi-cogs' },
   Approved:   { color: 'orange', icon: 'mdi-check-circle-outline' },
@@ -153,7 +169,7 @@ const STATUS_CONFIG = {
   Rejected:   { color: 'red-lighten-1', icon: 'mdi-close-octagon-outline' },
 };
 
-// --- REVISED: Data Loading Function ---
+// --- Data Loading Function ---
 async function loadTransactions(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
@@ -212,6 +228,7 @@ const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
 const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
 
 const getAvailableActions = (currentStatus) => {
+  // This function might be used on the detail page, leaving it as is.
   const actions = [];
   switch (currentStatus) {
     case 'Pending':
@@ -225,7 +242,7 @@ const getAvailableActions = (currentStatus) => {
     case 'Approved':
     case 'Overdue':
       actions.push({ status: 'Damaged', title: 'Mark as Damaged', icon: getStatusIcon('Damaged'), color: getStatusColor('Damaged'), prompt: true });
-      actions.push({ status: 'Lost', title: 'Mark as Lost', icon: getStatusIcon('Lost'), color: getStatusIcon('Lost'), prompt: true });
+      actions.push({ status: 'Lost', title: 'Mark as Lost', icon: getStatusIcon('Lost'), color: getStatusColor('Lost'), prompt: true });
       break;
     case 'Lost':
     case 'Damaged':
@@ -235,6 +252,7 @@ const getAvailableActions = (currentStatus) => {
   return actions;
 };
 
+// MODIFIED: This function now uses ref_no for consistency
 async function updateTransactionStatus(transactionItem, newStatus, prompt = false) {
   if (prompt) {
     const result = await $toast.fire({
@@ -249,9 +267,10 @@ async function updateTransactionStatus(transactionItem, newStatus, prompt = fals
     if (!result.isConfirmed) return;
   }
   
-  updatingStatusFor.value = transactionItem._id;
+  updatingStatusFor.value = transactionItem.ref_no; // Use ref_no to track which item is updating
   try {
-    const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionItem._id}/status`, {
+    // API call now uses the ref_no
+    const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionItem.ref_no}/status`, {
       method: 'PATCH',
       body: { status: newStatus },
     });
@@ -260,7 +279,8 @@ async function updateTransactionStatus(transactionItem, newStatus, prompt = fals
 
     $toast.fire({ title: data.value?.message || 'Status updated!', icon: 'success' });
     
-    const index = transactions.value.findIndex(t => t._id === transactionItem._id);
+    // Find and update the item in the local array using ref_no
+    const index = transactions.value.findIndex(t => t.ref_no === transactionItem.ref_no);
     if (index !== -1) {
       transactions.value[index].status = newStatus;
     }
@@ -286,6 +306,7 @@ const formatDate = (dateString, includeTime = true) => {
     return dateString;
   }
 };
+
 </script>
 
 <style scoped>

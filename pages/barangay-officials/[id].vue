@@ -189,7 +189,7 @@
             <v-divider class="my-6"></v-divider>
 
             <!-- Beneficiaries -->
-            <div class="d-flex justify-space-between align-center mb-4">
+            <!-- <div class="d-flex justify-space-between align-center mb-4">
               <h3 class="text-h6 font-weight-medium">Beneficiaries</h3>
               <v-btn v-if="editMode" color="primary" @click="addBeneficiary" prepend-icon="mdi-plus">Add Beneficiary</v-btn>
             </div>
@@ -214,7 +214,7 @@
                   </v-col>
                 </v-row>
               </v-card-text>
-            </v-card>
+            </v-card> -->
         </v-card-text>
       </v-card>
     </div>
