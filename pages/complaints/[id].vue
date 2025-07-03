@@ -16,11 +16,9 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Complaint Details</h2>
-          <!-- MODIFIED: Display the ref_no from the form data -->
           <p class="text-grey-darken-1">Reference #: {{ form.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
-          <!-- <v-btn v-if="!editMode" color="primary" @click="toggleEditMode(true)" prepend-icon="mdi-pencil" class="mr-2">Edit</v-btn> -->
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving">Save Changes</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
@@ -100,6 +98,40 @@
                 <v-textarea v-model="form.notes_description" :readonly="!editMode" variant="outlined" rows="5" auto-grow :error-messages="v$.notes_description.$errors.map(e => e.$message)" @blur="v$.notes_description.$touch"></v-textarea>
               </v-col>
             </v-row>
+        </v-card-text>
+      </v-card>
+
+      <!-- Proof of Complaint Section -->
+      <v-card class="mt-4" flat border>
+        <v-card-title>Proof of Complaint</v-card-title>
+        <v-divider></v-divider>
+        <v-card-text>
+          <div v-if="form.proofs_base64 && form.proofs_base64.length > 0">
+            <v-row>
+              <v-col
+                v-for="(proof, index) in form.proofs_base64"
+                :key="index"
+                cols="6" sm="4" md="3"
+              >
+                <v-img
+                  :src="proof"
+                  aspect-ratio="1"
+                  class="grey lighten-2 cursor-pointer"
+                  cover
+                  @click="openProofDialog(proof)"
+                >
+                  <template v-slot:placeholder>
+                    <v-row class="fill-height ma-0" align="center" justify="center">
+                      <v-progress-circular indeterminate color="grey lighten-5"></v-progress-circular>
+                    </v-row>
+                  </template>
+                </v-img>
+              </v-col>
+            </v-row>
+          </div>
+          <v-alert v-else type="info" variant="tonal">
+            No proof was attached to this complaint.
+          </v-alert>
         </v-card-text>
       </v-card>
 
@@ -193,6 +225,23 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- Proof Image Viewer Dialog -->
+    <v-dialog v-model="showProofDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Proof of Complaint</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="showProofDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="d-flex justify-center align-center" style="background-color: rgba(0,0,0,0.8);">
+          <v-img :src="selectedProofUrl" contain max-height="90vh" max-width="90vw"></v-img>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
@@ -211,7 +260,7 @@ const complaintId = route.params.id;
 
 // --- STATE ---
 const form = reactive({
-  ref_no: '', // <-- MODIFIED: Added ref_no field
+  ref_no: '',
   complainant_resident_id: null,
   complainant_display_name: '',
   complainant_address: '',
@@ -223,6 +272,7 @@ const form = reactive({
   status: 'New',
   notes_description: '',
   category: '',
+  proofs_base64: [], 
 });
 
 const complaintCategories = ref([
@@ -250,6 +300,8 @@ const editMode = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const confirmDeleteDialog = ref(false);
+const showProofDialog = ref(false);
+const selectedProofUrl = ref('');
 
 const complainantSearchQuery = ref('');
 const complainantSearchResults = ref([]);
@@ -259,12 +311,10 @@ const personComplainedSearchQuery = ref('');
 const personComplainedSearchResults = ref([]);
 const isLoadingPersonComplained = ref(false);
 
-// START: NOTES STATE
 const investigationNotes = ref([]);
 const newNoteContent = ref('');
 const notesLoading = ref(false);
 const addingNote = ref(false);
-// END: NOTES STATE
 
 // --- VUELIDATE ---
 const rules = {
@@ -302,11 +352,10 @@ async function fetchComplaint(){
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
 
-        // Fetch notes if status is correct on initial load
         if (form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed') {
           await fetchNotes();
         } else {
-          investigationNotes.value = []; // Ensure notes are cleared if status is not relevant
+          investigationNotes.value = [];
         }
 
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/complaints'); }
@@ -317,6 +366,10 @@ async function fetchComplaint(){
 const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) resetForm(); };
 const cancelEdit = () => { resetForm(); toggleEditMode(false); };
 const resetForm = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); };
+const openProofDialog = (url) => {
+  selectedProofUrl.value = url;
+  showProofDialog.value = true;
+};
 
 // --- SEARCH LOGIC ---
 const debounce = (fn,delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn.apply(this,a), delay); }; };
@@ -345,15 +398,13 @@ watch(personComplainedSearchQuery, (nq) => {
     }
 });
 
-// START: NOTES WATCHER
 watch(() => form.status, (newStatus, oldStatus) => {
   if (newStatus !== oldStatus && (newStatus === 'Under Investigation' || newStatus === 'Resolved' || newStatus === 'Dismissed')) {
     fetchNotes();
   } else if (newStatus === 'New' || newStatus === 'Closed') {
-    investigationNotes.value = []; // Clear notes if status changes to one where notes are not shown
+    investigationNotes.value = [];
   }
 });
-// END: NOTES WATCHER
 
 const onComplainantSelect = (selectedId) => {
     const resident = complainantSearchResults.value.find(r => r._id === selectedId);
@@ -404,13 +455,12 @@ async function deleteComplaint(){
   }
 }
 
-// START: NOTES LOGIC
+// --- NOTES LOGIC ---
 async function fetchNotes() {
   notesLoading.value = true;
   try {
     const { data, error } = await useMyFetch(`/api/complaints/${complaintId}/notes`);
     if (error.value) throw new Error('Failed to fetch investigation notes.');
-    // Sort by newest first
     investigationNotes.value = (data.value?.notes || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
@@ -434,14 +484,13 @@ async function addNote() {
     if (error.value) throw new Error('Failed to add note.');
     $toast.fire({ title: 'Note added successfully!', icon: 'success' });
     newNoteContent.value = '';
-    await fetchNotes(); // Refresh the list
+    await fetchNotes();
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
     addingNote.value = false;
   }
 }
-// END: NOTES LOGIC
 
 // --- HELPER FUNCTIONS ---
 const formatDateForInput = (iso, type='date') => { if (!iso) return ''; const d = new Date(iso); return type === 'date' ? d.toISOString().split('T')[0] : d.toTimeString().slice(0,5); };
@@ -457,4 +506,7 @@ const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'war
 
 <style scoped>
 .v-label { opacity: 1; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity)); display: block; margin-bottom: 4px; font-weight: 500; }
+.cursor-pointer {
+  cursor: pointer;
+}
 </style>

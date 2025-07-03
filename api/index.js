@@ -3577,9 +3577,12 @@ app.delete('/api/assets/:id', async (req, res) => {
 
 // ====================== COMPLAINT REQUESTS CRUD (REVISED) =========================== //
 
-// ADD NEW COMPLAINT REQUEST (POST)
+// MODIFIED: ADD NEW COMPLAINT REQUEST (POST)
+// We no longer need the `upload.none()` middleware because the frontend is sending a JSON body.
 app.post('/api/complaints', async (req, res) => {
   const dab = await db();
+  
+  // MODIFIED: Destructuring now includes `proofs_base64` and removes `person_complained_against_resident_id`.
   const {
     complainant_resident_id,
     complainant_display_name,
@@ -3589,12 +3592,12 @@ app.post('/api/complaints', async (req, res) => {
     date_of_complaint,
     time_of_complaint,
     person_complained_against_name,
-    person_complained_against_resident_id,
     status,
     notes_description,
+    proofs_base64, // NEW: Expecting an array of Base64 strings
   } = req.body;
 
-  // --- Start of Validation (No changes needed here) ---
+  // --- Start of Validation ---
   if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category ||
       !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
@@ -3602,9 +3605,7 @@ app.post('/api/complaints', async (req, res) => {
   if (!ObjectId.isValid(complainant_resident_id)) {
     return res.status(400).json({ error: 'Invalid complainant resident ID format.' });
   }
-  if (person_complained_against_resident_id && !ObjectId.isValid(person_complained_against_resident_id)) {
-    return res.status(400).json({ error: 'Invalid person complained against resident ID format.' });
-  }
+  // MODIFIED: Removed validation for the obsolete person_complained_against_resident_id
   // --- End of Validation ---
 
   try {
@@ -3614,9 +3615,9 @@ app.post('/api/complaints', async (req, res) => {
     // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
     const customRefNo = await generateUniqueReference(collection);
 
-    // --- 2. ADD ref_no TO THE NEW COMPLAINT OBJECT ---
+    // --- 2. ADD ref_no AND PROOFS TO THE NEW COMPLAINT OBJECT ---
     const newComplaint = {
-      ref_no: customRefNo, // <-- NEW: Add the reference number
+      ref_no: customRefNo,
       complainant_resident_id: new ObjectId(complainant_resident_id),
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
@@ -3624,17 +3625,21 @@ app.post('/api/complaints', async (req, res) => {
       date_of_complaint: complaintDate,
       time_of_complaint: String(time_of_complaint).trim(),
       person_complained_against_name: String(person_complained_against_name).trim(),
-      person_complained_against_resident_id: person_complained_against_resident_id ? new ObjectId(person_complained_against_resident_id) : null,
+      // MODIFIED: This is now always null as it's no longer linked to a resident.
+      person_complained_against_resident_id: null,
       status: String(status).trim(),
       category: String(category).trim(),
       notes_description: String(notes_description).trim(),
+      // NEW: Store the array of Base64 proofs.
+      // Use a check to ensure it's an array, defaulting to an empty one if not.
+      proofs_base64: Array.isArray(proofs_base64) ? proofs_base64 : [],
       created_at: new Date(),
       updated_at: new Date(),
     };
     
     const result = await collection.insertOne(newComplaint);
 
-    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION ---
+    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION --- (No changes needed here)
     await createAuditLog({
       userId: newComplaint.complainant_resident_id,
       userName: newComplaint.complainant_display_name,
@@ -3644,11 +3649,11 @@ app.post('/api/complaints', async (req, res) => {
       entityId: result.insertedId.toString()
     }, req);
 
-    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND ---
+    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND --- (No changes needed here)
     res.status(201).json({
       message: 'Complaint request added successfully',
       complaintId: result.insertedId,
-      refNo: customRefNo // Send the new ref # back
+      refNo: customRefNo
     });
     
   } catch (error) {
@@ -3900,6 +3905,7 @@ app.get('/api/complaints/:id', async (req, res) => {
           updated_at: 1,
           category: 1,
           // Include details from looked-up documents
+          proofs_base64: 1, 
           complainant_details: 1,
           person_complained_details: 1,
         }

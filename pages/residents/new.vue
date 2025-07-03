@@ -158,7 +158,7 @@
     </v-card>
 
     <!-- Household Members Section -->
-    <!-- <v-card class="mb-6" flat border>
+    <v-card class="mb-6" flat border>
       <v-card-title class="text-h6 font-weight-medium d-flex justify-space-between align-center">
         <span>Step 2: Household Members</span>
         <v-btn color="primary" variant="tonal" @click="openMemberDialog()" prepend-icon="mdi-account-plus">Add New Member</v-btn>
@@ -178,7 +178,7 @@
         </v-table>
         <p v-else class="text-center text-grey py-4">No members have been added yet.</p>
       </v-card-text>
-    </v-card> -->
+    </v-card>
 
     <!-- REVISION: The Member Form Dialog now mirrors the Head's form (without address) -->
     <v-dialog v-model="showMemberDialog" persistent max-width="900px" scrollable>
@@ -284,7 +284,7 @@
             </template>
           </v-row>
           
-          <template v-if="memberAge >= 15">
+          <!-- <template v-if="memberAge >= 15">
             <v-divider class="my-6"></v-divider>
             <p class="text-subtitle-2 mb-4">Account Creation (Optional, for ages 15+)</p>
             <v-row>
@@ -297,7 +297,7 @@
                 <v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" @blur="vMember$.password.$touch()" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field>
               </v-col>
             </v-row>
-          </template>
+          </template> -->
 
         </v-card-text>
         <v-card-actions>
