@@ -325,7 +325,7 @@ async function generateAndSetToPickup() {
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
-    isActing.value = false;
+    isActing.value = false;s
   }
 }
 
