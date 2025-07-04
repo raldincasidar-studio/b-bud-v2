@@ -5036,7 +5036,7 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     
     // 5. Serve the PDF
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `inline; filename=${request.request_type.replace(/ /g, '_')}_${requestor.last_name}.pdf`);
+    res.setHeader('Content-Disposition', `attachment; filename="${request.request_type.replace(/ /g, '_')}_${requestor.last_name}.pdf"`);
     res.send(pdfBuffer);
 
   } catch (error) {

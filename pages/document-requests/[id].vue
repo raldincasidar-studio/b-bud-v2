@@ -23,6 +23,44 @@
         </v-col>
       </v-row>
 
+      <!-- ✨ UPDATED STATUS TRACKER START ✨ -->
+      <div class="status-tracker-container my-12">
+        <div class="progress-bar-container">
+            <div class="progress-bar-bg"></div>
+            <div
+                class="progress-bar-fg"
+                :class="isDeclined ? 'bg-error' : 'bg-primary'"
+                :style="{ width: progressWidth }"
+            ></div>
+        </div>
+        <div class="steps-container">
+            <div v-for="(step, index) in trackerSteps" :key="step.name" class="step-item">
+                <div
+                    class="step-circle"
+                    :class="{
+                        'completed': !isDeclined && index < activeStepIndex,
+                        'current': !isDeclined && index === activeStepIndex,
+                        'declined': isDeclined && index < activeStepIndex,
+                        'failure-point': isDeclined && index === activeStepIndex
+                    }"
+                >
+                    <!-- Icon color is now controlled by CSS -->
+                    <v-icon size="large">
+                        {{ getStepIcon(index, step.icon) }}
+                    </v-icon>
+                </div>
+                <div
+                    class="step-label mt-3"
+                    :class="{ 'font-weight-bold text-primary': !isDeclined && index === activeStepIndex }"
+                >
+                    {{ step.name }}
+                </div>
+            </div>
+        </div>
+      </div>
+      <!-- ✨ UPDATED STATUS TRACKER END ✨ -->
+
+
       <!-- Request Details Card -->
       <v-card class="mt-4" flat border>
         <v-card-text class="py-6">
@@ -101,15 +139,15 @@
         </div>
 
         <!-- State: Approved -> Generate & Set to Pickup -->
-        <div v-else-if="request.document_status === 'Approved' || request.document_status === 'Ready for Pickup'">
-          <v-card-text>The request is approved. Generate the document for printing and pickup.</v-card-text>
+        <div v-else-if="request.document_status === 'Approved'">
+          <v-card-text>The request is approved. Generate the document to prepare it for pickup.</v-card-text>
           <v-card-actions class="pa-4">
             <v-btn size="large" color="primary" @click="generateAndSetToPickup" :loading="isActing" prepend-icon="mdi-printer-outline">Generate & Set to "Ready for Pickup"</v-btn>
           </v-card-actions>
         </div>
         
-        <!-- ✨ NEW: State: Ready for Pickup -> Release Document -->
-        <div v-if="request.document_status === 'Ready for Pickup'">
+        <!-- State: Ready for Pickup -> Release Document -->
+        <div v-else-if="request.document_status === 'Ready for Pickup'">
           <v-card-text>
             <p class="mb-4">The document is ready. To release it to the requestor, please upload a proof of release (e.g., a photo of the signed acknowledgement receipt).</p>
             
@@ -147,7 +185,7 @@
           </v-card-actions>
         </div>
 
-        <!-- ✨ NEW: State: Released -> Show Proof of Release -->
+        <!-- State: Released -> Show Proof of Release -->
         <div v-else-if="request.document_status === 'Released'">
           <v-card-text>
               <p>This document was successfully released on <strong>{{ formatTimestamp(request.released_at) }}</strong>.</p>
@@ -172,6 +210,7 @@
     </div>
   </v-container>
 </template>
+
 <script setup>
 import { ref, onMounted, computed, watch } from 'vue';
 import { useRoute } from 'vue-router';
@@ -180,17 +219,25 @@ import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 const route = useRoute();
-const requestId = route.params.id; // Can be ObjectId or the new ref_no
+const requestId = route.params.id;
 
 // --- STATE ---
 const request = ref(null);
 const loading = ref(true);
-const isActing = ref(false); // For user-initiated actions
-const isAutoProcessing = ref(false); // For the initial status change
-
-// State for Release Action
-const proofOfReleaseFile = ref([]); // v-file-input model
+const isActing = ref(false);
+const isAutoProcessing = ref(false);
+const proofOfReleaseFile = ref([]);
 const proofOfReleaseBase64 = ref('');
+
+// --- STATUS TRACKER CONFIGURATION ---
+const trackerSteps = ref([
+    { name: 'Pending', icon: 'mdi-file-clock-outline' },
+    { name: 'Processing', icon: 'mdi-cogs' },
+    { name: 'Approved', icon: 'mdi-thumb-up-outline' },
+    { name: 'Ready for Pickup', icon: 'mdi-package-variant-closed' },
+    { name: 'Released', icon: 'mdi-handshake-outline' }
+]);
+const statusOrder = ['Pending', 'Processing', 'Approved', 'Ready for Pickup', 'Released'];
 
 // --- COMPUTED PROPERTIES ---
 const requestorName = computed(() => {
@@ -198,6 +245,23 @@ const requestorName = computed(() => {
     return `${request.value.requestor_details.first_name} ${request.value.requestor_details.last_name}`;
   }
   return 'Loading...';
+});
+
+// --- TRACKER COMPUTED PROPS ---
+const isDeclined = computed(() => request.value?.document_status === 'Declined');
+
+const activeStepIndex = computed(() => {
+  if (!request.value) return -1;
+  // If declined, the failure point is the 'Processing' step
+  if (isDeclined.value) return statusOrder.indexOf('Processing');
+  return statusOrder.indexOf(request.value.document_status);
+});
+
+const progressWidth = computed(() => {
+  if (activeStepIndex.value <= 0) return '0%';
+  // The progress bar connects the centers of the circles
+  const percentage = (activeStepIndex.value / (trackerSteps.value.length - 1)) * 100;
+  return `${percentage}%`;
 });
 
 // --- LIFECYCLE & DATA FETCHING ---
@@ -212,16 +276,13 @@ async function fetchRequest(showLoading = true) {
         if (error.value || !data.value?.request) {
             throw new Error(`Request '${requestId}' not found.`);
         }
-
         request.value = data.value.request;
 
-        // Auto-update status from 'Pending' to 'Processing'
         if (request.value.document_status === 'Pending') {
             isAutoProcessing.value = true;
             try {
-                // This silently updates the status in the background on page load
                 await _updateStatusOnBackend('Processing');
-                await fetchRequest(false); // Refetch to display the new 'Processing' status
+                await fetchRequest(false);
             } catch (processError) {
                 console.error("Failed to auto-update status to 'Processing':", processError);
                 $toast.fire({ title: 'Could not auto-start processing.', icon: 'warning', timer: 3000 });
@@ -229,7 +290,6 @@ async function fetchRequest(showLoading = true) {
                 isAutoProcessing.value = false;
             }
         }
-
     } catch (e) {
       $toast.fire({ title: e.message, icon: 'error' });
     } finally {
@@ -240,22 +300,15 @@ async function fetchRequest(showLoading = true) {
 // --- FILE HANDLING ---
 watch(proofOfReleaseFile, (newFiles) => {
   const file = newFiles[0];
-
   if (!file) {
-    proofOfReleaseBase64.value = '';
-    return;
+    proofOfReleaseBase64.value = ''; return;
   }
-
-  if (file.size > 5 * 1024 * 1024) { // 5MB limit
+  if (file.size > 5 * 1024 * 1024) {
     $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
-    proofOfReleaseFile.value = [];
-    return;
+    proofOfReleaseFile.value = []; return;
   }
-
   const reader = new FileReader();
-  reader.onload = (e) => {
-    proofOfReleaseBase64.value = e.target.result;
-  };
+  reader.onload = (e) => { proofOfReleaseBase64.value = e.target.result; };
   reader.onerror = (e) => {
     console.error("FileReader error:", e);
     $toast.fire({ title: 'Could not read the file.', icon: 'error' });
@@ -264,22 +317,17 @@ watch(proofOfReleaseFile, (newFiles) => {
   reader.readAsDataURL(file);
 });
 
-
 // --- ACTION HANDLERS ---
-
-// Internal helper to call the generic status update endpoint
-async function _updateStatusOnBackend(newStatus) {
+async function _updateStatusOnBackend(newStatus, body = {}) {
     const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/status`, {
       method: 'PATCH',
-      body: { status: newStatus }
+      body: { status: newStatus, ...body }
     });
-    if (error.value) {
-      throw new Error(error.value.data?.error || `Failed to update status.`);
-    }
+    if (error.value) throw new Error(error.value.data?.error || `Failed to update status.`);
     return data.value;
 }
 
-// Simple wrapper to approve the request (moves to 'Ready for Pickup')
+// Correctly moves the status to 'Approved'
 async function approveRequest() {
   isActing.value = true;
   try {
@@ -293,81 +341,89 @@ async function approveRequest() {
   }
 }
 
-// UPDATED: Simple wrapper to decline the request
 async function declineRequest() {
     isActing.value = true;
     try {
-        // Use "Declined" instead of "Denied"
         const response = await _updateStatusOnBackend('Declined');
         $toast.fire({ title: response.message, icon: 'info' });
         await fetchRequest(false);
-    } catch (e) {
-        $toast.fire({ title: e.message, icon: 'error' });
-    } finally {
-        isActing.value = false;
-    }
+    } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
+    } finally { isActing.value = false; }
 }
 
-// Updates status and then opens the generation link
 async function generateAndSetToPickup() {
   isActing.value = true;
   try {
     if (request.value.document_status !== 'Ready for Pickup') {
       const response = await _updateStatusOnBackend('Ready for Pickup');
-      $toast.fire({ title: response.message, icon: 'success' });
+      $toast.fire({ title: 'Status set to "Ready for Pickup"!', icon: 'success' });
       await fetchRequest(false);
     }
 
     const refNo = request.value.ref_no;
-    const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
-    window.open(`${baseUrl}/api/document-requests/${refNo}/generate`, '_blank');
+    const baseUrl = window.location.origin;
+    const downloadUrl = `${baseUrl}/api/document-requests/${refNo}/generate`;
 
-  } catch (e) {
-    $toast.fire({ title: e.message, icon: 'error' });
-  } finally {
-    isActing.value = false;s
-  }
+    const response = await fetch(downloadUrl);
+    if (!response.ok) throw new Error('Failed to download the document.');
+
+    const blob = await response.blob();
+    const tempUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = tempUrl;
+    const filename = `${request.value.request_type.replace(/ /g, '_')}_${request.value.ref_no}.pdf`;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.parentNode.removeChild(link);
+    window.URL.revokeObjectURL(tempUrl);
+  } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
+  } finally { isActing.value = false; }
 }
 
-// Handles releasing the document with proof
 async function releaseRequest() {
   if (!proofOfReleaseBase64.value) {
     $toast.fire({ title: 'Please upload a proof of release photo.', icon: 'warning' });
     return;
   }
-
   isActing.value = true;
   try {
     const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/release`, {
       method: 'PATCH',
       body: { proof_of_release: proofOfReleaseBase64.value }
     });
-
-    if (error.value) {
-      throw new Error(error.value.data?.error || 'Failed to release the document.');
-    }
-
+    if (error.value) throw new Error(error.value.data?.error || 'Failed to release the document.');
     $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
     await fetchRequest(false);
-
     proofOfReleaseBase64.value = '';
     proofOfReleaseFile.value = [];
-
-  } catch (e) {
-    $toast.fire({ title: e.message, icon: 'error' });
-  } finally {
-    isActing.value = false;
-  }
+  } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
+  } finally { isActing.value = false; }
 }
 
+
 // --- HELPER FUNCTIONS ---
-// UPDATED: Changed "Denied" to "Declined"
+// Returns correct icon based on state
+function getStepIcon(index, defaultIcon) {
+    if (isDeclined.value) {
+        if (index < activeStepIndex.value) return 'mdi-check';
+        if (index === activeStepIndex.value) return 'mdi-close';
+        return defaultIcon;
+    }
+    if (index < activeStepIndex.value) {
+        return 'mdi-check';
+    }
+    return defaultIcon;
+}
+
+// Includes color for 'Approved'
 const getStatusColor = (status) => ({
-    "Pending": 'orange-darken-1', 
-    "Processing": 'blue-darken-1', 
+    "Pending": 'orange-darken-1',
+    "Processing": 'blue-darken-1',
+    "Approved": 'cyan-darken-1',
     "Ready for Pickup": 'green-darken-1',
-    "Released": 'success', 
-    "Declined": 'red-darken-2' // Changed from Denied
+    "Released": 'success',
+    "Declined": 'red-darken-2'
   }[status] || 'grey');
 
 const formatTimestamp = (dateString) => {
@@ -380,3 +436,108 @@ const formatTimestamp = (dateString) => {
   } catch (e) { return dateString; }
 };
 </script>
+
+<style scoped>
+.status-tracker-container {
+  position: relative;
+  width: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+.steps-container {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+}
+.progress-bar-container {
+  position: absolute;
+  top: 20px; /* Vertically center with the circles */
+  left: 0;
+  right: 0;
+  width: 100%;
+  padding: 0 40px; /* Align with centers of first/last circle */
+  box-sizing: border-box;
+  z-index: 1;
+}
+.progress-bar-bg, .progress-bar-fg {
+  height: 4px;
+  border-radius: 2px;
+  position: absolute;
+  top: 50%;
+  width: 90%;
+  transform: translateY(-50%);
+}
+.progress-bar-bg {
+  width: 90%;
+  background-color: #e0e0e0; /* A light grey color */
+}
+.progress-bar-fg {
+  background-color: rgb(var(--v-theme-primary));
+  transition: width 0.4s ease-in-out;
+}
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100px;
+}
+
+/* Default state for future steps (hollow grey) */
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: white;
+  border: 3px solid #e0e0e0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background-color 0.4s, border-color 0.4s;
+}
+.step-circle .v-icon {
+  color: #9e9e9e; /* Darker grey for icon */
+  transition: color 0.4s;
+}
+
+/* Current step (hollow blue) */
+.step-circle.current {
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.current .v-icon {
+  color: rgb(var(--v-theme-primary));
+}
+
+/* Completed steps (solid blue) */
+.step-circle.completed {
+  background-color: rgb(var(--v-theme-primary));
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed .v-icon {
+  color: white;
+}
+
+/* Declined state (solid red) */
+.step-circle.declined {
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+}
+.step-circle.declined .v-icon {
+  color: white;
+}
+.step-circle.failure-point {
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+  box-shadow: 0 0 10px 2px rgba(var(--v-theme-error-rgb), 0.5);
+}
+.step-circle.failure-point .v-icon {
+  color: white;
+}
+
+.step-label {
+  font-size: 0.875rem;
+  color: #757575; /* Standard grey for labels */
+  transition: color 0.4s, font-weight 0.4s;
+}
+</style>
