@@ -319,7 +319,7 @@ async function generateAndSetToPickup() {
     }
 
     const refNo = request.value.ref_no;
-    const baseUrl = window.location.origin;
+    const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
     window.open(`${baseUrl}/api/document-requests/${refNo}/generate`, '_blank');
 
   } catch (e) {
