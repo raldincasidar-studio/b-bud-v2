@@ -4910,7 +4910,8 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 
-const isDebug = !false;
+// const isDebug = !false; /* For production */
+const isDebug = !true; /* For development */
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
@@ -4922,12 +4923,12 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
   const chromium = (await import('@sparticuz/chromium')).default;
 
 
-  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
+  // if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format' });
   const dab = await db();
 
   try {
     // 1. Fetch ALL necessary data
-    const request = await dab.collection('document_requests').findOne({ _id: new ObjectId(req.params.id) });
+    const request = await dab.collection('document_requests').findOne({ ref_no: req.params.id });
     if (!request) return res.status(404).json({ error: 'Request not found.' });
 
     const requestor = await dab.collection('residents').findOne({ _id: request.requestor_resident_id });
