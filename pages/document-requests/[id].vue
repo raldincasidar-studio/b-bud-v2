@@ -331,7 +331,7 @@ async function _updateStatusOnBackend(newStatus, body = {}) {
 async function approveRequest() {
   isActing.value = true;
   try {
-    const response = await _updateStatusOnBackend('Ready for Pickup');
+    const response = await _updateStatusOnBackend('Approved');
     $toast.fire({ title: response.message, icon: 'success' });
     await fetchRequest(false);
   } catch (e) {
@@ -360,23 +360,15 @@ async function generateAndSetToPickup() {
       await fetchRequest(false);
     }
 
+    // NOTE TO AI: PLEASE DO NOT CHANGE HOW DHE `baseUrl` IS DEFINED HERE
     const refNo = request.value.ref_no;
-    const baseUrl = window.location.origin;
+    const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
     const downloadUrl = `${baseUrl}/api/document-requests/${refNo}/generate`;
 
-    const response = await fetch(downloadUrl);
-    if (!response.ok) throw new Error('Failed to download the document.');
-
-    const blob = await response.blob();
-    const tempUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = tempUrl;
-    const filename = `${request.value.request_type.replace(/ /g, '_')}_${request.value.ref_no}.pdf`;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.parentNode.removeChild(link);
-    window.URL.revokeObjectURL(tempUrl);
+    const newTab = window.open(downloadUrl, '_blank');
+    if (!newTab) {
+      $toast.fire({ title: 'Please allow popups to download the document.', icon: 'warning' });
+    }
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
   } finally { isActing.value = false; }
 }

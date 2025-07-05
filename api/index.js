@@ -4589,7 +4589,7 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { status: newStatus } = req.body;
 
   // --- MODIFIED: Changed "Denied" to "Declined" ---
-  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Released", "Declined"];
+  const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Approved", "Released", "Declined"];
   
   if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
     return res.status(400).json({ error: 'Invalid status value provided.' });
