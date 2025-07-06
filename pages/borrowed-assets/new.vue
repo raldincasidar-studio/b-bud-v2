@@ -40,7 +40,9 @@
                 return-object
                 no-filter
                 clearable
-                :rules="[rules.requiredObject]"
+                
+                :rules="[rules.requiredObject, rules.borrowerIsActive]"
+                
                 hint="Type at least 2 characters to search for a registered resident"
                 persistent-hint
               >
@@ -51,9 +53,29 @@
                     </v-list-item-title>
                   </v-list-item>
                 </template>
+
+                <!-- UPDATED TEMPLATE: Visually identifies and disables 'On Hold' accounts -->
                  <template v-slot:item="{ props, item }">
-                  <v-list-item v-bind="props" :title="item.raw.fullName" :subtitle="item.raw.address_street"></v-list-item>
+                  <v-list-item
+                    v-bind="props"
+                    :title="item.raw.fullName"
+                    :subtitle="item.raw.address_street"
+                    :disabled="item.raw.account_status !== 'Active'"
+                  >
+                    <template v-slot:append>
+                      <v-chip
+                        v-if="item.raw.account_status !== 'Active'"
+                        color="warning"
+                        variant="tonal"
+                        size="small"
+                        label
+                      >
+                        On Hold
+                      </v-chip>
+                    </template>
+                  </v-list-item>
                 </template>
+
               </v-autocomplete>
             </v-col>
             <v-col cols="12" md="6">
@@ -195,9 +217,20 @@ const useDebounce = (fn, delay = 500) => {
   };
 };
 
+// FILE: .../borrowed-assets/new.vue
+// Line to ADD inside the rules object
+
 const rules = {
   required: value => !!value || 'This field is required.',
   requiredObject: value => (!!value && typeof value === 'object' && value !== null) || 'You must select a borrower.',
+  
+  // ---> ADD THIS NEW RULE <---
+  borrowerIsActive: value => {
+    if (!value) return true; // Let the 'requiredObject' rule handle empty selections.
+    // This rule checks the status of the selected resident object.
+    return value.account_status === 'Active' || `This resident's account is On Hold and cannot borrow new items.`;
+  },
+  
   futureDate: value => new Date(value) >= new Date(new Date().toDateString()) || 'Date cannot be in the past.',
   itemIsAvailable: value => {
     if (!value) return true;

@@ -32,8 +32,23 @@
               @blur="v$.requestor_resident.$touch"
               no-filter
             >
+              <!-- Corrected Item Template with 'On Hold' check -->
               <template v-slot:item="{ props, item }">
-                <v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item>
+                <v-list-item
+                  v-bind="props"
+                  :title="item.raw.name"
+                  :subtitle="item.raw.email"
+                  :disabled="item.raw.account_status !== 'Active'"
+                >
+                  <template v-slot:append>
+                    <v-chip
+                      v-if="item.raw.account_status !== 'Active'"
+                      color="warning" variant="tonal" size="small" label
+                    >
+                      On Hold
+                    </v-chip>
+                  </template>
+                </v-list-item>
               </template>
             </v-autocomplete>
           </v-col>
@@ -65,7 +80,6 @@
               @blur="v$.request_type.$touch"
             ></v-select>
           </v-col>
-
         </v-row>
 
         <!-- Step 3: DYNAMIC FORM FIELDS based on selection -->
@@ -73,7 +87,6 @@
           <v-divider class="my-6"></v-divider>
           <h3 class="text-h6 mb-4">{{ form.request_type }} - Required Information</h3>
           
-          <!-- Certificate of Cohabitation Fields -->
           <div v-if="form.request_type === 'Certificate of Cohabitation'">
             <v-row>
               <v-col cols="12" md="6"><v-text-field v-model="form.details.male_partner_name" label="Full Name of Male Partner" variant="outlined"></v-text-field></v-col>
@@ -84,7 +97,6 @@
             </v-row>
           </div>
 
-          <!-- Barangay Clearance Fields -->
           <div v-if="form.request_type === 'Barangay Clearance'">
             <v-row>
               <v-col cols="12" md="6"><v-text-field v-model="form.details.type_of_work" label="Type of Work (e.g., sidewalk repair)" variant="outlined"></v-text-field></v-col>
@@ -94,7 +106,6 @@
             </v-row>
           </div>
 
-          <!-- Barangay Business Clearance Fields -->
           <div v-if="form.request_type === 'Barangay Business Clearance'">
              <v-row>
               <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"></v-text-field></v-col>
@@ -102,7 +113,6 @@
             </v-row>
           </div>
 
-          <!-- First Time Jobseekers Fields -->
           <div v-if="form.request_type === 'Barangay Certification (First Time Jobseeker)'">
             <v-row>
               <v-col cols="12" md="6"><v-text-field v-model="form.details.years_lived" label="Number of Years at Address" type="number" variant="outlined"></v-text-field></v-col>
@@ -110,7 +120,6 @@
             </v-row>
           </div>
 
-          <!-- Indigency -->
           <div v-if="form.request_type === 'Certificate of Indigency'">
             <v-row>
               <v-col cols="12" md="6">
@@ -124,7 +133,6 @@
             </v-row>
           </div>
 
-          <!-- Permit -->
           <div v-if="form.request_type === 'Barangay Permit (for installations)'">
             <v-row>
               <v-col cols="12" md="6">
@@ -143,8 +151,6 @@
               </v-col>
             </v-row>
           </div>
-          
-          <!-- Certificate of Good Moral has no extra fields, so no section is needed -->
           
         </div>
       </v-card-text>
@@ -177,10 +183,10 @@ const documentTypes = [
 ];
 
 const form = reactive({
-  requestor_resident: null, // Changed from _id to hold the full object
+  requestor_resident: null,
   request_type: null,
   purpose: null,
-  details: {} // This object will hold the dynamic fields
+  details: {}
 });
 const saving = ref(false);
 
@@ -190,52 +196,71 @@ const isLoadingRequestors = ref(false);
 
 // --- Vuelidate Rules ---
 const rules = {
-    // Validating the object directly
-    requestor_resident: { required: helpers.withMessage('A requestor must be selected.', required) },
+    requestor_resident: {
+        required: helpers.withMessage('A requestor must be selected.', required),
+        // Rule to check if the selected resident's account is active
+        isActive: helpers.withMessage(
+            "This resident's account is On Hold and cannot make new requests.",
+            (value) => !value || value.account_status === 'Active'
+        )
+    },
     purpose: {},
     request_type: { required },
 };
+
+// Declare v$ only ONCE
 const v$ = useVuelidate(rules, form);
+
 
 // --- Search and Selection Logic ---
 const debounce = (fn,delay) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),delay); }; };
+
 const searchResidentsAPI = debounce(async (query) => {
-    if (!query || query.trim().length < 2) { requestorSearchResults.value = []; return; }
+    if (!query || query.trim().length < 2) {
+        requestorSearchResults.value = [];
+        return;
+    }
     isLoadingRequestors.value = true;
     try {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if(error.value) throw new Error('Error searching residents.');
+        
+        // Ensure account_status is mapped from the API response
         requestorSearchResults.value = data.value?.residents.map(r => ({
             _id: r._id,
             name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
-            email: r.email
+            email: r.email,
+            account_status: r.account_status // This line is crucial
         })) || [];
-    } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); }
-    finally { isLoadingRequestors.value = false; }
+
+    } catch(e) {
+        $toast.fire({ title: e.message, icon: 'error' });
+    } finally {
+        isLoadingRequestors.value = false;
+    }
 }, 500);
 
 watch(requestorSearchQuery, (nq) => { searchResidentsAPI(nq); });
 
-// Note: The redundant onRequestorSelect handler has been removed.
-// v-model with the `return-object` prop handles updating `form.requestor_resident` automatically.
-
 // --- Save Logic ---
 async function saveRequest() {
   const isFormCorrect = await v$.value.$validate();
-  if (!isFormCorrect) { $toast.fire({ title: 'Please complete all required fields.', icon: 'error' }); return; }
+  if (!isFormCorrect) {
+    $toast.fire({ title: 'Please complete all required fields.', icon: 'error' });
+    return;
+  }
   
   saving.value = true;
   try {
     const payload = {
-        // Extract the _id from the selected resident object for submission
         requestor_resident_id: form.requestor_resident._id,
         purpose: form.purpose,
         request_type: form.request_type,
         details: form.details,
-        // The backend will set initial status to 'Pending'
     };
     const { error } = await useMyFetch('/api/document-requests', { method: 'POST', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to submit request.');
+    
     $toast.fire({ title: 'Request submitted successfully!', icon: 'success' });
     router.push('/document-requests');
   } catch (e) {
