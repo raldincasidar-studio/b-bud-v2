@@ -195,8 +195,9 @@
                       :src="request.proof_of_release_photo"
                       max-height="400"
                       contain
-                      class="border rounded"
+                      class="border rounded cursor-pointer"
                       alt="Proof of release photo"
+                      @click="openProofViewer(request.proof_of_release_photo)"
                   ></v-img>
               </div>
           </v-card-text>
@@ -208,6 +209,36 @@
         </div>
       </v-card>
     </div>
+
+    <!-- UPDATED DIALOG WITH ZOOM CONTROLS -->
+    <v-dialog v-model="proofViewerDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Proof of Release</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="proofViewerDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text
+          class="d-flex justify-center align-center"
+          style="background-color: rgba(0,0,0,0.8); position: relative; overflow: auto;"
+        >
+          <v-img
+            :src="selectedProofPhoto"
+            contain
+            max-height="90vh"
+            max-width="90vw"
+            :style="imageStyle"
+          ></v-img>
+          <div class="zoom-controls">
+            <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
+            <v-btn icon="mdi-fit-to-screen-outline" @click="resetZoom" class="mx-1" title="Reset Zoom"></v-btn>
+            <v-btn icon="mdi-magnify-plus-outline" @click="zoomIn" class="mx-1" title="Zoom In"></v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -427,6 +458,35 @@ const formatTimestamp = (dateString) => {
     });
   } catch (e) { return dateString; }
 };
+
+// --- UPDATED SCRIPT LOGIC FOR ZOOM VIEWER ---
+const proofViewerDialog = ref(false);
+const selectedProofPhoto = ref('');
+const zoomLevel = ref(1);
+
+const imageStyle = computed(() => ({
+  transform: `scale(${zoomLevel.value})`,
+  transition: 'transform 0.2s ease-out'
+}));
+
+const openProofViewer = (url) => {
+  selectedProofPhoto.value = url;
+  zoomLevel.value = 1; // Reset zoom when opening a new image
+  proofViewerDialog.value = true;
+};
+
+const zoomIn = () => {
+  zoomLevel.value += 0.2;
+};
+
+const zoomOut = () => {
+  zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2);
+};
+
+const resetZoom = () => {
+  zoomLevel.value = 1;
+};
+// --- END OF UPDATED SCRIPT LOGIC ---
 </script>
 
 <style scoped>
@@ -531,5 +591,23 @@ const formatTimestamp = (dateString) => {
   font-size: 0.875rem;
   color: #757575; /* Standard grey for labels */
   transition: color 0.4s, font-weight 0.4s;
+}
+
+/* --- NEW STYLES FOR ZOOM VIEWER --- */
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.zoom-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(40, 40, 40, 0.75);
+  padding: 8px;
+  border-radius: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
 }
 </style>
