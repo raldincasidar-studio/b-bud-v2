@@ -328,16 +328,16 @@ app.post('/api/residents/login', async (req, res) => {
 
     // Send OTP email
     const mailOptions = {
-      from: `"B-Bud System" <${SMTP_USER}>`,
+      from: `"B-BUD System" <${SMTP_USER}>`,
       to: resident.email,
-      subject: 'Your B-Bud Login Verification Code',
+      subject: 'Your B-BBUD Login Verification Code',
       html: `
         <p>Hello ${resident.first_name || 'User'},</p>
         <p>To complete your login, please use the following One-Time Password (OTP):</p>
         <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
         <p>This OTP is valid for ${OTP_EXPIRY_MINUTES_LOGIN} minutes.</p>
         <p>If you did not attempt to log in, please secure your account or contact support immediately.</p>
-        <br><p>Thanks,<br>The B-Bud Team</p>`,
+        <br><p>Thanks,<br>The B-BBUD Team</p>`,
     };
 
     try {
@@ -479,7 +479,7 @@ app.post('/api/residents/forgot-password/request-otp', async (req, res) => {
 
       // Send OTP email
       const mailOptions = {
-        from: `"B-Bud System" <${SMTP_USER}>`,
+        from: `"B-BBUD System" <${SMTP_USER}>`,
         to: normalizedEmail,
         subject: 'Your Password Reset OTP Code',
         html: `
@@ -489,7 +489,7 @@ app.post('/api/residents/forgot-password/request-otp', async (req, res) => {
           <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
           <p>If you did not request this, please ignore this email.</p>
           <br>
-          <p>Thanks,<br>The B-Bud Team</p>
+          <p>Thanks,<br>The B-BBUD Team</p>
         `,
       };
 
