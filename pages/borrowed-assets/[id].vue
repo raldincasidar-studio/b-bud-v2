@@ -23,7 +23,6 @@
         <v-col class="text-right">
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="isSaving" variant="flat" rounded="lg">Save</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" variant="text" rounded="lg">Cancel</v-btn>
-          <!-- <v-btn v-if="!editMode" color="primary" @click="toggleEditMode(true)" prepend-icon="mdi-pencil" class="mr-2" rounded="lg">Edit</v-btn> -->
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" rounded="lg">Delete</v-btn>
         </v-col>
       </v-row>
@@ -52,6 +51,21 @@
                 <label class="v-label">Notes / Reason for Borrowing</label>
                 <v-textarea v-model="form.notes" :readonly="!editMode" variant="outlined" rows="4" auto-grow prepend-inner-icon="mdi-note-text-outline"></v-textarea>
               </v-form>
+
+              <!-- ✨ NEW/IMPROVED: Alert for displaying the rejection reason -->
+              <v-alert
+                v-if="transactionData.status === 'Rejected' && transactionData.notes"
+                type="error"
+                variant="tonal"
+                border="start"
+                class="mt-4"
+                icon="mdi-information-outline"
+                density="compact"
+              >
+                <template v-slot:title><strong class="text-error">Reason for Rejection</strong></template>
+                <pre class="text-body-2" style="white-space: pre-wrap; font-family: inherit;">{{ transactionData.notes }}</pre>
+              </v-alert>
+
             </v-card-text>
           </v-card>
         </v-col>
@@ -104,7 +118,6 @@
                         </v-list>
                         <div v-if="transactionData.return_proof_image_url" class="pa-2 mt-2">
                             <p class="text-subtitle-2 mb-2">Return Proof:</p>
-                            <!-- MODIFICATION: Made image clickable -->
                             <v-img :src="transactionData.return_proof_image_url" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
                         </div>
                         <v-alert v-else type="info" variant="tonal" class="mt-2" text="No return proof was uploaded."></v-alert>
@@ -123,8 +136,8 @@
                     </v-card-actions>
                 </div>
 
-                <!-- Other statuses (Resolved, Rejected) -->
-                <div v-if="['Closed'].includes(transactionData.status)">
+                <!-- ✨ CORRECTED: Other statuses (Resolved, Rejected) -->
+                <div v-if="['Resolved', 'Rejected'].includes(transactionData.status)">
                      <v-card-text>
                         <v-alert :type="transactionData.status === 'Resolved' ? 'success' : 'error'" variant="tonal">
                             This transaction is considered closed. No further actions are required.
@@ -136,7 +149,7 @@
       </v-row>
     </div>
 
-    <!-- NEW: Image Gallery Dialog -->
+    <!-- Image Gallery Dialog -->
     <v-dialog v-model="galleryDialog" max-width="1000px" scrollable>
         <v-card class="d-flex flex-column">
           <v-toolbar color="primary" density="compact">
@@ -207,11 +220,9 @@ const isDeleting = ref(false);
 const isReturning = ref(false);
 const confirmDeleteDialog = ref(false);
 
-// NEW: State for the image gallery
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
-// NEW: Computed property to aggregate all available images for the gallery
 const imageGallerySource = computed(() => {
   const items = [];
   if (transactionData.value.return_proof_image_url) {
@@ -221,11 +232,9 @@ const imageGallerySource = computed(() => {
       title: 'Return Proof' 
     });
   }
-  // Future images can be added here
   return items;
 });
 
-// NEW: Function to open the gallery at a specific image
 function openGallery(id) {
   const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
   if (foundIndex > -1) {
@@ -239,18 +248,32 @@ onMounted(async () => {
     await fetchTransaction();
 });
 
-
+// ✨ CORRECTED: Simplified and more robust data fetching and auto-processing
 async function fetchTransaction() {
   loading.value = true;
   try {
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`);
     if (error.value || !data.value?.transaction) throw new Error('Transaction not found or could not be loaded.');
-    transactionData.value = { ...data.value.transaction };
-    // The line below was auto-updating status on load, which seems incorrect.
-    // It's commented out to preserve the actual status from the database.
     
-    updateStatus('Processing', false, transactionData.value.status); 
+    let currentTransaction = data.value.transaction;
+
+    // If status is pending, automatically move it to processing via a direct API call
+    if (currentTransaction.status === 'Pending') {
+      const { data: updateData, error: updateError } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
+        method: 'PATCH', body: { status: 'Processing' }
+      });
+
+      if (updateError.value) {
+        console.warn('Could not auto-update status to Processing.', updateError.value);
+      } else {
+        // Use the updated data if the status change was successful
+        currentTransaction = updateData.value.transaction;
+      }
+    }
+    
+    transactionData.value = currentTransaction;
     resetForm();
+
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
@@ -286,35 +309,49 @@ async function saveChanges() {
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update.');
     
     $toast.fire({ title: 'Transaction updated!', icon: 'success' });
-    transactionData.value = { ...transactionData.value, ...data.value.transaction };
-    resetForm();
+    await fetchTransaction(); // Refetch to ensure data is in sync
     toggleEditMode(false);
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { isSaving.value = false; }
 }
 
-async function updateStatus(newStatus, prompt = false, oldStatus = null) {
-
-  console.log(console.log(transactionData.value.status, oldStatus));
+// ✨ CORRECTED: This function now correctly handles the prompt reason for all cases
+async function updateStatus(newStatus, prompt = false) {
     if (newStatus === transactionData.value.status) return;
 
-    if (oldStatus != 'Pending' && newStatus === 'Processing') return;
+    let apiPayload = { status: newStatus };
 
     if (prompt) {
-        const { value: notes, isConfirmed } = await $toast.fire({
-            title: `Confirm: ${newStatus}`, text: `Please provide a reason or note for this status change.`,
-            input: 'text', icon: 'warning', showCancelButton: true, showConfirmButton: true, confirmButtonText: 'Confirm'
+        const { value: reason, isConfirmed } = await $toast.fire({
+            title: `Confirm: ${newStatus}`,
+            text: `Please provide a reason for this status change. This will be recorded.`,
+            input: 'text',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Confirm',
+            inputValidator: (value) => {
+                if (!value && (newStatus === 'Rejected')) {
+                    return 'A reason is required to reject a request.'
+                }
+            }
         });
+
         if (!isConfirmed) return;
+        // Pass the entered reason in the 'notes' field of the payload
+        apiPayload.notes = reason;
     }
+
     try {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
-            method: 'PATCH', body: { status: newStatus, notes: prompt ? 'Status updated via manage page.' : undefined },
+            method: 'PATCH', 
+            body: apiPayload,
         });
         if (error.value) throw new Error(error.value.data?.message);
         
         $toast.fire({ title: data.value.message, icon: 'success' });
-        transactionData.value = data.value.transaction;
+        
+        await fetchTransaction(); // Refetch to get the latest state from the server
+
     } catch (e) {
         $toast.fire({ title: e.message || 'Failed to update status.', icon: 'error' });
     }
@@ -323,12 +360,10 @@ async function updateStatus(newStatus, prompt = false, oldStatus = null) {
 async function processReturn() {
     isReturning.value = true;
     let imageBase64 = null;
-
     const file = returnForm.proofImage ? returnForm.proofImage[0] : null;
 
     if (file) {
-        // Validate file size again before processing
-        if (file.size > 2000000) { // 2MB
+        if (file.size > 2000000) {
             $toast.fire({ title: 'File is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
             isReturning.value = false;
             return;
@@ -347,14 +382,14 @@ async function processReturn() {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/return`, {
             method: 'PATCH',
             body: {
-                return_proof_image_base64: imageBase64, // Send the Base64 string
+                return_proof_image_base64: imageBase64,
                 return_condition_notes: returnForm.conditionNotes,
             },
         });
         if (error.value) throw new Error(error.value.data?.message || 'Failed to process return.');
         $toast.fire({ title: 'Item successfully marked as Returned!', icon: 'success' });
-        transactionData.value = data.value.transaction;
-        returnForm.proofImage = null; // Clear the input after successful upload
+        await fetchTransaction(); // Refetch to get latest data
+        returnForm.proofImage = null;
         returnForm.conditionNotes = '';
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
     finally { isReturning.value = false; }

@@ -28,14 +28,14 @@
           <!-- NEW: Status Action Buttons -->
           <div v-if="!editMode" class="d-inline-block me-3">
             <template v-if="form.status === 'Pending'">
-              <v-btn color="success" class="me-2" @click="updateResidentStatus('Approved')" :loading="updatingStatus" prepend-icon="mdi-check-circle-outline">Approve</v-btn>
-              <v-btn color="error" @click="openDeclineDialog" :loading="updatingStatus" prepend-icon="mdi-close-circle-outline">Decline</v-btn>
+              <v-btn color="success" class="me-2" @click="handleActionClick('Approved')" :loading="updatingStatus" prepend-icon="mdi-check-circle-outline">Approve</v-btn>
+              <v-btn color="error" @click="handleActionClick('Declined')" :loading="updatingStatus" prepend-icon="mdi-close-circle-outline">Decline</v-btn>
             </template>
             <template v-if="form.status === 'Approved'">
-              <v-btn color="grey-darken-1" variant="tonal" @click="updateResidentStatus('Deactivated')" :loading="updatingStatus" prepend-icon="mdi-account-off-outline">Deactivate</v-btn>
+              <v-btn color="grey-darken-1" variant="tonal" @click="handleActionClick('Deactivated')" :loading="updatingStatus" prepend-icon="mdi-account-off-outline">Deactivate</v-btn>
             </template>
             <template v-if="form.status === 'Declined' || form.status === 'Deactivated'">
-              <v-btn color="orange" @click="updateResidentStatus('Pending')" :loading="updatingStatus" prepend-icon="mdi-account-reactivate-outline">Reactivate</v-btn>
+              <v-btn color="orange" @click="handleActionClick('Pending')" :loading="updatingStatus" prepend-icon="mdi-account-reactivate-outline">Reactivate</v-btn>
             </template>
           </div>
           
@@ -46,6 +46,24 @@
           <v-btn v-if="!editMode" color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
         </v-col>
       </v-row>
+
+      <!-- NEW: Display Reason for Status if it exists -->
+      <v-alert
+        v-if="form.status_reason"
+        :type="form.status === 'Declined' || form.status === 'Deactivated' ? 'warning' : 'info'"
+        variant="tonal"
+        border="start"
+        class="mb-6"
+        icon="mdi-information-outline"
+        density="compact"
+      >
+        <template v-slot:title>
+          <strong :class="form.status === 'Declined' || form.status === 'Deactivated' ? 'text-warning' : 'text-info'">
+            Reason for {{ form.status }} Status
+          </strong>
+        </template>
+        {{ form.status_reason }}
+      </v-alert>
 
       <!-- Personal Information Card -->
       <v-card class="mb-6" flat border>
@@ -193,26 +211,27 @@
         </v-card>
       </v-dialog>
       
-      <!-- NEW: Decline with Reason Dialog -->
-      <v-dialog v-model="declineDialog" persistent max-width="500px">
+      <!-- NEW: Generic Dialog for Actions Requiring a Reason -->
+      <v-dialog v-model="actionReasonDialog" persistent max-width="500px">
         <v-card>
-          <v-card-title class="text-h5">Decline Account</v-card-title>
+          <v-card-title class="text-h5">{{ dialogTitle }} Account</v-card-title>
           <v-card-text>
-            <p class="mb-4">Please provide a reason for declining the account for <strong>{{ form.first_name }} {{ form.last_name }}</strong>. This reason will be sent in the notification.</p>
+            <p class="mb-4">Please provide a reason for {{ dialogActionText }} the account for <strong>{{ form.first_name }} {{ form.last_name }}</strong>.</p>
             <v-textarea
-              v-model="declineReason"
-              label="Reason for Decline"
+              v-model="actionReason"
+              :label="`Reason for ${dialogActionText}`"
               variant="outlined"
               rows="3"
               counter
               maxlength="250"
               :rules="[v => !!v || 'Reason is required.']"
+              autofocus
             ></v-textarea>
           </v-card-text>
           <v-card-actions>
             <v-spacer></v-spacer>
-            <v-btn color="grey" text @click="declineDialog = false">Cancel</v-btn>
-            <v-btn color="error" :disabled="!declineReason" :loading="updatingStatus" @click="confirmDecline">Confirm Decline</v-btn>
+            <v-btn color="grey" text @click="actionReasonDialog = false">Cancel</v-btn>
+            <v-btn :color="dialogButtonColor" :disabled="!actionReason" :loading="updatingStatus" @click="confirmActionWithReason">Confirm {{ dialogTitle }}</v-btn>
           </v-card-actions>
         </v-card>
       </v-dialog>
@@ -263,7 +282,7 @@ const form = reactive({
   is_voter: false, voter_id_number: '', voter_id_file: null, voter_registration_proof_base64: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null, pwd_card_base64: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null, senior_citizen_card_base64: null,
-  is_household_head: false, household_members_details: [],
+  is_household_head: false, household_members_details: [], status: '', status_reason: '',
   // NEW: Added status to form state to make it reactive
   status: '', 
 });
@@ -283,10 +302,11 @@ const isLoadingEligibleMembers = ref(false);
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
-// NEW: State for status updates and decline dialog
+// UPDATED: State for the new generic dialog
 const updatingStatus = ref(false);
-const declineDialog = ref(false);
-const declineReason = ref('');
+const actionReasonDialog = ref(false);
+const actionReason = ref('');
+const actionType = ref('');
 
 // NEW: Helper function for status chip color
 const getStatusColor = (s) => ({ 'Approved': 'success', 'Pending': 'warning', 'Declined': 'error', 'Deactivated': 'grey' }[s] || 'default');
@@ -358,32 +378,71 @@ const v$ = useVuelidate(rules, form);
 
 onMounted(async () => { await fetchResident(); });
 
-// NEW: Function to update the resident's status
+// NEW: Computed properties to make the dialog dynamic
+const dialogTitle = computed(() => {
+    if (actionType.value === 'Pending') return 'Reactivate';
+    return actionType.value;
+});
+
+const dialogActionText = computed(() => {
+    if (actionType.value === 'Pending') return 'reactivating';
+    if (actionType.value === 'Deactivated') return 'deactivating';
+    return 'declining';
+});
+
+const dialogButtonColor = computed(() => ({
+    Declined: 'error',
+    Deactivated: 'warning',
+    Pending: 'orange'
+}[actionType.value] || 'primary'));
+
+// NEW: Main function called by ALL status buttons
+function handleActionClick(newStatus) {
+  actionType.value = newStatus;
+  // Actions that require a reason open the dialog
+  if (['Declined', 'Deactivated', 'Pending'].includes(newStatus)) {
+    actionReason.value = '';
+    actionReasonDialog.value = true;
+  } 
+  // Actions that DO NOT require a reason call the update function directly
+  else if (newStatus === 'Approved') {
+    updateResidentStatus(newStatus);
+  }
+}
+
+// NEW: Function called from the dialog's confirm button
+async function confirmActionWithReason() {
+  if (!actionReason.value) {
+    $toast.fire({ title: 'A reason is required.', icon: 'warning' });
+    return;
+  }
+  // Call the update function with both status and reason
+  await updateResidentStatus(actionType.value, actionReason.value);
+  actionReasonDialog.value = false;
+}
+
+// UPDATED: Centralized API call function for all status changes
 async function updateResidentStatus(newStatus, reason = null) {
   updatingStatus.value = true;
   try {
     const payload = { status: newStatus };
     if (reason) { payload.reason = reason; }
 
-    const { data, error } = await useMyFetch(`/api/residents/${residentId}/status`, {
+    await useMyFetch(`/api/residents/${residentId}/status`, {
       method: 'PATCH',
       body: payload,
     });
-
-    if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
-
-    // Update the local form state to reflect the change immediately
-    form.status = newStatus;
-    // Also update the original state so cancelling an edit doesn't revert the status
-    originalFormState.value.status = newStatus;
     
     $toast.fire({ title: 'Status updated successfully!', icon: 'success' });
+    await fetchResident(); // Refresh data to show new status and reason
   } catch (e) {
-    $toast.fire({ title: e.message, icon: 'error' });
+    // Error is handled by the useMyFetch composable's toast
   } finally {
     updatingStatus.value = false;
   }
 }
+
+
 
 // NEW: Functions to handle the decline dialog
 const openDeclineDialog = () => {

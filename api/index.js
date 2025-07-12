@@ -773,36 +773,99 @@ app.post('/api/residents', async (req, res) => {
 app.patch('/api/residents/:id/status', async (req, res) => {
     try {
         const { id } = req.params;
-        const { status, reason } = req.body; // reason is optional, for declines
+        const { status, reason } = req.body;
 
+        // --- VALIDATION ---
+        if (!ObjectId.isValid(id)) {
+            return res.status(400).json({ message: 'Invalid ID format.' });
+        }
         if (!status) {
             return res.status(400).json({ message: 'Status is required.' });
+        }
+        const requiresReason = ['Deactivated', 'Declined', 'Pending'];
+        if (requiresReason.includes(status) && (!reason || reason.trim() === '')) {
+            return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this account.` });
         }
 
         const dab = await db();
         const residentsCollection = dab.collection('residents');
+        const documentRequestsCollection = dab.collection('document_requests');
+        
+        // ✨ --- ADDED: Get borrowed_assets collection --- ✨
+        const borrowedAssetsCollection = dab.collection('borrowed_assets');
 
-        const updateData = {
-            status: status,
-            updated_at: new Date()
+        const resident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+        if (!resident) {
+            return res.status(404).json({ message: 'Resident not found.' });
+        }
+
+        const updateDocument = {
+            $set: {
+                status: status,
+                updated_at: new Date()
+            }
         };
+        
+        if (reason) {
+            updateDocument.$set.status_reason = reason;
+        } else {
+            updateDocument.$unset = { status_reason: "" };
+        }
 
-        // --- UPDATE: Set date_approved only when status is 'Approved' ---
         if (status === 'Approved') {
-            updateData.date_approved = new Date();
+            updateDocument.$set.date_approved = new Date();
+        } 
+        else if (status === 'Deactivated') {
+            const invalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${reason}`;
+            
+            // --- Existing logic for Document Requests (Unaffected) ---
+            await documentRequestsCollection.updateMany(
+                { 
+                    requestor_resident_id: new ObjectId(id),
+                    document_status: { $in: ['Pending', 'Processing', 'Approved', 'Ready for Pickup'] }
+                },
+                { 
+                    $set: { 
+                        document_status: 'Declined', 
+                        status_reason: invalidationReason,
+                        updated_at: new Date()
+                    } 
+                }
+            );
+            
+            // ✨ --- NEW: Logic to Reject Borrowed Asset Transactions --- ✨
+            const rejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${reason}"`;
+            await borrowedAssetsCollection.updateMany(
+                {
+                    borrower_resident_id: new ObjectId(id),
+                    status: { $in: ['Pending', 'Processing', 'Approved'] } // Active statuses to be rejected
+                },
+                {
+                    $set: {
+                        status: 'Rejected',
+                        notes: rejectionNote, // Set a clear rejection reason in the notes
+                        updated_at: new Date()
+                    }
+                }
+            );
+            // ✨ --- END OF NEW LOGIC --- ✨
         }
 
         const result = await residentsCollection.updateOne(
             { _id: new ObjectId(id) },
-            { $set: updateData }
+            updateDocument
         );
 
         if (result.matchedCount === 0) {
-            return res.status(404).json({ message: 'Resident not found.' });
+            return res.status(404).json({ message: 'Resident not found during update.' });
         }
 
-        // You can add audit logging and notifications here
-        // await createAuditLog(...)
+        await createAuditLog({
+            description: `Resident account for '${resident.first_name} ${resident.last_name}' status changed to '${status}'. Reason: ${reason || 'N/A'}`,
+            action: 'STATUS_CHANGE',
+            entityType: 'Resident',
+            entityId: id
+        }, req);
 
         res.status(200).json({ message: `Resident status updated to ${status}.` });
 
@@ -3237,25 +3300,30 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
     if (oldStatus === newStatus) { return res.json({ message: `Status is already '${newStatus}'.`, transaction: transaction }); }
 
     const updateFields = { status: newStatus, updated_at: new Date() };
-    if (notes) { updateFields.notes = `${transaction.notes || ''}\n\n[${new Date().toLocaleString()}] ${notes}`; }
+
+    // ✨ --- START OF CORRECTION --- ✨
+    // If the new status is 'Rejected', we explicitly set the notes to the provided reason.
+    // For all other statuses, we append the notes.
+    if (newStatus === STATUS.REJECTED) {
+      updateFields.notes = notes || 'No reason provided for rejection.';
+    } else if (notes) {
+      // Keep the append logic for other status updates
+      updateFields.notes = `${transaction.notes || ''}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}`;
+    }
+    // ✨ --- END OF CORRECTION --- ✨
+
     if (newStatus === STATUS.RESOLVED) { updateFields.date_resolved = new Date(); }
     
     const borrowerId = transaction.borrower_resident_id;
 
-    // --- UPDATED ACCOUNT STATUS LOGIC ---
     if ([STATUS.LOST, STATUS.DAMAGED, STATUS.OVERDUE].includes(newStatus)) {
-        // Deactivate account if item is marked with a problem status
         await residentsCollection.updateOne({ _id: borrowerId }, { $set: { 'account_status': 'Deactivated' } });
     } else if (newStatus === STATUS.RESOLVED) {
-        // If an issue is resolved, check if we can reactivate the account
         await checkAndReactivateAccount(dab, borrowerId, transaction._id);
     }
-    // --- END OF UPDATE ---
 
     await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
     await createAuditLog({ description: `Status for item '${transaction.item_borrowed}' changed from '${oldStatus}' to '${newStatus}'.`, action: "STATUS_CHANGE", entityType: "BorrowTransaction", entityId: transaction._id.toString() }, req);
-    
-    // Notification logic...
     
     const updatedTransaction = await borrowedAssetsCollection.findOne(findQuery);
     res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
@@ -4513,71 +4581,82 @@ app.put('/api/document-requests/:id', async (req, res) => {
 // PATCH /api/document-requests/:id/status - UPDATE STATUS (UPDATED)
 app.patch('/api/document-requests/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status: newStatus } = req.body;
+  // Destructure the new status and optional reason from the request body
+  const { status: newStatus, reason } = req.body; 
 
-  // --- MODIFIED: Changed "Denied" to "Declined" ---
   const ALLOWED_DOC_STATUSES = ["Pending", "Processing", "Ready for Pickup", "Approved", "Released", "Declined"];
   
+  // --- Validation ---
   if (!newStatus || !ALLOWED_DOC_STATUSES.includes(newStatus)) {
     return res.status(400).json({ error: 'Invalid status value provided.' });
   }
+
+  // NEW: Validate that a reason is provided when the status is 'Declined'
+  if (newStatus === 'Declined' && (!reason || reason.trim() === '')) {
+      return res.status(400).json({ message: 'A reason is required to decline this request.' });
+  }
+  // --- End Validation ---
 
   try {
     const dab = await db();
     const collection = dab.collection('document_requests');
 
+    // Dynamically query by either database _id or the user-friendly ref_no
     let query = {};
     if (ObjectId.isValid(id)) {
       query = { _id: new ObjectId(id) };
     } else {
-      // Assuming ref_no is always uppercase for consistency
       query = { ref_no: id.toUpperCase() }; 
     }
 
+    // Fetch the original document to check its current state and for logging
     const originalRequest = await collection.findOne(query);
     if (!originalRequest) {
       return res.status(404).json({ error: 'Request not found.' });
     }
-
+    
     const oldStatus = originalRequest.document_status;
-
     if (oldStatus === newStatus) {
       return res.json({ message: `Request status is already '${newStatus}'. No changes made.` });
     }
 
-    const result = await collection.updateOne(query, {
-      $set: {
-        document_status: newStatus,
-        updated_at: new Date()
-      }
-    });
+    // --- Build the MongoDB Update Payload ---
+    const updatePayload = {
+        $set: {
+            document_status: newStatus,
+            updated_at: new Date()
+        }
+    };
 
+    if (reason) {
+        // If a reason is provided, add it to the 'status_reason' field.
+        updatePayload.$set.status_reason = reason; 
+    } else {
+        // If no reason is provided (e.g., for 'Approved'), remove any existing reason.
+        updatePayload.$unset = { status_reason: "" }; 
+    }
+    // --- End Build Update Payload ---
+
+    const result = await collection.updateOne(query, updatePayload);
     if (result.matchedCount === 0) {
-      // This is a failsafe, but findOne should have caught it.
       return res.status(404).json({ error: 'Request not found during update operation.' });
     }
 
+    // Create a detailed audit log for this action
     await createAuditLog({
-      description: `Status for document request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) changed from '${oldStatus}' to '${newStatus}'.`,
+      description: `Status for doc request '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) changed from '${oldStatus}' to '${newStatus}'. Reason: ${reason || 'N/A'}`,
       action: "STATUS_CHANGE",
       entityType: "DocumentRequest",
       entityId: originalRequest._id.toString(),
     }, req);
 
-    const notificationData = {
-      name: `Status of your document request has been updated to '${newStatus}'.`,
-      content: `Your document request for a ${originalRequest.request_type} has been updated from '${oldStatus}' to '${newStatus}'.`,
-      by: "System",
-      type: "Notification",
-      target_audience: "Specific Residents",
-      target_residents: [originalRequest.requestor_resident_id],
-    };
-    await createNotification(dab, notificationData);
+    // You can also expand your notification logic here to include the reason
+    // createNotification(...);
 
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
 
   } catch (error) {
-    console.error("Error updating status:", error);
+    console.error("Error updating document request status:", error);
     res.status(500).json({ error: 'Could not update status.' });
   }
 });
