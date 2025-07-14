@@ -248,7 +248,6 @@ onMounted(async () => {
     await fetchTransaction();
 });
 
-// ✨ CORRECTED: Simplified and more robust data fetching and auto-processing
 async function fetchTransaction() {
   loading.value = true;
   try {
@@ -257,7 +256,6 @@ async function fetchTransaction() {
     
     let currentTransaction = data.value.transaction;
 
-    // If status is pending, automatically move it to processing via a direct API call
     if (currentTransaction.status === 'Pending') {
       const { data: updateData, error: updateError } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
         method: 'PATCH', body: { status: 'Processing' }
@@ -266,7 +264,6 @@ async function fetchTransaction() {
       if (updateError.value) {
         console.warn('Could not auto-update status to Processing.', updateError.value);
       } else {
-        // Use the updated data if the status change was successful
         currentTransaction = updateData.value.transaction;
       }
     }
@@ -309,51 +306,53 @@ async function saveChanges() {
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update.');
     
     $toast.fire({ title: 'Transaction updated!', icon: 'success' });
-    await fetchTransaction(); // Refetch to ensure data is in sync
+    await fetchTransaction(); 
     toggleEditMode(false);
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { isSaving.value = false; }
 }
 
-// ✨ CORRECTED: This function now correctly handles the prompt reason for all cases
-async function updateStatus(newStatus, prompt = false) {
+async function updateStatus(newStatus, promptForReason = false) {
     if (newStatus === transactionData.value.status) return;
 
     let apiPayload = { status: newStatus };
 
-    if (prompt) {
+    if (promptForReason) {
         const { value: reason, isConfirmed } = await $toast.fire({
             title: `Confirm: ${newStatus}`,
             text: `Please provide a reason for this status change. This will be recorded.`,
             input: 'text',
             icon: 'warning',
+            showConfirmButton: true,
             showCancelButton: true,
             confirmButtonText: 'Confirm',
             inputValidator: (value) => {
-                if (!value && (newStatus === 'Rejected')) {
-                    return 'A reason is required to reject a request.'
+                if (!value) {
+                    return 'A reason is required to proceed.';
                 }
             }
         });
 
-        if (!isConfirmed) return;
-        // Pass the entered reason in the 'notes' field of the payload
+        if (!isConfirmed) return; // Exit if the user clicks "Cancel"
+        
+        // Add the provided reason to the API payload
         apiPayload.notes = reason;
     }
 
+    // Call the API to update the status
     try {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
             method: 'PATCH', 
             body: apiPayload,
         });
-        if (error.value) throw new Error(error.value.data?.message);
+        if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
         
         $toast.fire({ title: data.value.message, icon: 'success' });
         
-        await fetchTransaction(); // Refetch to get the latest state from the server
+        await fetchTransaction(); // Refresh data from the server
 
     } catch (e) {
-        $toast.fire({ title: e.message || 'Failed to update status.', icon: 'error' });
+        $toast.fire({ title: e.message, icon: 'error' });
     }
 }
 
@@ -388,7 +387,7 @@ async function processReturn() {
         });
         if (error.value) throw new Error(error.value.data?.message || 'Failed to process return.');
         $toast.fire({ title: 'Item successfully marked as Returned!', icon: 'success' });
-        await fetchTransaction(); // Refetch to get latest data
+        await fetchTransaction();
         returnForm.proofImage = null;
         returnForm.conditionNotes = '';
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }

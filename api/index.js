@@ -5095,72 +5095,71 @@ app.get('/api/dashboard', async (req, res) => {
     const complaintsCollection = dab.collection('complaints');
     const borrowedAssetsCollection = dab.collection('borrowed_assets');
 
-    // --- Core Metrics ---
-    const totalPopulation = await residentsCollection.countDocuments({ status: 'Approved' }); // Ensure we only count approved residents
+    // --- Core Metrics (No changes) ---
+    const totalPopulation = await residentsCollection.countDocuments({ status: 'Approved' });
     const totalHouseholds = await residentsCollection.countDocuments({ is_household_head: true, status: 'Approved' });
     const totalRegisteredVoters = await residentsCollection.countDocuments({ is_registered_voter: true, status: 'Approved' });
-
-    // --- New Demographic Counts ---
-    const totalSeniorCitizens = await residentsCollection.countDocuments({
-      date_of_birth: { $lte: new Date(new Date().setFullYear(new Date().getFullYear() - 60)) },
-      status: 'Approved'
-    });
+    const totalSeniorCitizens = await residentsCollection.countDocuments({ date_of_birth: { $lte: new Date(new Date().setFullYear(new Date().getFullYear() - 60)) }, status: 'Approved' });
     const totalPWDs = await residentsCollection.countDocuments({ is_pwd: true, status: 'Approved' });
     const totalLaborForce = await residentsCollection.countDocuments({ occupation_status: 'Labor force', status: 'Approved' });
     const totalUnemployed = await residentsCollection.countDocuments({ occupation_status: 'Unemployed', status: 'Approved' });
     const totalOutOfSchoolYouth = await residentsCollection.countDocuments({ occupation_status: 'Out of School Youth', status: 'Approved' });
-
-    // --- Transaction Alerts Data (Counts of Pending Items) ---
-    const pendingDocumentRequestsCount = await documentRequestsCollection.countDocuments({
-      document_status: 'Pending'
-    });
-    const newComplaintsCount = await complaintsCollection.countDocuments({
-      status: 'New'
-    });
+    
+    // --- Transaction Alert Counts ---
+    const pendingDocumentRequestsCount = await documentRequestsCollection.countDocuments({ document_status: 'Pending' });
+    const newComplaintsCount = await complaintsCollection.countDocuments({ status: 'New' });
+    
+    // <<< CHANGE #1: Add 'Approved' to the count query
     const borrowedAssetsNotReturnedCount = await borrowedAssetsCollection.countDocuments({
-      status: { $in: ['Borrowed', 'Overdue'] }
+      status: { $in: ['Approved', 'Borrowed', 'Overdue'] } 
     });
-
-    // ADDED: Get count of residents with "Pending" status
+    
     const pendingResidentsCount = await residentsCollection.countDocuments({ status: 'Pending' });
 
     // --- Fetch Recent Items for Alert Cards ---
     const recentPendingDocumentRequests = await documentRequestsCollection.find({ document_status: 'Pending' }).sort({ date_of_request: -1 }).limit(3).toArray();
     const recentNewComplaints = await complaintsCollection.find({ status: 'New' }).sort({ date_of_complaint: -1 }).limit(3).toArray();
-    const recentBorrowedAssets = await borrowedAssetsCollection.find({ status: { $in: ['Borrowed', 'Overdue'] } }).sort({ borrow_datetime: -1 }).limit(3).toArray();
     
-    // ADDED: Fetch recent pending residents and format them for display
+    // <<< CHANGE #2: Add 'Approved' to the items list query
+    const recentBorrowedAssetsRaw = await borrowedAssetsCollection.find({
+        status: { $in: ['Approved', 'Borrowed', 'Overdue'] }
+    }).sort({ borrow_datetime: -1 }).limit(3).toArray();
+    
     const recentPendingResidentsRaw = await residentsCollection.find({ status: 'Pending' }).sort({ created_at: -1 }).limit(3).toArray();
     
-    // Map to a consistent format for the frontend component
+    // Format the data for the frontend (No changes needed in this logic)
+    const recentBorrowedAssets = recentBorrowedAssetsRaw.map(asset => ({
+        _id: asset._id,
+        item_borrowed: asset.item_borrowed,
+        quantity_borrowed: asset.quantity_borrowed,
+        borrower_name: asset.borrower,
+        created_at: asset.borrow_datetime,
+    }));
+
     const recentPendingResidents = recentPendingResidentsRaw.map(resident => ({
       _id: resident._id,
       name: `${resident.first_name} ${resident.last_name}`,
-      dateAdded: `Added on ${new Date(resident.created_at).toLocaleDateString()}`
+      dateAdded: resident.created_at
     }));
 
-
+    // --- Send Final JSON Response ---
     res.json({
-      // Core Metrics
       totalPopulation,
       totalHouseholds,
       totalRegisteredVoters,
-      // New Demographic Counts
       totalSeniorCitizens,
       totalPWDs,
       totalLaborForce,
       totalUnemployed,
       totalOutOfSchoolYouth,
-      // Transaction Alert Counts
       pendingDocumentRequestsCount,
       newComplaintsCount,
       borrowedAssetsNotReturnedCount,
-      pendingResidentsCount, // ADDED: Pending resident count
-      // Arrays of recent items for display:
+      pendingResidentsCount,
       recentPendingDocumentRequests,
       recentNewComplaints,
       recentBorrowedAssets,
-      recentPendingResidents, // ADDED: Recent pending residents list
+      recentPendingResidents,
     });
 
   } catch (error) {
