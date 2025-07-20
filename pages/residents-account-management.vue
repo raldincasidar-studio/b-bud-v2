@@ -24,13 +24,8 @@
       </v-card-title>
       <v-divider></v-divider>
 
-      <!-- Filter Chip Group -->
       <v-card-text>
-        <v-chip-group
-          v-model="statusFilter"
-          column
-          color="primary"
-        >
+        <v-chip-group v-model="statusFilter" column color="primary">
           <v-chip filter value="All">All</v-chip>
           <v-chip filter value="Pending">Pending</v-chip>
           <v-chip filter value="Approved">Approved</v-chip>
@@ -40,7 +35,6 @@
       </v-card-text>
       <v-divider></v-divider>
 
-      <!-- REVISED: Data table for Account Management -->
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
         :headers="headers"
@@ -64,7 +58,6 @@
           </v-chip>
         </template>
 
-        <!-- UPDATE: Slots for date_added and date_approved -->
         <template v-slot:item.date_added="{ item }">
             {{ formatDate(item.date_added) }}
         </template>
@@ -101,15 +94,15 @@
       </v-data-table-server>
     </v-card>
 
-    <!-- Decline with Reason Dialog -->
-    <v-dialog v-model="declineDialog" persistent max-width="500px">
+    <!-- UPDATED: Generic Dialog for Actions Requiring a Reason -->
+    <v-dialog v-model="actionReasonDialog" persistent max-width="500px">
       <v-card>
-        <v-card-title class="text-h5">Decline Account</v-card-title>
+        <v-card-title class="text-h5">{{ dialogTitle }} Account</v-card-title>
         <v-card-text>
-          <p class="mb-4">Please provide a reason for declining the account for <strong>{{ residentToDecline?.first_name }} {{ residentToDecline?.last_name }}</strong>. This reason will be sent in the notification.</p>
+          <p class="mb-4">Please provide a reason for {{ dialogActionText }} the account for <strong>{{ residentToAction?.first_name }} {{ residentToAction?.last_name }}</strong>.</p>
           <v-textarea
-            v-model="declineReason"
-            label="Reason for Decline"
+            v-model="actionReason"
+            :label="`Reason for ${dialogActionText}`"
             variant="outlined"
             rows="3"
             counter
@@ -119,16 +112,17 @@
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
-          <v-btn color="grey" text @click="declineDialog = false">Cancel</v-btn>
-          <v-btn color="error" :disabled="!declineReason" :loading="updatingStatusFor === residentToDecline?._id" @click="confirmDecline">Confirm Decline</v-btn>
+          <v-btn color="grey" text @click="actionReasonDialog = false">Cancel</v-btn>
+          <v-btn :color="dialogButtonColor" :disabled="!actionReason" :loading="updatingStatusFor === residentToAction?._id" @click="confirmActionWithReason">Confirm {{ dialogTitle }}</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
+
   </v-container>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '~/composables/useMyFetch';
 
@@ -142,13 +136,36 @@ const residents = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
-const currentTableOptions = ref({}); // To store table state for reloading
+const currentTableOptions = ref({});
 
-const declineDialog = ref(false);
-const residentToDecline = ref(null);
-const declineReason = ref('');
+// --- NEW/UPDATED STATE for the Reason Dialog ---
+const actionReasonDialog = ref(false);
+const residentToAction = ref(null);
+const actionReason = ref('');
+const actionType = ref(''); // e.g., 'Declined', 'Deactivated', 'Reactivated'
 
-// REVISED: Table Headers for Account Management
+// --- COMPUTED PROPERTIES for the new dialog ---
+const dialogTitle = computed(() => {
+    if (actionType.value === 'Pending') return 'Reactivate';
+    return actionType.value; // 'Decline', 'Deactivate'
+});
+
+const dialogActionText = computed(() => {
+    if (actionType.value === 'Pending') return 'reactivating';
+    if (actionType.value === 'Deactivated') return 'deactivating';
+    return 'declining';
+});
+
+const dialogButtonColor = computed(() => {
+  const colors = {
+    Declined: 'error',
+    Deactivated: 'warning',
+    Pending: 'success'
+  };
+  return colors[actionType.value] || 'primary';
+});
+
+
 const headers = ref([
   { title: 'Acc Number', key: '_id', sortable: false },
   { title: 'Resident Name', key: 'full_name', sortable: false },
@@ -163,7 +180,8 @@ const getAvailableActions = (currentStatus) => {
     const actions = {
         'Approve': { status: 'Approved', title: 'Approve Account', icon: 'mdi-check-circle-outline', color: 'success' },
         'Decline': { status: 'Declined', title: 'Decline Account', icon: 'mdi-close-circle-outline', color: 'error' },
-        'Deactivate': { status: 'Deactivated', title: 'Deactivate Account', icon: 'mdi-account-off-outline', color: 'grey' },
+        'Deactivate': { status: 'Deactivated', title: 'Deactivate Account', icon: 'mdi-account-off-outline', color: 'warning' },
+        // UPDATED: 'Pending' is the status for reactivating
         'Reactivate': { status: 'Pending', title: 'Reactivate (Set to Pending)', icon: 'mdi-account-reactivate-outline', color: 'orange' },
     };
     if (currentStatus === 'Pending') return [actions.Approve, actions.Decline];
@@ -172,35 +190,43 @@ const getAvailableActions = (currentStatus) => {
     return [];
 };
 
+// --- UPDATED: Centralized action handling ---
 const handleActionClick = (resident, newStatus) => {
-    if (newStatus === 'Declined') {
-        openDeclineDialog(resident);
-    } else {
+    // Actions that don't need a reason
+    if (newStatus === 'Approved') {
         updateResidentStatus(resident, newStatus);
+    } 
+    // Actions that DO need a reason
+    else {
+        openActionReasonDialog(resident, newStatus);
     }
 };
 
-const openDeclineDialog = (resident) => {
-    residentToDecline.value = resident;
-    declineReason.value = '';
-    declineDialog.value = true;
+const openActionReasonDialog = (resident, newStatus) => {
+    residentToAction.value = resident;
+    actionType.value = newStatus;
+    actionReason.value = '';
+    actionReasonDialog.value = true;
 };
 
-const confirmDecline = async () => {
-    if (!declineReason.value) {
-        $toast.fire({ title: 'A reason is required to decline.', icon: 'warning' });
+const confirmActionWithReason = async () => {
+    if (!actionReason.value) {
+        $toast.fire({ title: 'A reason is required.', icon: 'warning' });
         return;
     }
-    await updateResidentStatus(residentToDecline.value, 'Declined', declineReason.value);
-    declineDialog.value = false;
+    await updateResidentStatus(residentToAction.value, actionType.value, actionReason.value);
+    actionReasonDialog.value = false;
 };
 
-// UPDATE: This function now reloads the table to get fresh data
+// --- UPDATED: Now accepts a reason and sends it in the payload ---
 async function updateResidentStatus(resident, newStatus, reason = null) {
   updatingStatusFor.value = resident._id;
   try {
     const payload = { status: newStatus };
-    if (reason) { payload.reason = reason; }
+    // NEW: Add the reason to the payload if it exists
+    if (reason) { 
+      payload.reason = reason; 
+    }
 
     const { error } = await useMyFetch(`/api/residents/${resident._id}/status`, {
       method: 'PATCH',
@@ -209,9 +235,13 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
 
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
     
-    $toast.fire({ title: 'Status updated successfully!', icon: 'success' });
+    // NEW: Provide more specific feedback
+    let successMessage = 'Status updated successfully!';
+    if (newStatus === 'Deactivated') {
+        successMessage = 'Account deactivated. Associated requests are being invalidated.';
+    }
+    $toast.fire({ title: successMessage, icon: 'success' });
     
-    // Refresh the table data to show the new date_approved value
     await loadResidents(currentTableOptions.value);
 
   } catch (e) {
@@ -221,10 +251,9 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
   }
 }
 
-// UPDATE: This function now stores the latest options for refresh
 async function loadResidents(options) {
   loading.value = true;
-  currentTableOptions.value = options; // Store current options for refresh
+  currentTableOptions.value = options;
   const { page, itemsPerPage: rpp, sortBy } = options;
   
   try {
@@ -273,7 +302,7 @@ const getStatusColor = (s) => ({
   'Approved': 'success',
   'Pending': 'warning',
   'Declined': 'error',
-  'Deactivated': 'grey'
+  'Deactivated': 'grey-darken-1'
 }[s] || 'default');
 
 const formatDate = (dateString) => {

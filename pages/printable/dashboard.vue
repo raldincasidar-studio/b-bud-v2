@@ -126,9 +126,9 @@
     <!-- Populated from the original /api/dashboard endpoint -->
     <div class="info-item"><span class="label">A. No. of Registered voters</span><span class="value">: {{ apiData.totalRegisteredVoters }}</span></div>
     <div class="info-item"><span class="label">B. No. of Population</span><span class="value">: {{ apiData.totalPopulation }}</span></div>
-    <div class="info-item"><span class="label">D. No. of Households</span><span class="value">: {{ apiData.totalHouseholds }}</span></div>
-    <div class="info-item"><span class="label">E. No. of Families</span><span class="value">: {{ apiData.totalHouseholds }}</span></div> <!-- Assuming Families = Households -->
-    <div class="info-item"><span class="label">... No. of inhabitants (RBI) 2nd Sem</span><span class="value">: {{ apiData.totalPopulation }}</span></div>
+    <div class="info-item"><span class="label">C. No. of Households</span><span class="value">: {{ apiData.totalHouseholds }}</span></div>
+    <div class="info-item"><span class="label">D. No. of Families</span><span class="value">: {{ apiData.totalHouseholds }}</span></div> <!-- Assuming Families = Households -->
+    <!-- <div class="info-item"><span class="label">... No. of inhabitants (RBI) 2nd Sem</span><span class="value">: {{ apiData.totalPopulation }}</span></div> -->
 
     <div class="subsection-title">F. Population by age Bracket :</div>
     <table>
@@ -145,8 +145,8 @@
         </thead>
         <tbody>
             <!-- REVISED: v-for loop now uses detailed data from the new API -->
-            <tr v-for="item in demographicProfile.ageSexDistribution" :key="item.bracket">
-                <td>{{ item.bracket }}</td>
+            <tr v-for="(item, index) in demographicProfile.ageSexDistribution" :key="item.bracket">
+                <td>{{ (index + 1) + '. ' + item.bracket.replace(/^\d+\.\s*/, '') }}</td>
                 <td class="text-center">{{ item.male }}</td>
                 <td class="text-center">{{ item.female }}</td>
                 <td class="total-col text-center">{{ item.total }}</td>

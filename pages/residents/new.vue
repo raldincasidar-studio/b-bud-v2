@@ -356,13 +356,23 @@ const headCalculatedAge = computed(() => calculateAge(form.date_of_birth));
 const isHeadSenior = computed(() => headCalculatedAge.value !== null && headCalculatedAge.value >= 60);
 
 const headRules = {
-  first_name: { required, alpha: helpers.regex(/^[a-zA-Z\s]+$/gmi) }, middle_name: { alpha: helpers.regex('alpha', /^[a-zA-Z\s]+$/gmi) }, last_name: { required, alpha: helpers.regex(/^[a-zA-Z\s]+$/gmi) },
+  first_name: { 
+  required, 
+  alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+},
+middle_name: { 
+  alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+},
+last_name: { 
+  required, 
+  alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+},
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
   password: { required, minLength: minLength(6) },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
-  address_house_number: { required, numberic: numeric }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
   years_at_current_address: { required, numeric }, proof_of_residency_file: { required: helpers.withMessage('Proof of Residency is required.', required) },
   // REVISED VALIDATION
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
@@ -420,7 +430,7 @@ const memberRules = {
 };
 const vMember$ = useVuelidate(memberRules, memberForm);
 
-const urlCreator = (file) => file && file.length > 0 ? URL.createObjectURL(file[0]) : null;
+const urlCreator = (file) => file ? URL.createObjectURL(file) : null;
 
 watch(() => form.voter_id_file, (newFile) => { voterIdPreviewUrl.value = urlCreator(newFile); });
 watch(() => form.pwd_card_file, (newFile) => { pwdCardPreviewUrl.value = urlCreator(newFile); });
@@ -469,12 +479,16 @@ const removeMember = (index) => { form.household_members_to_create.splice(index,
 
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
-    if (!file || file.length === 0) { resolve(null); return; }
+    // If the file is null or undefined, resolve immediately.
+    if (!file) { 
+      resolve(null); 
+      return; 
+    }
     const reader = new FileReader();
-    console.log(file)
     reader.onloadend = () => resolve(reader.result);
     reader.onerror = reject;
-    reader.readAsDataURL(file[0]); // Ensure we read the file object itself
+    // Pass the file object directly.
+    reader.readAsDataURL(file); 
   });
 };
 

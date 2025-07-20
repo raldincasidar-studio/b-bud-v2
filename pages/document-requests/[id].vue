@@ -1,4 +1,4 @@
-<template>
+ <template>
   <v-container class="my-10">
     <!-- Loading and Error States -->
     <div v-if="loading" class="text-center pa-10">
@@ -16,14 +16,14 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Document Request Details</h2>
-          <p class="text-grey-darken-1">Reference #: {{ requestId }}</p>
+          <p class="text-grey-darken-1">Reference #: {{ request.ref_no || requestId }}</p>
         </v-col>
         <v-col class="text-right">
           <v-chip :color="getStatusColor(request.document_status)" label size="large" class="font-weight-bold">{{ request.document_status }}</v-chip>
         </v-col>
       </v-row>
 
-      <!-- ✨ UPDATED STATUS TRACKER START ✨ -->
+      <!-- ✨ STATUS TRACKER START ✨ -->
       <div class="status-tracker-container my-12">
         <div class="progress-bar-container">
             <div class="progress-bar-bg"></div>
@@ -44,7 +44,6 @@
                         'failure-point': isDeclined && index === activeStepIndex
                     }"
                 >
-                    <!-- Icon color is now controlled by CSS -->
                     <v-icon size="large">
                         {{ getStepIcon(index, step.icon) }}
                     </v-icon>
@@ -58,7 +57,7 @@
             </div>
         </div>
       </div>
-      <!-- ✨ UPDATED STATUS TRACKER END ✨ -->
+      <!-- ✨ STATUS TRACKER END ✨ -->
 
 
       <!-- Request Details Card -->
@@ -101,9 +100,23 @@
                 <v-col cols="12" md="6"><v-text-field :model-value="request.details.year_started_cohabiting" label="Year Started Living Together" type="number" readonly variant="outlined"></v-text-field></v-col>
               </v-row>
             </div>
-            <!-- Add other read-only document detail sections here... -->
+            <!-- Add other read-only document detail sections here as needed -->
           </div>
           
+          <!-- NEW: Display reason for decline/invalidation -->
+          <v-alert
+            v-if="isDeclined && request.status_reason"
+            type="error"
+            variant="tonal"
+            border="start"
+            class="my-6"
+            icon="mdi-information-outline"
+            density="compact"
+          >
+            <template v-slot:title><strong class="text-error">Reason for Decline / Invalidation</strong></template>
+            {{ request.status_reason }}
+          </v-alert>
+
           <v-divider class="my-6"></v-divider>
           <!-- Timestamps -->
           <v-row>
@@ -129,12 +142,12 @@
           <p class="mt-3 text-grey-darken-1">Moving request to "Processing"...</p>
         </div>
 
-        <!-- State: Processing -> Approve/Decline -->
+        <!-- UPDATED: State: Processing -> Approve/Decline -->
         <div v-else-if="request.document_status === 'Processing'">
           <v-card-text>Review the information above. Once verified, you can approve the request.</v-card-text>
           <v-card-actions class="pa-4">
             <v-btn size="large" color="success" @click="approveRequest" :loading="isActing" prepend-icon="mdi-check-circle-outline">Approve</v-btn>
-            <v-btn size="large" color="error" variant="outlined" @click="declineRequest" :loading="isActing" prepend-icon="mdi-close-circle-outline">Decline</v-btn>
+            <v-btn size="large" color="error" variant="outlined" @click="declineDialog = true" :loading="isActing" prepend-icon="mdi-close-circle-outline">Decline</v-btn>
           </v-card-actions>
         </div>
 
@@ -150,7 +163,6 @@
         <div v-else-if="request.document_status === 'Ready for Pickup'">
           <v-card-text>
             <p class="mb-4">The document is ready. To release it to the requestor, please upload a proof of release (e.g., a photo of the signed acknowledgement receipt).</p>
-            
             <v-file-input
               v-model="proofOfReleaseFile"
               label="Upload Proof of Release Photo"
@@ -161,7 +173,6 @@
               clearable
               show-size
             ></v-file-input>
-
             <v-img
               v-if="proofOfReleaseBase64"
               :src="proofOfReleaseBase64"
@@ -195,8 +206,9 @@
                       :src="request.proof_of_release_photo"
                       max-height="400"
                       contain
-                      class="border rounded"
+                      class="border rounded cursor-pointer"
                       alt="Proof of release photo"
+                      @click="openProofViewer(request.proof_of_release_photo)"
                   ></v-img>
               </div>
           </v-card-text>
@@ -208,6 +220,61 @@
         </div>
       </v-card>
     </div>
+
+    <!-- DIALOG: PROOF VIEWER WITH ZOOM -->
+    <v-dialog v-model="proofViewerDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Proof of Release</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="proofViewerDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text
+          class="d-flex justify-center align-center"
+          style="background-color: rgba(0,0,0,0.8); position: relative; overflow: auto;"
+        >
+          <v-img
+            :src="selectedProofPhoto"
+            contain
+            max-height="90vh"
+            max-width="90vw"
+            :style="imageStyle"
+          ></v-img>
+          <div class="zoom-controls">
+            <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
+            <v-btn icon="mdi-fit-to-screen-outline" @click="resetZoom" class="mx-1" title="Reset Zoom"></v-btn>
+            <v-btn icon="mdi-magnify-plus-outline" @click="zoomIn" class="mx-1" title="Zoom In"></v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
+    <!-- NEW: DIALOG FOR DECLINE WITH REASON -->
+    <v-dialog v-model="declineDialog" persistent max-width="500px">
+      <v-card>
+        <v-card-title class="text-h5">Decline Request</v-card-title>
+        <v-card-text>
+          <p class="mb-4">Please provide a reason for declining this document request. This reason will be visible to the user and recorded.</p>
+          <v-textarea
+            v-model="declineReason"
+            label="Reason for Decline"
+            variant="outlined"
+            rows="3"
+            counter
+            maxlength="250"
+            :rules="[v => !!v || 'Reason is required.']"
+            autofocus
+          ></v-textarea>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="grey" text @click="declineDialog = false">Cancel</v-btn>
+          <v-btn color="error" :disabled="!declineReason" :loading="isActing" @click="confirmDecline">Confirm Decline</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
@@ -226,8 +293,12 @@ const request = ref(null);
 const loading = ref(true);
 const isActing = ref(false);
 const isAutoProcessing = ref(false);
-const proofOfReleaseFile = ref([]);
+const proofOfReleaseFile = ref(null);
 const proofOfReleaseBase64 = ref('');
+
+// NEW: State for decline dialog
+const declineDialog = ref(false);
+const declineReason = ref('');
 
 // --- STATUS TRACKER CONFIGURATION ---
 const trackerSteps = ref([
@@ -247,19 +318,16 @@ const requestorName = computed(() => {
   return 'Loading...';
 });
 
-// --- TRACKER COMPUTED PROPS ---
 const isDeclined = computed(() => request.value?.document_status === 'Declined');
 
 const activeStepIndex = computed(() => {
   if (!request.value) return -1;
-  // If declined, the failure point is the 'Processing' step
   if (isDeclined.value) return statusOrder.indexOf('Processing');
   return statusOrder.indexOf(request.value.document_status);
 });
 
 const progressWidth = computed(() => {
   if (activeStepIndex.value <= 0) return '0%';
-  // The progress bar connects the centers of the circles
   const percentage = (activeStepIndex.value / (trackerSteps.value.length - 1)) * 100;
   return `${percentage}%`;
 });
@@ -298,14 +366,15 @@ async function fetchRequest(showLoading = true) {
 }
 
 // --- FILE HANDLING ---
-watch(proofOfReleaseFile, (newFiles) => {
-  const file = newFiles[0];
+watch(proofOfReleaseFile, (file) => {
   if (!file) {
-    proofOfReleaseBase64.value = ''; return;
+    proofOfReleaseBase64.value = '';
+    return;
   }
   if (file.size > 5 * 1024 * 1024) {
     $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
-    proofOfReleaseFile.value = []; return;
+    proofOfReleaseFile.value = null;
+    return;
   }
   const reader = new FileReader();
   reader.onload = (e) => { proofOfReleaseBase64.value = e.target.result; };
@@ -318,6 +387,7 @@ watch(proofOfReleaseFile, (newFiles) => {
 });
 
 // --- ACTION HANDLERS ---
+// UPDATED: Centralized function to update status, now accepts a body
 async function _updateStatusOnBackend(newStatus, body = {}) {
     const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/status`, {
       method: 'PATCH',
@@ -327,7 +397,6 @@ async function _updateStatusOnBackend(newStatus, body = {}) {
     return data.value;
 }
 
-// Correctly moves the status to 'Approved'
 async function approveRequest() {
   isActing.value = true;
   try {
@@ -341,14 +410,23 @@ async function approveRequest() {
   }
 }
 
-async function declineRequest() {
+// NEW: Function to handle the decline API call with reason
+async function confirmDecline() {
+    if (!declineReason.value) {
+        $toast.fire({ title: 'A reason is required to decline.', icon: 'warning' });
+        return;
+    }
     isActing.value = true;
     try {
-        const response = await _updateStatusOnBackend('Declined');
-        $toast.fire({ title: response.message, icon: 'info' });
-        await fetchRequest(false);
-    } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
-    } finally { isActing.value = false; }
+        const response = await _updateStatusOnBackend('Declined', { reason: declineReason.value });
+        $toast.fire({ title: response.message || 'Request declined.', icon: 'info' });
+        declineDialog.value = false;
+        await fetchRequest(false); // Refresh data from server
+    } catch (e) { 
+        $toast.fire({ title: e.message, icon: 'error' });
+    } finally { 
+        isActing.value = false; 
+    }
 }
 
 async function generateAndSetToPickup() {
@@ -360,7 +438,6 @@ async function generateAndSetToPickup() {
       await fetchRequest(false);
     }
 
-    // NOTE TO AI: PLEASE DO NOT CHANGE HOW DHE `baseUrl` IS DEFINED HERE
     const refNo = request.value.ref_no;
     const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
     const downloadUrl = `${baseUrl}/api/document-requests/${refNo}/generate`;
@@ -388,14 +465,13 @@ async function releaseRequest() {
     $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
     await fetchRequest(false);
     proofOfReleaseBase64.value = '';
-    proofOfReleaseFile.value = [];
+    proofOfReleaseFile.value = null;
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
   } finally { isActing.value = false; }
 }
 
 
 // --- HELPER FUNCTIONS ---
-// Returns correct icon based on state
 function getStepIcon(index, defaultIcon) {
     if (isDeclined.value) {
         if (index < activeStepIndex.value) return 'mdi-check';
@@ -408,7 +484,6 @@ function getStepIcon(index, defaultIcon) {
     return defaultIcon;
 }
 
-// Includes color for 'Approved'
 const getStatusColor = (status) => ({
     "Pending": 'orange-darken-1',
     "Processing": 'blue-darken-1',
@@ -427,6 +502,26 @@ const formatTimestamp = (dateString) => {
     });
   } catch (e) { return dateString; }
 };
+
+// --- ZOOM VIEWER LOGIC ---
+const proofViewerDialog = ref(false);
+const selectedProofPhoto = ref('');
+const zoomLevel = ref(1);
+
+const imageStyle = computed(() => ({
+  transform: `scale(${zoomLevel.value})`,
+  transition: 'transform 0.2s ease-out'
+}));
+
+const openProofViewer = (url) => {
+  selectedProofPhoto.value = url;
+  zoomLevel.value = 1; 
+  proofViewerDialog.value = true;
+};
+
+const zoomIn = () => { zoomLevel.value += 0.2; };
+const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
+const resetZoom = () => { zoomLevel.value = 1; };
 </script>
 
 <style scoped>
@@ -444,11 +539,11 @@ const formatTimestamp = (dateString) => {
 }
 .progress-bar-container {
   position: absolute;
-  top: 20px; /* Vertically center with the circles */
+  top: 20px;
   left: 0;
   right: 0;
   width: 100%;
-  padding: 0 40px; /* Align with centers of first/last circle */
+  padding: 0 40px;
   box-sizing: border-box;
   z-index: 1;
 }
@@ -462,7 +557,7 @@ const formatTimestamp = (dateString) => {
 }
 .progress-bar-bg {
   width: 90%;
-  background-color: #e0e0e0; /* A light grey color */
+  background-color: #e0e0e0;
 }
 .progress-bar-fg {
   background-color: rgb(var(--v-theme-primary));
@@ -475,8 +570,6 @@ const formatTimestamp = (dateString) => {
   text-align: center;
   width: 100px;
 }
-
-/* Default state for future steps (hollow grey) */
 .step-circle {
   width: 40px;
   height: 40px;
@@ -489,19 +582,15 @@ const formatTimestamp = (dateString) => {
   transition: background-color 0.4s, border-color 0.4s;
 }
 .step-circle .v-icon {
-  color: #9e9e9e; /* Darker grey for icon */
+  color: #9e9e9e;
   transition: color 0.4s;
 }
-
-/* Current step (hollow blue) */
 .step-circle.current {
   border-color: rgb(var(--v-theme-primary));
 }
 .step-circle.current .v-icon {
   color: rgb(var(--v-theme-primary));
 }
-
-/* Completed steps (solid blue) */
 .step-circle.completed {
   background-color: rgb(var(--v-theme-primary));
   border-color: rgb(var(--v-theme-primary));
@@ -509,8 +598,6 @@ const formatTimestamp = (dateString) => {
 .step-circle.completed .v-icon {
   color: white;
 }
-
-/* Declined state (solid red) */
 .step-circle.declined {
   background-color: rgb(var(--v-theme-error));
   border-color: rgb(var(--v-theme-error));
@@ -526,10 +613,24 @@ const formatTimestamp = (dateString) => {
 .step-circle.failure-point .v-icon {
   color: white;
 }
-
 .step-label {
   font-size: 0.875rem;
-  color: #757575; /* Standard grey for labels */
+  color: #757575;
   transition: color 0.4s, font-weight 0.4s;
+}
+.cursor-pointer {
+  cursor: pointer;
+}
+.zoom-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(40, 40, 40, 0.75);
+  padding: 8px;
+  border-radius: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
 }
 </style>

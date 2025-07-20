@@ -115,17 +115,20 @@
             
             <v-list lines="one"  v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
               <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.itemLinkPrefix}/${item._id}`">
-                <v-list-item-title class="text-truncate">{{ item.name || item.request_type || item.item_borrowed || 'Untitled Item' }}</v-list-item-title>
-                <!-- REVISED: Added 'item.dateAdded' to the subtitle chain for pending residents -->
-                 
-                <v-list-item-subtitle class="text-truncate">{{ (item.requestor_name || item.complainant_display_name || item.borrower_name) ? `${item.requestor_name || item.complainant_display_name || item.borrower_name}` : (item.created_at || item.dateAdded) ? new Intl.DateTimeFormat('en-US', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date( (item.created_at || item.dateAdded) )) : 'N/A' }}</v-list-item-subtitle>
-                 <template v-slot:append>
-                   <v-icon size="small">mdi-chevron-right</v-icon>
-                 </template>
-              </v-list-item>
-              <v-divider v-if="alertItem.count > 3"></v-divider>
-              <v-list-item :to="alertItem.linkTo" class="text-center text-caption" v-if="alertItem.count > 0">
-                View All {{ alertItem.title.toLowerCase() }}...
+  
+                <!-- CORRECTED TITLE: Now includes quantity for borrowed assets -->
+                <v-list-item-title class="text-truncate">
+                  {{ item.category || item.request_type || (item.item_borrowed && item.quantity_borrowed ? `${item.item_borrowed} - ${item.quantity_borrowed}` : item.item_borrowed) || item.name || 'Untitled Item' }}
+                </v-list-item-title>
+
+                <!-- CORRECTED SUBTITLE: Now correctly finds the name for all cards -->
+                <v-list-item-subtitle class="text-truncate">
+                  {{ item.complainant_display_name || item.requestor_name || item.borrower_name || item.requestor || item.borrower || ( (item.created_at || item.date_of_request || item.dateAdded || item.borrow_datetime) ? new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(item.created_at || item.date_of_request || item.dateAdded || item.borrow_datetime)) : '' ) }}
+                </v-list-item-subtitle>
+
+                <template v-slot:append>
+                  <v-icon size="small">mdi-chevron-right</v-icon>
+                </template>
               </v-list-item>
             </v-list>
             <v-card-text v-else-if="alertItem.count === 0" class="text-center text-grey">

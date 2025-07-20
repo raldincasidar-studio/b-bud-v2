@@ -31,8 +31,23 @@
               @blur="v$.complainant_resident.$touch"
               no-filter
             >
+              <!-- Corrected Item Template with 'On Hold' check -->
               <template v-slot:item="{ props, item }">
-                <v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item>
+                <v-list-item
+                  v-bind="props"
+                  :title="item.raw.name"
+                  :subtitle="item.raw.email"
+                  :disabled="item.raw.account_status !== 'Active'"
+                >
+                  <template v-slot:append>
+                    <v-chip
+                      v-if="item.raw.account_status !== 'Active'"
+                      color="warning" variant="tonal" size="small" label
+                    >
+                      On Hold
+                    </v-chip>
+                  </template>
+                </v-list-item>
               </template>
             </v-autocomplete>
           </v-col>
@@ -133,7 +148,6 @@
               @blur="v$.notes_description.$touch"
             ></v-textarea>
           </v-col>
-          <!-- MODIFIED: Proof of Complaint section with image previews -->
           <v-col cols="12">
              <label class="v-label mb-1">Proof of Complaint</label>
              <v-file-input
@@ -147,7 +161,6 @@
                 prepend-icon="mdi-paperclip"
                 accept="image/*,video/*"
               ></v-file-input>
-              <!-- NEW: Image Preview Section -->
               <v-row v-if="proofPreviewUrls.length > 0" class="mt-4">
                 <v-col v-for="(url, index) in proofPreviewUrls" :key="index" cols="6" sm="4" md="3">
                   <v-img :src="url" aspect-ratio="1" class="grey lighten-2" cover>
@@ -187,11 +200,9 @@ const form = reactive({
   person_complained_against_name: '',
   status: 'New',
   notes_description: '',
-  // MODIFIED: This will now hold the raw File objects from the input
   proof_files: [],
 });
 
-// NEW: A reactive ref to hold the generated URLs for image previews
 const proofPreviewUrls = ref([]);
 
 const complaintCategories = ref([
@@ -207,8 +218,16 @@ const complainantSearchQuery = ref('');
 const complainantSearchResults = ref([]);
 const isLoadingComplainants = ref(false);
 
+// --- Vuelidate Rules ---
 const rules = {
-    complainant_resident: { required: helpers.withMessage('A complainant must be selected.', required) },
+    complainant_resident: {
+        required: helpers.withMessage('A complainant must be selected.', required),
+        // Rule to check if the selected resident's account is active
+        isActive: helpers.withMessage(
+            "This resident's account is On Hold and cannot file complaints.",
+            (value) => !value || value.account_status === 'Active'
+        )
+    },
     complainant_address: { required },
     contact_number: { required },
     date_of_complaint: { required },
@@ -217,27 +236,38 @@ const rules = {
     category: { required },
     status: { required },
     notes_description: { required },
-    // proof_files is optional, so no validation rule is needed.
 };
 const v$ = useVuelidate(rules, form);
 
 const debounce = (func, delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => func.apply(this, a), delay); }; };
 
 const searchResidentsAPI = debounce(async (query) => {
-    if (!query || query.trim().length < 2) { complainantSearchResults.value = []; return; }
+    if (!query || query.trim().length < 2) {
+        complainantSearchResults.value = [];
+        return;
+    }
     isLoadingComplainants.value = true;
     try {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if (error.value) throw new Error(`Error searching for complainant.`);
+        
+        // Ensure account_status is mapped from the API response
         complainantSearchResults.value = data.value?.residents.map(r => ({
-            _id: r._id, name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
-            email: r.email, address: `${r.address_house_number||''} ${r.address_street||''}, ${r.address_subdivision_zone||''}`, contact_number: r.contact_number
+            _id: r._id,
+            name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+            email: r.email,
+            address: `${r.address_house_number||''} ${r.address_street||''}, ${r.address_subdivision_zone||''}`,
+            contact_number: r.contact_number,
+            account_status: r.account_status // This line is crucial
         })) || [];
-    } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
-    finally { isLoadingComplainants.value = false; }
+        
+    } catch (e) {
+        $toast.fire({ title: e.message, icon: 'error' });
+    } finally {
+        isLoadingComplainants.value = false;
+    }
 }, 500);
 
-// NEW: Helper function to convert a file to a Base64 string
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -247,17 +277,15 @@ const convertFileToBase64 = (file) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result);
     reader.onerror = reject;
-    reader.readAsDataURL(file); // Read the single file object
+    reader.readAsDataURL(file);
   });
 };
 
-// NEW: Watcher to generate preview URLs when files are selected
 watch(() => form.proof_files, (newFiles) => {
   if (!newFiles || newFiles.length === 0) {
     proofPreviewUrls.value = [];
     return;
   }
-  // Create object URLs for each selected file for previewing
   proofPreviewUrls.value = newFiles.map(file => URL.createObjectURL(file));
 }, { deep: true });
 
@@ -273,7 +301,6 @@ watch(() => form.complainant_resident, (newResident) => {
     }
 });
 
-// MODIFIED: The entire save logic is updated to send a JSON payload with Base64 strings.
 async function saveComplaint() {
   const isFormCorrect = await v$.value.$validate();
   if (!isFormCorrect) {
@@ -284,12 +311,10 @@ async function saveComplaint() {
   saving.value = true;
 
   try {
-    // Convert all proof files to Base64 strings in parallel
     const proofs_base64 = await Promise.all(
       form.proof_files.map(file => convertFileToBase64(file))
     );
 
-    // Create the JSON payload
     const payload = {
       complainant_resident_id: form.complainant_resident?._id,
       complainant_display_name: form.complainant_resident?.name,
@@ -301,11 +326,9 @@ async function saveComplaint() {
       person_complained_against_name: form.person_complained_against_name,
       status: form.status,
       notes_description: form.notes_description,
-      // Add the array of Base64 strings to the payload
       proofs_base64: proofs_base64,
     };
     
-    // Send the JSON payload, NOT FormData
     const { error } = await useMyFetch('/api/complaints', {
       method: 'POST',
       body: payload,
