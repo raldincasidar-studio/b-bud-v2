@@ -293,7 +293,7 @@ const request = ref(null);
 const loading = ref(true);
 const isActing = ref(false);
 const isAutoProcessing = ref(false);
-const proofOfReleaseFile = ref([]);
+const proofOfReleaseFile = ref(null);
 const proofOfReleaseBase64 = ref('');
 
 // NEW: State for decline dialog
@@ -366,14 +366,15 @@ async function fetchRequest(showLoading = true) {
 }
 
 // --- FILE HANDLING ---
-watch(proofOfReleaseFile, (newFiles) => {
-  const file = newFiles[0];
+watch(proofOfReleaseFile, (file) => {
   if (!file) {
-    proofOfReleaseBase64.value = ''; return;
+    proofOfReleaseBase64.value = '';
+    return;
   }
   if (file.size > 5 * 1024 * 1024) {
     $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
-    proofOfReleaseFile.value = []; return;
+    proofOfReleaseFile.value = null;
+    return;
   }
   const reader = new FileReader();
   reader.onload = (e) => { proofOfReleaseBase64.value = e.target.result; };
@@ -464,7 +465,7 @@ async function releaseRequest() {
     $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
     await fetchRequest(false);
     proofOfReleaseBase64.value = '';
-    proofOfReleaseFile.value = [];
+    proofOfReleaseFile.value = null;
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
   } finally { isActing.value = false; }
 }

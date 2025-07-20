@@ -4861,7 +4861,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
     const { id } = req.params;
     const { proof_of_release } = req.body; // Expecting a Base64 string
 
-    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    // if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
     if (!proof_of_release || !proof_of_release.startsWith('data:image/')) {
         return res.status(400).json({ error: 'Valid proof of release photo is required.' });
     }
@@ -4871,7 +4871,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
         const collection = dab.collection('document_requests');
         
         // --- FETCH ORIGINAL DOCUMENT FOR LOGGING ---
-        const originalRequest = await collection.findOne({ _id: new ObjectId(id) });
+        const originalRequest = await collection.findOne({ ref_no: id });
         if (!originalRequest) {
             return res.status(404).json({ error: 'Request not found.' });
         }
@@ -4881,7 +4881,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
         // --- END FETCH ---
 
         const result = await collection.findOneAndUpdate(
-            { _id: new ObjectId(id), document_status: 'Ready for Pickup' }, // Condition
+            { ref_no: id, document_status: 'Ready for Pickup' }, // Condition
             { 
                 $set: { 
                     document_status: 'Released', 
