@@ -308,7 +308,15 @@ const trackerSteps = ref([
     { name: 'Ready for Pickup', icon: 'mdi-package-variant-closed' },
     { name: 'Released', icon: 'mdi-handshake-outline' }
 ]);
-const statusOrder = ['Pending', 'Processing', 'Approved', 'Ready for Pickup', 'Released'];
+const statusItems = [
+  'Pending',
+  'Follow up',
+  'Processing',
+  'Approved',
+  'Ready for Pickup',
+  'Released',
+  'Declined'
+];
 
 // --- COMPUTED PROPERTIES ---
 const requestorName = computed(() => {
@@ -319,6 +327,8 @@ const requestorName = computed(() => {
 });
 
 const isDeclined = computed(() => request.value?.document_status === 'Declined');
+
+const statusOrder = ['Pending', 'Follow up', 'Processing', 'Approved', 'Ready for Pickup', 'Released', 'Declined'];
 
 const activeStepIndex = computed(() => {
   if (!request.value) return -1;
