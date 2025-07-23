@@ -621,6 +621,10 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         contact_number: data.contact_number,
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
+         // --- NEW: Add photo and proof fields to be saved in the database ---
+        proof_of_relationship_type: data.proof_of_relationship_type || null,
+        proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
+
         // Address Info (Use head's address if provided)
         address_house_number: headAddress ? headAddress.address_house_number : data.address_house_number,
         address_street: headAddress ? headAddress.address_street : data.address_street,
@@ -654,21 +658,27 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
 };
 
 
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - REVISED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - CORRECTED
 app.post('/api/residents', async (req, res) => {
+    // --- FIX: ESTABLISH DB CONNECTION AND GET COLLECTION FIRST ---
+    // This was the source of the crash. `db()` must be called before using `CLIENT_DB`.
     const dab = await db();
     const residentsCollection = dab.collection('residents');
+
+    // --- NOW IT'S SAFE TO START A SESSION ---
     const session = CLIENT_DB.startSession();
 
     try {
         let newHouseholdHead;
 
+        // Start the transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
+                // Use throw new Error within a transaction to abort it automatically
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
@@ -678,11 +688,9 @@ app.post('/api/residents', async (req, res) => {
 
             const headResidentDocument = createResidentDocument(headData, true);
             
-            // --- UPDATE: Set created_at and initialize date_approved ---
             headResidentDocument.created_at = new Date();
             headResidentDocument.updated_at = new Date();
             headResidentDocument.date_approved = null;
-            // --- END UPDATE ---
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
@@ -718,11 +726,9 @@ app.post('/api/residents', async (req, res) => {
                 
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
 
-                // --- UPDATE: Set created_at and initialize date_approved ---
                 newMemberDoc.created_at = new Date();
                 newMemberDoc.updated_at = new Date();
                 newMemberDoc.date_approved = null;
-                // --- END UPDATE ---
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -737,8 +743,9 @@ app.post('/api/residents', async (req, res) => {
                 );
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
-        });
+        }); // End of the transaction
 
+        // If the transaction was successful, create an audit log
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
@@ -754,6 +761,7 @@ app.post('/api/residents', async (req, res) => {
         });
 
     } catch (error) {
+        // This block will catch errors thrown from inside the transaction
         console.error("Error during household registration transaction:", error);
         if (error.message.startsWith('Conflict:')) {
             return res.status(409).json({ error: 'Email Conflict', message: error.message });
@@ -761,12 +769,95 @@ app.post('/api/residents', async (req, res) => {
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
+        // Generic server error for anything else
         res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
     } finally {
+        // This will run whether the transaction succeeded or failed
         await session.endSession();
     }
 });
 
+// POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD
+app.post('/api/residents/:householdHeadId/members', async (req, res) => {
+    const { householdHeadId } = req.params;
+    const memberData = req.body;
+
+    // --- Validation ---
+    if (!ObjectId.isValid(householdHeadId)) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Invalid household head ID format.' });
+    }
+    if (!memberData || !memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Missing required member information.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newMemberId;
+
+        await session.withTransaction(async () => {
+            // Step 1: Find the household head to ensure they are valid and get their address
+            const householdHead = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) }, { session });
+            if (!householdHead || !householdHead.is_household_head) {
+                throw new Error('Household head not found or the specified user is not a household head.');
+            }
+
+            // Step 2: Check for email conflicts if an email is provided for the new member
+            if (memberData.email) {
+                const existingEmail = await residentsCollection.findOne({ email: memberData.email.toLowerCase() }, { session });
+                if (existingEmail) {
+                    throw new Error(`Conflict: The email address '${memberData.email}' is already in use.`);
+                }
+            }
+
+            // Step 3: Reuse the same helper function from your signup process
+            // It will create the member and copy the head's address information automatically
+            const newMemberDoc = createResidentDocument(memberData, false, householdHead);
+
+            // Step 4: Add the new fields for photo and proof of relationship from the frontend payload
+            newMemberDoc.photo_base64 = memberData.photo_base64 || null;
+            newMemberDoc.proof_of_relationship_type = memberData.proof_of_relationship_type || null;
+            newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
+            
+            // Step 5: Ensure new members always start with 'Pending' status
+            newMemberDoc.status = 'Pending';
+            newMemberDoc.date_approved = null;
+
+
+            // Step 6: Insert the new member document into the 'residents' collection
+            const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+            newMemberId = memberInsertResult.insertedId;
+
+            // Step 7: Atomically add the new member's ID to the household head's list of members
+            await residentsCollection.updateOne(
+                { _id: new ObjectId(householdHeadId) },
+                { $push: { household_member_ids: newMemberId } },
+                { session }
+            );
+        });
+
+        // If the transaction succeeds, create an audit log
+        await createAuditLog({
+          description: `A new member, '${memberData.first_name} ${memberData.last_name}', was added to a household.`,
+          action: "CREATE",
+          entityType: "Resident",
+          entityId: newMemberId.toString(),
+        }, req);
+
+        res.status(201).json({ message: 'Household member added successfully.' });
+
+    } catch (error) {
+        console.error("Error adding household member:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: error.message || 'Could not add household member.' });
+    } finally {
+        await session.endSession();
+    }
+});
 
 // PATCH /api/residents/:id/status - APPROVE/DECLINE/DEACTIVATE A RESIDENT
 // This route is CRUCIAL for the date_approved logic to work.
