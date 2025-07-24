@@ -3799,13 +3799,13 @@ app.delete('/api/assets/:id', async (req, res) => {
 // ====================== COMPLAINT REQUESTS CRUD (REVISED) =========================== //
 
 // MODIFIED: ADD NEW COMPLAINT REQUEST (POST)
-// We no longer need the `upload.none()` middleware because the frontend is sending a JSON body.
 app.post('/api/complaints', async (req, res) => {
   const dab = await db();
   
-  // MODIFIED: Destructuring now includes `proofs_base64` and removes `person_complained_against_resident_id`.
+  // --- 1. RECEIVE THE NEW FIELD ---
   const {
     complainant_resident_id,
+    processed_by_personnel, // New field
     complainant_display_name,
     complainant_address,
     contact_number,
@@ -3815,44 +3815,39 @@ app.post('/api/complaints', async (req, res) => {
     person_complained_against_name,
     status,
     notes_description,
-    proofs_base64, // NEW: Expecting an array of Base64 strings
+    proofs_base64,
   } = req.body;
 
-  // --- Start of Validation ---
-  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category ||
-      !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
+  // --- 2. UPDATE VALIDATION ---
+  if (!complainant_resident_id || !processed_by_personnel || !complainant_display_name || !complainant_address || !contact_number || 
+      !category || !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
   if (!ObjectId.isValid(complainant_resident_id)) {
     return res.status(400).json({ error: 'Invalid complainant resident ID format.' });
   }
-  // MODIFIED: Removed validation for the obsolete person_complained_against_resident_id
-  // --- End of Validation ---
 
   try {
     const collection = dab.collection('complaints');
     const complaintDate = new Date(date_of_complaint);
 
-    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
     const customRefNo = await generateUniqueReference(collection);
 
-    // --- 2. ADD ref_no AND PROOFS TO THE NEW COMPLAINT OBJECT ---
+    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newComplaint = {
       ref_no: customRefNo,
       complainant_resident_id: new ObjectId(complainant_resident_id),
+      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
       contact_number: String(contact_number).trim(),
       date_of_complaint: complaintDate,
       time_of_complaint: String(time_of_complaint).trim(),
       person_complained_against_name: String(person_complained_against_name).trim(),
-      // MODIFIED: This is now always null as it's no longer linked to a resident.
       person_complained_against_resident_id: null,
       status: String(status).trim(),
       category: String(category).trim(),
       notes_description: String(notes_description).trim(),
-      // NEW: Store the array of Base64 proofs.
-      // Use a check to ensure it's an array, defaulting to an empty one if not.
       proofs_base64: Array.isArray(proofs_base64) ? proofs_base64 : [],
       created_at: new Date(),
       updated_at: new Date(),
@@ -3860,17 +3855,16 @@ app.post('/api/complaints', async (req, res) => {
     
     const result = await collection.insertOne(newComplaint);
 
-    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION --- (No changes needed here)
+    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
     await createAuditLog({
       userId: newComplaint.complainant_resident_id,
       userName: newComplaint.complainant_display_name,
-      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
+      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' was processed by ${newComplaint.processed_by_personnel}. The complaint is against '${newComplaint.person_complained_against_name}'.`,
       action: 'CREATE',
       entityType: 'Complaint',
       entityId: result.insertedId.toString()
     }, req);
 
-    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND --- (No changes needed here)
     res.status(201).json({
       message: 'Complaint request added successfully',
       complaintId: result.insertedId,
@@ -4440,19 +4434,20 @@ app.delete('/api/complaints/:id', async (req, res) => {
 // ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
 
 
-// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object)
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
 app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
   const {
     requestor_resident_id,
+    processed_by_personnel, // --- 1. RECEIVE THE NEW FIELD ---
     request_type,
     purpose,
-    details, // This is the new object with custom fields
+    details,
   } = req.body;
 
-  // Validation
-  if (!requestor_resident_id || !request_type) {
-    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
+  // --- 2. UPDATE VALIDATION ---
+  if (!requestor_resident_id || !request_type || !processed_by_personnel) {
+    return res.status(400).json({ error: 'Missing required fields: requestor, type, and processing personnel are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
@@ -4460,20 +4455,20 @@ app.post('/api/document-requests', async (req, res) => {
 
   try {
     const residentsCollection = dab.collection('residents');
-    const requestsCollection = dab.collection('document_requests'); // Get the collection once
+    const requestsCollection = dab.collection('document_requests');
 
-    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
+    // Fetch the requestor's name for a more descriptive log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
-    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}` : 'An unknown resident';
-    // --- END FETCH ---
+    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
 
-    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    // Generate a unique, user-friendly reference number
     const customRefNo = await generateUniqueReference(requestsCollection);
 
-    // --- 2. ADD THE ref_no TO THE NEW REQUEST OBJECT ---
+    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newRequest = {
-      ref_no: customRefNo, // Your new user-friendly reference number!
+      ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
+      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
       details: details || {},
@@ -4484,22 +4479,23 @@ app.post('/api/document-requests', async (req, res) => {
     
     const result = await requestsCollection.insertOne(newRequest);
 
-    // --- ADD AUDIT LOG HERE ---
+    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
     await createAuditLog({
-        description: `New document request '${request_type}' (Ref: ${customRefNo}) submitted by ${requestorName}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was processed by ${processed_by_personnel}.`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
+        // Assuming your createAuditLog function correctly identifies the logged-in user from the 'req' object as the actor.
+        // The 'userId' and 'userName' here can refer to the subject of the log.
         userId: requestor ? requestor._id : null,
         userName: requestorName,
     }, req);
-    // --- END AUDIT LOG ---
 
-    // --- 3. UPDATE THE RESPONSE TO THE FRONTEND ---
+    // Update the response to the frontend
     res.status(201).json({
       message: 'Document request added successfully',
       requestId: result.insertedId,
-      refNo: customRefNo // Send the new ref # back to the frontend
+      refNo: customRefNo
     });
     
   } catch (error) {

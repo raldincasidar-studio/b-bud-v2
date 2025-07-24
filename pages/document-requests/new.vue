@@ -17,7 +17,7 @@
         <!-- Step 1: General Information -->
         <h3 class="text-h6 mb-4">Requestor Information</h3>
         <v-row>
-          <v-col cols="12">
+          <v-col cols="12" md="6">
             <label class="v-label mb-1">Requestor (Resident) <span class="text-red">*</span></label>
             <v-autocomplete
               v-model="form.requestor_resident"
@@ -32,7 +32,6 @@
               @blur="v$.requestor_resident.$touch"
               no-filter
             >
-              <!-- Corrected Item Template with 'On Hold' check -->
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
@@ -51,6 +50,17 @@
                 </v-list-item>
               </template>
             </v-autocomplete>
+          </v-col>
+          <v-col cols="12" md="6">
+             <label class="v-label mb-1">Request Processed By (Personnel) <span class="text-red">*</span></label>
+             <v-text-field
+                v-model="form.processed_by_personnel"
+                variant="outlined"
+                readonly
+                hint="This is automatically filled with the logged-in user's name."
+                :error-messages="v$.processed_by_personnel.$errors.map(e => e.$message)"
+                @blur="v$.processed_by_personnel.$touch"
+              ></v-text-field>
           </v-col>
           <v-col cols="12">
             <label class="v-label mb-1">Purpose of Document Request</label>
@@ -159,31 +169,26 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch } from 'vue';
+import { reactive, ref, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
 import { useMyFetch } from '../../composables/useMyFetch';
-import { useNuxtApp } from '#app';
+// useCookie is a Nuxt composable, often auto-imported. If not, add this line:
+import { useNuxtApp, useCookie } from '#app';
 
 const { $toast } = useNuxtApp();
 const router = useRouter();
 
-// Master list of available documents
 const documentTypes = [
-  'Certificate of Cohabitation',
-  'Certificate of Good Moral',
-  'Certificate of Residency',
-  'Certificate of Solo Parent',
-  'Certificate of Indigency',
-  'Barangay Clearance',
-  'Barangay Permit (for installations)',
-  'Barangay Business Clearance',
-  'Barangay Certification (First Time Jobseeker)',
+  'Certificate of Cohabitation', 'Certificate of Good Moral', 'Certificate of Residency',
+  'Certificate of Solo Parent', 'Certificate of Indigency', 'Barangay Clearance',
+  'Barangay Permit (for installations)', 'Barangay Business Clearance', 'Barangay Certification (First Time Jobseeker)',
 ];
 
 const form = reactive({
   requestor_resident: null,
+  processed_by_personnel: '', // This will be filled from the cookie
   request_type: null,
   purpose: null,
   details: {}
@@ -194,25 +199,35 @@ const requestorSearchQuery = ref('');
 const requestorSearchResults = ref([]);
 const isLoadingRequestors = ref(false);
 
-// --- Vuelidate Rules ---
 const rules = {
     requestor_resident: {
         required: helpers.withMessage('A requestor must be selected.', required),
-        // Rule to check if the selected resident's account is active
         isActive: helpers.withMessage(
             "This resident's account is On Hold and cannot make new requests.",
             (value) => !value || value.account_status === 'Active'
         )
     },
+    processed_by_personnel: { required: helpers.withMessage('Processed by personnel is required.', required) },
     purpose: {},
     request_type: { required },
 };
-
-// Declare v$ only ONCE
 const v$ = useVuelidate(rules, form);
 
+// --- Lifecycle Hooks ---
+onMounted(() => {
+  // --- UPDATED LOGIC ---
+  // Fetch the logged-in user's data from the cookie, just like in the borrowed assets page.
+  const userData = useCookie('userData');
+  if (userData.value) {
+    form.processed_by_personnel = userData.value.name;
+  } else {
+    // Optional: handle case where cookie is not found
+    form.processed_by_personnel = 'Unknown User';
+    console.warn('Could not retrieve user data from cookie.');
+  }
+});
 
-// --- Search and Selection Logic ---
+
 const debounce = (fn,delay) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),delay); }; };
 
 const searchResidentsAPI = debounce(async (query) => {
@@ -225,12 +240,11 @@ const searchResidentsAPI = debounce(async (query) => {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if(error.value) throw new Error('Error searching residents.');
         
-        // Ensure account_status is mapped from the API response
         requestorSearchResults.value = data.value?.residents.map(r => ({
             _id: r._id,
             name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
             email: r.email,
-            account_status: r.account_status // This line is crucial
+            account_status: r.account_status
         })) || [];
 
     } catch(e) {
@@ -242,7 +256,6 @@ const searchResidentsAPI = debounce(async (query) => {
 
 watch(requestorSearchQuery, (nq) => { searchResidentsAPI(nq); });
 
-// --- Save Logic ---
 async function saveRequest() {
   const isFormCorrect = await v$.value.$validate();
   if (!isFormCorrect) {
@@ -254,6 +267,7 @@ async function saveRequest() {
   try {
     const payload = {
         requestor_resident_id: form.requestor_resident._id,
+        processed_by_personnel: form.processed_by_personnel,
         purpose: form.purpose,
         request_type: form.request_type,
         details: form.details,
