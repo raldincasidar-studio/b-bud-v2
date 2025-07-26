@@ -1327,6 +1327,93 @@ app.get('/api/residents/:id', async (req, res) => {
   }
 });
 
+// GET NOTIFICATIONS FOR A RESIDENT
+app.get('/api/residents/:id/notifications', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
+    const residentObjectId = new ObjectId(id);
+
+    const notifications = await notificationsCollection.find({
+      $or: [
+        { target_audience: 'All' },
+        { target_audience: 'SpecificResidents', recipient_ids: { $in: [id, residentObjectId] } }
+      ]
+    }).sort({ date: -1 }).toArray();
+
+    const unreadCount = await notificationsCollection.countDocuments({
+      $or: [
+        { target_audience: 'All' },
+        { target_audience: 'SpecificResidents', recipient_ids: { $in: [id, residentObjectId] } }
+      ],
+      read_by: { $not: { $elemMatch: { resident_id: residentObjectId } } }
+    });
+
+    res.json({ notifications, unreadCount });
+  } catch (error) {
+    console.error("Error fetching notifications for resident:", error);
+    res.status(500).json({ error: 'Server error', message: 'Could not fetch notifications.' });
+  }
+});
+
+// MARK NOTIFICATION AS READ FOR A RESIDENT
+app.patch('/api/notifications/:notificationId/mark-as-read', async (req, res) => {
+  const { notificationId } = req.params;
+  const { resident_id } = req.body;
+
+  if (!ObjectId.isValid(notificationId) || !ObjectId.isValid(resident_id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
+    const residentObjectId = new ObjectId(resident_id);
+
+    const result = await notificationsCollection.updateOne(
+      { _id: new ObjectId(notificationId) },
+      { $addToSet: { read_by: { resident_id: residentObjectId, read_at: new Date() } } }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    res.json({ message: 'Notification marked as read' });
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    res.status(500).json({ error: 'Server error', message: 'Could not mark notification as read.' });
+  }
+});
+
+// GET NOTIFICATION BY ID
+app.get('/api/notifications/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications');
+    const notification = await notificationsCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!notification) {
+      return res.status(404).json({ error: 'Notification not found' });
+    }
+
+    res.json({ notification });
+  } catch (error) {
+    console.error("Error fetching notification by ID:", error);
+    res.status(500).json({ error: 'Server error', message: 'Could not fetch notification.' });
+  }
+});
+
 // GET /api/residents/:residentId/household-details
 // Fetches a resident's details and their household information (if any)
 
@@ -1791,6 +1878,89 @@ app.get('/api/households', async (req, res) => {
   }
 });
 
+// ADD NEW HOUSEHOLD MEMBER
+app.post('/api/residents/:id/members', async (req, res) => {
+    const { id: headId } = req.params;
+    const memberData = req.body;
+
+    if (!ObjectId.isValid(headId)) {
+        return res.status(400).json({ error: 'Invalid household head ID format.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newMemberId;
+        await session.withTransaction(async () => {
+            // 1. Find the household head
+            const householdHead = await residentsCollection.findOne({ _id: new ObjectId(headId) }, { session });
+            if (!householdHead || !householdHead.is_household_head) {
+                throw new Error('Household head not found.');
+            }
+
+            // 2. Validate member data
+            if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+                throw new Error('Validation failed for member: Missing required fields.');
+            }
+
+            // 3. Check for email conflicts if an email is provided
+            if (memberData.email) {
+                const memberEmail = memberData.email.toLowerCase();
+                const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
+                if (existingMemberEmail) {
+                    throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
+                }
+            }
+
+            // 4. Create the new resident document
+            const newMemberDoc = createResidentDocument(memberData, false, householdHead);
+            newMemberDoc.created_at = new Date();
+            newMemberDoc.updated_at = new Date();
+            newMemberDoc.date_approved = null; // Members are pending until approved
+
+            const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+            newMemberId = memberInsertResult.insertedId;
+
+            // 5. Add the new member's ID to the household head's member list
+            await residentsCollection.updateOne(
+                { _id: new ObjectId(headId) },
+                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
+                { session }
+            );
+        });
+
+        // --- ADD AUDIT LOG HERE ---
+        const headDetails = await residentsCollection.findOne({ _id: new ObjectId(headId) });
+        await createAuditLog({
+            userId: headId,
+            userName: `${headDetails.first_name} ${headDetails.last_name}`,
+            description: `Added a new member to their household.`,
+            action: "ADD_MEMBER",
+            entityType: "Resident",
+            entityId: newMemberId.toString(),
+        }, req);
+
+        res.status(201).json({ message: 'Household member added successfully!', memberId: newMemberId });
+
+    } catch (error) {
+        console.error("Error adding household member:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        if (error.message.startsWith('Validation failed for member:')) {
+            return res.status(400).json({ error: 'Validation Error', message: error.message });
+        }
+        if (error.message === 'Household head not found.') {
+            return res.status(404).json({ error: 'Not Found', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: 'Could not add household member.' });
+    } finally {
+        await session.endSession();
+    }
+});
+
 
 
 
@@ -1868,6 +2038,7 @@ app.get('/api/documents', async (req, res) => {
         action: { $ifNull: [ "$action", "" ] }
       }
     })
+    .sort({ date_added: -1 })
     .skip((page - 1) * itemsPerPage)
     .limit(itemsPerPage)
     .toArray();
@@ -1943,6 +2114,59 @@ app.put('/api/documents/:id', async (req, res) => {
 
   res.json({ message: 'Document updated successfully' });
 });
+
+// FOLLOW UP ON A DOCUMENT REQUEST
+app.patch('/api/document-requests/:id/follow-up', async (req, res) => {
+  const { id } = req.params;
+
+  if (!ObjectId.isValid(id)) {
+    return res.status(400).json({ error: 'Invalid ID format' });
+  }
+
+  try {
+    const dab = await db();
+    const documentRequestsCollection = dab.collection('document_requests');
+    const requestObjectId = new ObjectId(id);
+
+    const documentRequest = await documentRequestsCollection.findOne({ _id: requestObjectId });
+
+    if (!documentRequest) {
+      return res.status(404).json({ error: 'Document request not found' });
+    }
+
+    // Check if the user can follow up
+    if (documentRequest.last_follow_up_at) {
+      const lastFollowUp = new Date(documentRequest.last_follow_up_at);
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      if (lastFollowUp > twentyFourHoursAgo) {
+        return res.status(429).json({ error: 'Too Many Requests', message: 'You can only follow up on a request once every 24 hours.' });
+      }
+    }
+
+    // Update the status and the follow-up timestamp
+    const result = await documentRequestsCollection.updateOne(
+      { _id: requestObjectId },
+      {
+        $set: {
+          document_status: 'Follow up',
+          last_follow_up_at: new Date(),
+          updated_at: new Date()
+        }
+      }
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ error: 'Document request not found during update' });
+    }
+    
+    res.json({ message: 'Successfully followed up on the request.' });
+
+  } catch (error) {
+    console.error("Error following up on document request:", error);
+    res.status(500).json({ error: 'Server error', message: 'Could not follow up on the request.' });
+  }
+});
+''
 
 
 // ====================== ADMINS CRUD =========================== //
@@ -5004,7 +5228,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 // const isDebug = !false; /* For production */
-const isDebug = !true; /* For development */
+const isDebug = !false; /* For development */
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
