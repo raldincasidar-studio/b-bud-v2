@@ -1518,6 +1518,71 @@ app.get('/api/residents/:residentId/household-details', async (req, res) => {
   }
 });
 
+// GET /api/residents/:id/household-members - FETCHES MEMBERS OF A RESIDENT'S HOUSEHOLD
+app.get('/api/residents/:id/household-members', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: 'Invalid ID format.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const residentObjectId = new ObjectId(id);
+
+    try {
+        // Step 1: Find the initial resident
+        const resident = await residentsCollection.findOne({ _id: residentObjectId });
+        if (!resident) {
+            return res.status(404).json({ error: 'Resident not found.' });
+        }
+
+        let householdMemberIds = [];
+
+        if (resident.is_household_head) {
+            // Case 1: The resident is the head of the household.
+            // Their `household_member_ids` contains the list of all members.
+            householdMemberIds = resident.household_member_ids || [];
+        } else {
+            // Case 2: The resident is a member, not the head.
+            // We need to find the head of their household to get the member list.
+            const householdHead = await residentsCollection.findOne({
+                is_household_head: true,
+                household_member_ids: residentObjectId // Find the head that lists this resident as a member
+            });
+
+            if (householdHead) {
+                // We found the head, so we get their list of members.
+                // We also add the head's ID to the list so they also appear in the dropdown.
+                householdMemberIds = householdHead.household_member_ids || [];
+                householdMemberIds.push(householdHead._id); 
+            }
+        }
+        
+        // Remove the original resident's ID from the list to avoid duplication, as the frontend already has their data.
+        const otherMemberIds = householdMemberIds
+            .filter(memberId => memberId && !memberId.equals(residentObjectId) && ObjectId.isValid(memberId))
+            .map(memberId => new ObjectId(memberId)); // Ensure all are ObjectIds
+
+        let household_members = [];
+        if (otherMemberIds.length > 0) {
+            // Fetch the full details for each member ID
+            household_members = await residentsCollection.find(
+                { _id: { $in: otherMemberIds } },
+                // Project only the fields needed by the frontend to keep the payload small
+                { projection: { _id: 1, first_name: 1, last_name: 1 } }
+            ).toArray();
+        }
+
+        // --- FINAL RESPONSE ---
+        // Return the data in the format the frontend expects: { household_members: [...] }
+        res.json({ household_members });
+
+    } catch (error) {
+        console.error("Error fetching household members:", error);
+        res.status(500).json({ error: 'Server error', message: 'Could not fetch household members.' });
+    }
+});
+
 // DELETE RESIDENT BY ID (DELETE)
 app.delete("/api/residents/:id", async (req, res) => {
   const dab = await db()
@@ -4670,8 +4735,8 @@ app.post('/api/document-requests', async (req, res) => {
   } = req.body;
 
   // --- 2. UPDATE VALIDATION ---
-  if (!requestor_resident_id || !request_type || !processed_by_personnel) {
-    return res.status(400).json({ error: 'Missing required fields: requestor, type, and processing personnel are required.' });
+  if (!requestor_resident_id || !request_type ) {
+    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
