@@ -621,6 +621,10 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         contact_number: data.contact_number,
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
+         // --- NEW: Add photo and proof fields to be saved in the database ---
+        proof_of_relationship_type: data.proof_of_relationship_type || null,
+        proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
+
         // Address Info (Use head's address if provided)
         address_house_number: headAddress ? headAddress.address_house_number : data.address_house_number,
         address_street: headAddress ? headAddress.address_street : data.address_street,
@@ -654,21 +658,27 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
 };
 
 
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - REVISED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - CORRECTED
 app.post('/api/residents', async (req, res) => {
+    // --- FIX: ESTABLISH DB CONNECTION AND GET COLLECTION FIRST ---
+    // This was the source of the crash. `db()` must be called before using `CLIENT_DB`.
     const dab = await db();
     const residentsCollection = dab.collection('residents');
+
+    // --- NOW IT'S SAFE TO START A SESSION ---
     const session = CLIENT_DB.startSession();
 
     try {
         let newHouseholdHead;
 
+        // Start the transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
+                // Use throw new Error within a transaction to abort it automatically
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
@@ -678,11 +688,9 @@ app.post('/api/residents', async (req, res) => {
 
             const headResidentDocument = createResidentDocument(headData, true);
             
-            // --- UPDATE: Set created_at and initialize date_approved ---
             headResidentDocument.created_at = new Date();
             headResidentDocument.updated_at = new Date();
             headResidentDocument.date_approved = null;
-            // --- END UPDATE ---
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
@@ -718,11 +726,9 @@ app.post('/api/residents', async (req, res) => {
                 
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
 
-                // --- UPDATE: Set created_at and initialize date_approved ---
                 newMemberDoc.created_at = new Date();
                 newMemberDoc.updated_at = new Date();
                 newMemberDoc.date_approved = null;
-                // --- END UPDATE ---
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -737,8 +743,9 @@ app.post('/api/residents', async (req, res) => {
                 );
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
-        });
+        }); // End of the transaction
 
+        // If the transaction was successful, create an audit log
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
@@ -754,6 +761,7 @@ app.post('/api/residents', async (req, res) => {
         });
 
     } catch (error) {
+        // This block will catch errors thrown from inside the transaction
         console.error("Error during household registration transaction:", error);
         if (error.message.startsWith('Conflict:')) {
             return res.status(409).json({ error: 'Email Conflict', message: error.message });
@@ -761,12 +769,95 @@ app.post('/api/residents', async (req, res) => {
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
+        // Generic server error for anything else
         res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
     } finally {
+        // This will run whether the transaction succeeded or failed
         await session.endSession();
     }
 });
 
+// POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD
+app.post('/api/residents/:householdHeadId/members', async (req, res) => {
+    const { householdHeadId } = req.params;
+    const memberData = req.body;
+
+    // --- Validation ---
+    if (!ObjectId.isValid(householdHeadId)) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Invalid household head ID format.' });
+    }
+    if (!memberData || !memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Missing required member information.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newMemberId;
+
+        await session.withTransaction(async () => {
+            // Step 1: Find the household head to ensure they are valid and get their address
+            const householdHead = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) }, { session });
+            if (!householdHead || !householdHead.is_household_head) {
+                throw new Error('Household head not found or the specified user is not a household head.');
+            }
+
+            // Step 2: Check for email conflicts if an email is provided for the new member
+            if (memberData.email) {
+                const existingEmail = await residentsCollection.findOne({ email: memberData.email.toLowerCase() }, { session });
+                if (existingEmail) {
+                    throw new Error(`Conflict: The email address '${memberData.email}' is already in use.`);
+                }
+            }
+
+            // Step 3: Reuse the same helper function from your signup process
+            // It will create the member and copy the head's address information automatically
+            const newMemberDoc = createResidentDocument(memberData, false, householdHead);
+
+            // Step 4: Add the new fields for photo and proof of relationship from the frontend payload
+            newMemberDoc.photo_base64 = memberData.photo_base64 || null;
+            newMemberDoc.proof_of_relationship_type = memberData.proof_of_relationship_type || null;
+            newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
+            
+            // Step 5: Ensure new members always start with 'Pending' status
+            newMemberDoc.status = 'Pending';
+            newMemberDoc.date_approved = null;
+
+
+            // Step 6: Insert the new member document into the 'residents' collection
+            const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+            newMemberId = memberInsertResult.insertedId;
+
+            // Step 7: Atomically add the new member's ID to the household head's list of members
+            await residentsCollection.updateOne(
+                { _id: new ObjectId(householdHeadId) },
+                { $push: { household_member_ids: newMemberId } },
+                { session }
+            );
+        });
+
+        // If the transaction succeeds, create an audit log
+        await createAuditLog({
+          description: `A new member, '${memberData.first_name} ${memberData.last_name}', was added to a household.`,
+          action: "CREATE",
+          entityType: "Resident",
+          entityId: newMemberId.toString(),
+        }, req);
+
+        res.status(201).json({ message: 'Household member added successfully.' });
+
+    } catch (error) {
+        console.error("Error adding household member:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: error.message || 'Could not add household member.' });
+    } finally {
+        await session.endSession();
+    }
+});
 
 // PATCH /api/residents/:id/status - APPROVE/DECLINE/DEACTIVATE A RESIDENT
 // This route is CRUCIAL for the date_approved logic to work.
@@ -1425,6 +1516,71 @@ app.get('/api/residents/:residentId/household-details', async (req, res) => {
     console.error("Error fetching resident household details:", error);
     res.status(500).json({ error: "Failed to fetch household details", message: error.message });
   }
+});
+
+// GET /api/residents/:id/household-members - FETCHES MEMBERS OF A RESIDENT'S HOUSEHOLD
+app.get('/api/residents/:id/household-members', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) {
+        return res.status(400).json({ error: 'Invalid ID format.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const residentObjectId = new ObjectId(id);
+
+    try {
+        // Step 1: Find the initial resident
+        const resident = await residentsCollection.findOne({ _id: residentObjectId });
+        if (!resident) {
+            return res.status(404).json({ error: 'Resident not found.' });
+        }
+
+        let householdMemberIds = [];
+
+        if (resident.is_household_head) {
+            // Case 1: The resident is the head of the household.
+            // Their `household_member_ids` contains the list of all members.
+            householdMemberIds = resident.household_member_ids || [];
+        } else {
+            // Case 2: The resident is a member, not the head.
+            // We need to find the head of their household to get the member list.
+            const householdHead = await residentsCollection.findOne({
+                is_household_head: true,
+                household_member_ids: residentObjectId // Find the head that lists this resident as a member
+            });
+
+            if (householdHead) {
+                // We found the head, so we get their list of members.
+                // We also add the head's ID to the list so they also appear in the dropdown.
+                householdMemberIds = householdHead.household_member_ids || [];
+                householdMemberIds.push(householdHead._id); 
+            }
+        }
+        
+        // Remove the original resident's ID from the list to avoid duplication, as the frontend already has their data.
+        const otherMemberIds = householdMemberIds
+            .filter(memberId => memberId && !memberId.equals(residentObjectId) && ObjectId.isValid(memberId))
+            .map(memberId => new ObjectId(memberId)); // Ensure all are ObjectIds
+
+        let household_members = [];
+        if (otherMemberIds.length > 0) {
+            // Fetch the full details for each member ID
+            household_members = await residentsCollection.find(
+                { _id: { $in: otherMemberIds } },
+                // Project only the fields needed by the frontend to keep the payload small
+                { projection: { _id: 1, first_name: 1, last_name: 1 } }
+            ).toArray();
+        }
+
+        // --- FINAL RESPONSE ---
+        // Return the data in the format the frontend expects: { household_members: [...] }
+        res.json({ household_members });
+
+    } catch (error) {
+        console.error("Error fetching household members:", error);
+        res.status(500).json({ error: 'Server error', message: 'Could not fetch household members.' });
+    }
 });
 
 // DELETE RESIDENT BY ID (DELETE)
@@ -3932,13 +4088,13 @@ app.delete('/api/assets/:id', async (req, res) => {
 // ====================== COMPLAINT REQUESTS CRUD (REVISED) =========================== //
 
 // MODIFIED: ADD NEW COMPLAINT REQUEST (POST)
-// We no longer need the `upload.none()` middleware because the frontend is sending a JSON body.
 app.post('/api/complaints', async (req, res) => {
   const dab = await db();
   
-  // MODIFIED: Destructuring now includes `proofs_base64` and removes `person_complained_against_resident_id`.
+  // --- 1. RECEIVE THE NEW FIELD ---
   const {
     complainant_resident_id,
+    processed_by_personnel, // New field
     complainant_display_name,
     complainant_address,
     contact_number,
@@ -3948,44 +4104,39 @@ app.post('/api/complaints', async (req, res) => {
     person_complained_against_name,
     status,
     notes_description,
-    proofs_base64, // NEW: Expecting an array of Base64 strings
+    proofs_base64,
   } = req.body;
 
-  // --- Start of Validation ---
-  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || !category ||
-      !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
+  // --- 2. UPDATE VALIDATION ---
+  if (!complainant_resident_id || !processed_by_personnel || !complainant_display_name || !complainant_address || !contact_number || 
+      !category || !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
   if (!ObjectId.isValid(complainant_resident_id)) {
     return res.status(400).json({ error: 'Invalid complainant resident ID format.' });
   }
-  // MODIFIED: Removed validation for the obsolete person_complained_against_resident_id
-  // --- End of Validation ---
 
   try {
     const collection = dab.collection('complaints');
     const complaintDate = new Date(date_of_complaint);
 
-    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
     const customRefNo = await generateUniqueReference(collection);
 
-    // --- 2. ADD ref_no AND PROOFS TO THE NEW COMPLAINT OBJECT ---
+    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newComplaint = {
       ref_no: customRefNo,
       complainant_resident_id: new ObjectId(complainant_resident_id),
+      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
       contact_number: String(contact_number).trim(),
       date_of_complaint: complaintDate,
       time_of_complaint: String(time_of_complaint).trim(),
       person_complained_against_name: String(person_complained_against_name).trim(),
-      // MODIFIED: This is now always null as it's no longer linked to a resident.
       person_complained_against_resident_id: null,
       status: String(status).trim(),
       category: String(category).trim(),
       notes_description: String(notes_description).trim(),
-      // NEW: Store the array of Base64 proofs.
-      // Use a check to ensure it's an array, defaulting to an empty one if not.
       proofs_base64: Array.isArray(proofs_base64) ? proofs_base64 : [],
       created_at: new Date(),
       updated_at: new Date(),
@@ -3993,17 +4144,16 @@ app.post('/api/complaints', async (req, res) => {
     
     const result = await collection.insertOne(newComplaint);
 
-    // --- 3. UPDATE THE AUDIT LOG DESCRIPTION --- (No changes needed here)
+    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
     await createAuditLog({
       userId: newComplaint.complainant_resident_id,
       userName: newComplaint.complainant_display_name,
-      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' against '${newComplaint.person_complained_against_name}'. Category: ${newComplaint.category}.`,
+      description: `New complaint (Ref: ${customRefNo}) filed by '${newComplaint.complainant_display_name}' was processed by ${newComplaint.processed_by_personnel}. The complaint is against '${newComplaint.person_complained_against_name}'.`,
       action: 'CREATE',
       entityType: 'Complaint',
       entityId: result.insertedId.toString()
     }, req);
 
-    // --- 4. UPDATE THE RESPONSE TO THE FRONTEND --- (No changes needed here)
     res.status(201).json({
       message: 'Complaint request added successfully',
       complaintId: result.insertedId,
@@ -4573,18 +4723,19 @@ app.delete('/api/complaints/:id', async (req, res) => {
 // ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
 
 
-// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object)
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
 app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
   const {
     requestor_resident_id,
+    processed_by_personnel, // --- 1. RECEIVE THE NEW FIELD ---
     request_type,
     purpose,
-    details, // This is the new object with custom fields
+    details,
   } = req.body;
 
-  // Validation
-  if (!requestor_resident_id || !request_type) {
+  // --- 2. UPDATE VALIDATION ---
+  if (!requestor_resident_id || !request_type ) {
     return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
@@ -4593,20 +4744,20 @@ app.post('/api/document-requests', async (req, res) => {
 
   try {
     const residentsCollection = dab.collection('residents');
-    const requestsCollection = dab.collection('document_requests'); // Get the collection once
+    const requestsCollection = dab.collection('document_requests');
 
-    // --- FETCH REQUESTOR'S NAME FOR A MORE DESCRIPTIVE LOG ---
+    // Fetch the requestor's name for a more descriptive log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
-    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}` : 'An unknown resident';
-    // --- END FETCH ---
+    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
 
-    // --- 1. GENERATE THE UNIQUE REFERENCE NUMBER ---
+    // Generate a unique, user-friendly reference number
     const customRefNo = await generateUniqueReference(requestsCollection);
 
-    // --- 2. ADD THE ref_no TO THE NEW REQUEST OBJECT ---
+    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newRequest = {
-      ref_no: customRefNo, // Your new user-friendly reference number!
+      ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
+      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
       details: details || {},
@@ -4617,22 +4768,23 @@ app.post('/api/document-requests', async (req, res) => {
     
     const result = await requestsCollection.insertOne(newRequest);
 
-    // --- ADD AUDIT LOG HERE ---
+    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
     await createAuditLog({
-        description: `New document request '${request_type}' (Ref: ${customRefNo}) submitted by ${requestorName}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was processed by ${processed_by_personnel}.`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
+        // Assuming your createAuditLog function correctly identifies the logged-in user from the 'req' object as the actor.
+        // The 'userId' and 'userName' here can refer to the subject of the log.
         userId: requestor ? requestor._id : null,
         userName: requestorName,
     }, req);
-    // --- END AUDIT LOG ---
 
-    // --- 3. UPDATE THE RESPONSE TO THE FRONTEND ---
+    // Update the response to the frontend
     res.status(201).json({
       message: 'Document request added successfully',
       requestId: result.insertedId,
-      refNo: customRefNo // Send the new ref # back to the frontend
+      refNo: customRefNo
     });
     
   } catch (error) {
