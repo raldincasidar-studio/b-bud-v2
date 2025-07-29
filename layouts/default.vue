@@ -78,6 +78,7 @@ const items = [
     { to: '/notifications', text: 'Announcements', icon: 'mdi-bell-ring' },
     { to: '/barangay-officials', text: 'Barangay Officials', icon: 'mdi-bank' },
     { to: '/assets', text: 'Inventory', icon: 'mdi-archive-search-outline' },
+    { to: '/budget-management', text: 'Budget Management', icon: 'mdi-currency-usd', superAdmin: true },
     { to: '/admins', text: 'Admin Management', icon: 'mdi-shield-account', superAdmin: true },
     { to: '/admins/' + userData.value?._id, text: 'My Account', icon: 'mdi-account-circle' },
     { to: '/audit-logs', text: 'Audit Log', icon: 'mdi-file-document-outline', superAdmin: true },

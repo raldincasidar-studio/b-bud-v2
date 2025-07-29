@@ -5863,6 +5863,192 @@ app.get('/api/audit-logs', async (req, res) => {
 });
 
 
+// ================================== BUDGET MANAGEMENT CRUD ================================== //
+
+// 1. CREATE: POST /api/budgets
+app.post('/api/budgets', async (req, res) => {
+    const dab = await db();
+    const collection = dab.collection('budgets');
+    const { budgetName, category, amount, date } = req.body;
+
+    // --- Validation ---
+    if (!budgetName || !category || amount === undefined || !date) {
+        return res.status(400).json({ error: 'Missing required fields: budgetName, category, amount, and date are required.' });
+    }
+    const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount < 0) {
+        return res.status(400).json({ error: 'Amount must be a non-negative number.' });
+    }
+
+    try {
+        const newBudgetDoc = {
+            budgetName: String(budgetName).trim(),
+            category: String(category).trim(),
+            amount: numericAmount,
+            date: new Date(date),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+        };
+
+        const result = await collection.insertOne(newBudgetDoc);
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `New budget entry created: '${budgetName}' for ${numericAmount.toFixed(2)}.`,
+            action: "CREATE",
+            entityType: "Budget",
+            entityId: result.insertedId.toString(),
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.status(201).json({ message: 'Budget entry added successfully', budgetId: result.insertedId });
+    } catch (error) {
+        console.error("Error adding budget entry:", error);
+        res.status(500).json({ error: 'Failed to add budget entry.' });
+    }
+});
+
+// 2. READ (List): GET /api/budgets
+app.get('/api/budgets', async (req, res) => {
+    try {
+        const dab = await db();
+        const collection = dab.collection('budgets');
+
+        const { search, sortBy, sortOrder } = req.query;
+        const page = parseInt(req.query.page) || 1;
+        const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+        const skip = (page - 1) * itemsPerPage;
+
+        let query = {};
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            query = {
+                $or: [
+                    { budgetName: searchRegex },
+                    { category: searchRegex }
+                ]
+            };
+        }
+        
+        let sortOptions = { date: -1 }; // Default sort
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
+
+        const budgets = await collection.find(query)
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        const totalBudgets = await collection.countDocuments(query);
+
+        res.json({
+            budgets,
+            totalBudgets,
+        });
+
+    } catch (error) {
+        console.error("Error fetching budget entries:", error);
+        res.status(500).json({ error: 'Failed to fetch budget entries.' });
+    }
+});
+
+// 3. READ (Single): GET /api/budgets/:id
+app.get('/api/budgets/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    const dab = await db();
+    const collection = dab.collection('budgets');
+    try {
+        const budget = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!budget) return res.status(404).json({ error: 'Budget entry not found.' });
+        res.json({ budget });
+    } catch (error) {
+        console.error("Error fetching budget entry by ID:", error);
+        res.status(500).json({ error: 'Failed to fetch budget entry.' });
+    }
+});
+
+// 4. UPDATE: PUT /api/budgets/:id
+app.put('/api/budgets/:id', async (req, res) => {
+    const { id } = req.params;
+    if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('budgets');
+    const { budgetName, category, amount, date } = req.body;
+
+    // --- Validation ---
+    if (!budgetName || !category || amount === undefined || !date) {
+        return res.status(400).json({ error: 'Missing required fields.' });
+    }
+     const numericAmount = parseFloat(amount);
+    if (isNaN(numericAmount) || numericAmount < 0) {
+        return res.status(400).json({ error: 'Amount must be a non-negative number.' });
+    }
+
+    try {
+        const budgetToUpdate = await collection.findOne({ _id: new ObjectId(id) });
+        if (!budgetToUpdate) return res.status(404).json({ error: 'Budget entry not found.' });
+
+        const updateFields = {
+            budgetName: String(budgetName).trim(),
+            category: String(category).trim(),
+            amount: numericAmount,
+            date: new Date(date),
+            updatedAt: new Date(),
+        };
+
+        const result = await collection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
+        if (result.matchedCount === 0) return res.status(404).json({ error: 'Budget entry not found during update.' });
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Updated budget entry: '${budgetToUpdate.budgetName}'.`,
+            action: "UPDATE",
+            entityType: "Budget",
+            entityId: id,
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.json({ message: 'Budget entry updated successfully' });
+    } catch (error) {
+        console.error("Error updating budget entry:", error);
+        res.status(500).json({ error: 'Failed to update budget entry.' });
+    }
+});
+
+// 5. DELETE: DELETE /api/budgets/:id
+app.delete('/api/budgets/:id', async (req, res) => {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+    
+    const dab = await db();
+    const collection = dab.collection('budgets');
+    
+    try {
+        const budgetToDelete = await collection.findOne({ _id: new ObjectId(req.params.id) });
+        if (!budgetToDelete) return res.status(404).json({ error: 'Budget entry not found.' });
+
+        const result = await collection.deleteOne({ _id: new ObjectId(req.params.id) });
+        if (result.deletedCount === 0) return res.status(404).json({ error: 'Budget entry not found during deletion.' });
+        
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            description: `Deleted budget entry: '${budgetToDelete.budgetName}'.`,
+            action: "DELETE",
+            entityType: "Budget",
+            entityId: req.params.id,
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.json({ message: 'Budget entry deleted successfully' });
+    } catch (error) {
+        console.error("Error deleting budget entry:", error);
+        res.status(500).json({ error: 'Failed to delete budget entry.' });
+    }
+});
+
+
 // Server
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
