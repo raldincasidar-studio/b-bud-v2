@@ -5908,6 +5908,18 @@ app.post('/api/budgets', async (req, res) => {
     }
 });
 
+app.get('/api/budgets/categories', async (req, res) => {
+  try {
+    const dab = await db();
+    const budgetsCollection = dab.collection('budgets');
+    const categories = await budgetsCollection.distinct('category');
+    res.json({ categories });
+  } catch (error) {
+    console.error("Error fetching budget categories:", error);
+    res.status(500).json({ error: "Failed to fetch budget categories", message: error.message });
+  }
+});
+
 // 2. READ (List): GET /api/budgets
 app.get('/api/budgets', async (req, res) => {
     try {

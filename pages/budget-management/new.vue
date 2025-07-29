@@ -39,14 +39,14 @@
           <!-- Category Dropdown -->
           <v-col cols="12" md="6">
             <label class="v-label mb-3 font-weight-bold text-black">Category <span class="text-red">*</span></label>
-            <v-select
+            <v-combobox
               v-model="form.category"
               :items="categories"
-              label="Select a category"
+              label="Select or type a category"
               variant="outlined"
               :error-messages="v$.category.$errors.map(e => e.$message)"
               @blur="v$.category.$touch"
-            ></v-select>
+            ></v-combobox>
           </v-col>
 
           <!-- Amount Field -->
@@ -80,7 +80,7 @@
 </template>
 
 <script setup>
-import { reactive, ref } from "vue";
+import { reactive, ref, onMounted } from "vue";
 import { useMyFetch } from "~/composables/useMyFetch";
 import { useVuelidate } from '@vuelidate/core';
 import { required, numeric } from '@vuelidate/validators';
@@ -98,12 +98,7 @@ const form = reactive({
 });
 
 // Categories for the dropdown, based on your design
-const categories = ref([
-  'Maintenance and Other Operating Expenses',
-  'Statutory and Contractual Obligations',
-  'General and Administrative Expenses',
-  'Capital Outlay'
-]);
+const categories = ref([]);
 
 // Validation rules for the form
 const rules = {
@@ -114,6 +109,16 @@ const rules = {
 };
 
 const v$ = useVuelidate(rules, form);
+
+onMounted(async () => {
+  try {
+    const { data, error } = await useMyFetch('/api/budgets/categories');
+    if (error.value) throw new Error(error.value.data?.message || 'Error fetching categories');
+    categories.value = data.value.categories;
+  } catch (err) {
+    $toast.fire({ title: err.message, icon: 'error' });
+  }
+});
 
 // Function to save the budget
 const saveBudget = async () => {

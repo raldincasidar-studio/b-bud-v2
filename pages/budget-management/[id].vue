@@ -61,14 +61,14 @@
           <!-- Category Dropdown -->
           <v-col cols="12" md="6">
             <label class="v-label mb-3 font-weight-bold text-black">Category <span class="text-red">*</span></label>
-            <v-select
+            <v-combobox
               v-model="form.category"
               :items="categories"
-              label="Select a category"
+              label="Select or type a category"
               variant="outlined"
               :error-messages="v$.category.$errors.map(e => e.$message)"
               @blur="v$.category.$touch"
-            ></v-select>
+            ></v-combobox>
           </v-col>
 
           <!-- Amount Field -->
@@ -122,12 +122,7 @@ const form = reactive({
   date: "",
 });
 
-const categories = ref([
-  'Maintenance and Other Operating Expenses',
-  'Statutory and Contractual Obligations',
-  'General and Administrative Expenses',
-  'Capital Outlay'
-]);
+const categories = ref([]);
 
 const rules = {
   budgetName: { required },
@@ -145,6 +140,10 @@ onMounted(async () => {
     return;
   }
   try {
+    const { data: categoriesData, error: categoriesError } = await useMyFetch('/api/budgets/categories');
+    if (categoriesError.value) throw new Error(categoriesError.value.data?.message || 'Error fetching categories');
+    categories.value = categoriesData.value.categories;
+
     const { data, error } = await useMyFetch(`/api/budgets/${budgetId}`);
     if (error.value) throw new Error(error.value.data?.message || 'Error fetching data');
     
