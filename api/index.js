@@ -4108,7 +4108,7 @@ app.post('/api/complaints', async (req, res) => {
   } = req.body;
 
   // --- 2. UPDATE VALIDATION ---
-  if (!complainant_resident_id || !processed_by_personnel || !complainant_display_name || !complainant_address || !contact_number || 
+  if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || 
       !category || !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
@@ -4126,7 +4126,7 @@ app.post('/api/complaints', async (req, res) => {
     const newComplaint = {
       ref_no: customRefNo,
       complainant_resident_id: new ObjectId(complainant_resident_id),
-      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
+      processed_by_personnel: String(processed_by_personnel || '').trim(), // Save the personnel's name
       complainant_display_name: String(complainant_display_name).trim(),
       complainant_address: String(complainant_address).trim(),
       contact_number: String(contact_number).trim(),
