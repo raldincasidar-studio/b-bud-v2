@@ -5,11 +5,11 @@
         <h2 class="text-h4 font-weight-bold">Residents Profile</h2>
         <p class="text-grey-darken-1">Approve, manage, and view all registered residents.</p>
       </v-col>
-      <v-col class="text-right">
+      <!-- <v-col class="text-right">
         <v-btn size="large" to="/residents/new" prepend-icon="mdi-account-plus" color="primary">
           New Resident
         </v-btn>
-      </v-col>
+      </v-col> -->
     </v-row>
 
     <v-card class="mt-4" flat border>

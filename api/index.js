@@ -777,6 +777,128 @@ app.post('/api/residents', async (req, res) => {
     }
 });
 
+// POST /api/admin/residents - FOR ADMIN ENDPOINT CREATE RESIDENT
+app.post('/api/admin/residents', async (req, res) => {
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newHouseholdHead;
+
+        // Status is always 'Approved' for this route.
+        const finalStatus = 'Approved';
+        const finalApprovalDate = new Date();
+
+        // Start the database transaction
+        await session.withTransaction(async () => {
+            const headData = req.body;
+            const membersToCreate = headData.household_members_to_create || [];
+
+            // --- Step 1: Validate and Prepare the Household Head ---
+            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
+                throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
+            }
+            
+            if (headData.email && headData.email.trim() !== '') {
+                const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
+                if (existingEmail) {
+                    throw new Error('Conflict: The email address for the Household Head is already in use.');
+                }
+            }
+
+            const headResidentDocument = createResidentDocument(headData, true);
+            
+            // Apply the hardcoded 'Approved' status
+            headResidentDocument.status = finalStatus;
+            headResidentDocument.date_approved = finalApprovalDate;
+            headResidentDocument.created_at = new Date();
+            headResidentDocument.updated_at = new Date();
+
+            const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
+            const insertedHeadId = headInsertResult.insertedId;
+            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+
+            // --- Step 2: Validate and Prepare Household Members ---
+            const createdMemberIds = [];
+            const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []);
+
+            for (const memberData of membersToCreate) {
+                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+                    throw new Error(`Validation failed for member: Missing required fields.`);
+                }
+                const memberAge = calculateAge(memberData.date_of_birth);
+                
+                if (memberAge >= 15 && (memberData.email || memberData.password)) {
+                    if (!memberData.email || !memberData.password) {
+                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
+                    }
+                    const memberEmail = memberData.email.toLowerCase();
+                    if (processedEmails.has(memberEmail)) {
+                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
+                    }
+                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
+                    if (existingMemberEmail) {
+                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
+                    }
+                    processedEmails.add(memberEmail);
+                } else {
+                    memberData.email = null;
+                    memberData.password = null;
+                }
+                
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
+
+                // Apply the hardcoded 'Approved' status to all members
+                newMemberDoc.status = finalStatus;
+                newMemberDoc.date_approved = finalApprovalDate;
+                newMemberDoc.created_at = new Date();
+                newMemberDoc.updated_at = new Date();
+
+                const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+                createdMemberIds.push(memberInsertResult.insertedId);
+            }
+
+            // --- Step 3: Link Members to the Head ---
+            if (createdMemberIds.length > 0) {
+                await residentsCollection.updateOne(
+                    { _id: insertedHeadId },
+                    { $set: { household_member_ids: createdMemberIds, updated_at: new Date() } },
+                    { session }
+                );
+                newHouseholdHead.household_member_ids = createdMemberIds;
+            }
+        }); // End of transaction
+
+        
+        await createAuditLog({
+          userId: 'SYSTEM_ADMIN', 
+          userName: 'System Admin', 
+          description: `Admin-created a new, approved household for '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}'.`,
+          action: "ADMIN_CREATE_HOUSEHOLD",
+          entityType: "Resident",
+          entityId: newHouseholdHead._id.toString(),
+        }, req);
+
+        res.status(201).json({
+            message: 'Household registered and approved successfully!',
+            resident: newHouseholdHead
+        });
+
+    } catch (error) {
+        console.error("Error during admin household registration:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        if (error.message.startsWith('Validation failed:')) {
+             return res.status(400).json({ error: 'Validation Error', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+    } finally {
+        await session.endSession();
+    }
+});
+
 // POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD
 app.post('/api/residents/:householdHeadId/members', async (req, res) => {
     const { householdHeadId } = req.params;

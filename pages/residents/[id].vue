@@ -538,7 +538,7 @@ async function deleteResident() {
     const { error } = await useMyFetch(`/api/residents/${residentId}`, { method: 'DELETE' });
     if (error.value) throw new Error('Failed to delete resident.');
     $toast.fire({ title: 'Resident deleted!', icon: 'success' });
-    router.push('/residents');
+    router.push('/residents-account-management');
   } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { deleting.value = false; confirmDeleteDialog.value = false; }
 }
