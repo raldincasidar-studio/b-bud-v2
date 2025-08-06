@@ -238,19 +238,27 @@ const calculateAge = (dob) => {
 
 // =================== RESIDENT LOGIN - STEP 1 (Email/Password & OTP Send) =================== //
 app.post('/api/residents/login', async (req, res) => {
-  const { email, password } = req.body;
+  const { login_identifier, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Email and password are required.' });
+  if (!login_identifier || !password) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Email/Contact Number and password are required.' });
   }
 
   try {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-    const resident = await residentsCollection.findOne({ email: String(email).trim().toLowerCase() });
+    
+    let resident;
+    const isEmail = login_identifier.includes('@');
+
+    if (isEmail) {
+        resident = await residentsCollection.findOne({ email: String(login_identifier).trim().toLowerCase() });
+    } else {
+        resident = await residentsCollection.findOne({ contact_number: login_identifier });
+    }
 
     if (!resident) {
-      return res.status(401).json({ error: 'Invalid email or password.', message: 'Invalid email or password.' });
+      return res.status(401).json({ error: 'Invalid credentials.', message: 'Invalid credentials.' });
     }
 
     // Check for account lockout
@@ -329,40 +337,62 @@ app.post('/api/residents/login', async (req, res) => {
       }
     );
 
-    // Send OTP email
-    const mailOptions = {
-      from: `"B-BUD System" <${SMTP_USER}>`,
-      to: resident.email,
-      subject: 'Your B-BBUD Login Verification Code',
-      html: `
-        <p>Hello ${resident.first_name || 'User'},</p>
-        <p>To complete your login, please use the following One-Time Password (OTP):</p>
-        <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
-        <p>This OTP is valid for ${OTP_EXPIRY_MINUTES_LOGIN} minutes.</p>
-        <p>If you did not attempt to log in, please secure your account or contact support immediately.</p>
-        <br><p>Thanks,<br>The B-BBUD Team</p>`,
-    };
+    if (isEmail) {
+        // Send OTP email
+        const mailOptions = {
+          from: `"B-BUD System" <${SMTP_USER}>`,
+          to: resident.email,
+          subject: 'Your B-BBUD Login Verification Code',
+          html: `
+            <p>Hello ${resident.first_name || 'User'},</p>
+            <p>To complete your login, please use the following One-Time Password (OTP):</p>
+            <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
+            <p>This OTP is valid for ${OTP_EXPIRY_MINUTES_LOGIN} minutes.</p>
+            <p>If you did not attempt to log in, please secure your account or contact support immediately.</p>
+            <br><p>Thanks,<br>The B-BBUD Team</p>`,
+        };
 
-    try {
-      await transporter.sendMail(mailOptions);
-      console.log(`Login OTP email sent to ${resident.email} (OTP: ${otp})`); // Log OTP for testing, REMOVE FOR PRODUCTION
-      return res.status(200).json({
-        message: `An OTP has been sent to your email address (${resident.email}). Please enter it to complete your login.`,
-        otpRequired: true,
-        // Do NOT send resident data yet
-      });
-    } catch (emailError) {
-      console.error("Fatal Error: Could not send login OTP email:", emailError);
-      // If OTP email cannot be sent, the user cannot log in with this flow.
-      // This is a critical failure. You might want to log this prominently.
-      await residentsCollection.updateOne( // Clear OTP if email failed, so they can try login again later
-        { _id: resident._id },
-        { $unset: { login_otp: "", login_otp_expiry: "" }}
-      );
-      return res.status(500).json({
-        error: 'EmailSendingError',
-        message: 'We encountered an issue sending the verification code to your email. Please try logging in again shortly. If the problem persists, contact support.'
-      });
+        try {
+          await transporter.sendMail(mailOptions);
+          console.log(`Login OTP email sent to ${resident.email} (OTP: ${otp})`); // Log OTP for testing, REMOVE FOR PRODUCTION
+          return res.status(200).json({
+            message: `An OTP has been sent to your email address (${resident.email}). Please enter it to complete your login.`,
+            otpRequired: true,
+            // Do NOT send resident data yet
+          });
+        } catch (emailError) {
+          console.error("Fatal Error: Could not send login OTP email:", emailError);
+          // If OTP email cannot be sent, the user cannot log in with this flow.
+          // This is a critical failure. You might want to log this prominently.
+          await residentsCollection.updateOne( // Clear OTP if email failed, so they can try login again later
+            { _id: resident._id },
+            { $unset: { login_otp: "", login_otp_expiry: "" }}
+          );
+          return res.status(500).json({
+            error: 'EmailSendingError',
+            message: 'We encountered an issue sending the verification code to your email. Please try logging in again shortly. If the problem persists, contact support.'
+          });
+        }
+    } else {
+        // Send OTP via SMS
+        try {
+            await sendMessage(resident.contact_number, `Your B-BBUD login OTP is ${otp}`);
+            console.log(`Login OTP sent to ${resident.contact_number} (OTP: ${otp})`);
+            return res.status(200).json({
+                message: `An OTP has been sent to your contact number (${resident.contact_number}). Please enter it to complete your login.`,
+                otpRequired: true,
+            });
+        } catch (smsError) {
+            console.error("Fatal Error: Could not send login OTP SMS:", smsError);
+            await residentsCollection.updateOne(
+                { _id: resident._id },
+                { $unset: { login_otp: "", login_otp_expiry: "" } }
+            );
+            return res.status(500).json({
+                error: 'SMSSendingError',
+                message: 'We encountered an issue sending the verification code to your contact number. Please try logging in again shortly. If the problem persists, contact support.'
+            });
+        }
     }
 
   } catch (error) {
@@ -374,10 +404,10 @@ app.post('/api/residents/login', async (req, res) => {
 
 // =================== RESIDENT LOGIN - STEP 2 (Verify OTP) =================== //
 app.post('/api/residents/login/verify-otp', async (req, res) => {
-  const { email, otp } = req.body;
+  const { login_identifier, otp } = req.body;
 
-  if (!email || !otp) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Email and OTP are required.' });
+  if (!login_identifier || !otp) {
+    return res.status(400).json({ error: 'Validation failed', message: 'Email/Contact number and OTP are required.' });
   }
   if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
       return res.status(400).json({ error: 'Validation failed', message: 'OTP must be a 6-digit number.' });
@@ -388,13 +418,21 @@ app.post('/api/residents/login/verify-otp', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
 
+    const isEmail = login_identifier.includes('@');
+    const query = {
+        login_otp: otp, // If OTP is hashed: Remove this line. Fetch by email, then use bcrypt.compare(otp, resident.login_otp_hash)
+        login_otp_expiry: { $gt: new Date() }
+    };
+
+    if (isEmail) {
+        query.email = String(login_identifier).trim().toLowerCase();
+    } else {
+        query.contact_number = login_identifier;
+    }
+
     // Find resident by email, OTP, and ensure OTP is not expired
     // IMPORTANT: If OTP is hashed in DB, query for email first, then compare hashed OTP.
-    const resident = await residentsCollection.findOne({
-      email: String(email).trim().toLowerCase(),
-      login_otp: otp, // If OTP is hashed: Remove this line. Fetch by email, then use bcrypt.compare(otp, resident.login_otp_hash)
-      login_otp_expiry: { $gt: new Date() }
-    });
+    const resident = await residentsCollection.findOne(query);
 
     if (!resident) {
       // Optionally, you could implement OTP attempt tracking here as well for the specific email
@@ -2923,6 +2961,22 @@ async function createNotification(dbInstance, notificationData) {
   try {
     const result = await notificationsCollection.insertOne(newNotificationDoc);
     console.log(`Notification "${name}" (ID: ${result.insertedId}) created for ${finalRecipientObjects.length} recipient(s).`);
+
+    // Send SMS notification
+    if (finalRecipientObjects && finalRecipientObjects.length > 0) {
+        const recipientIds = finalRecipientObjects.map(r => r.resident_id);
+        const recipients = await residentsCollection.find({ _id: { $in: recipientIds } }).toArray();
+        for (const recipient of recipients) {
+            if (recipient.contact_number) {
+                try {
+                    await sendMessage(recipient.contact_number, `B-BUD Notification: ${name}`);
+                } catch (error) {
+                    console.error(`Failed to send SMS notification to ${recipient.contact_number}:`, error);
+                }
+            }
+        }
+    }
+
     return { _id: result.insertedId, ...newNotificationDoc };
   } catch (error) {
     console.error("Error inserting notification document in helper:", error);
@@ -6113,8 +6167,11 @@ function sendMessage(number, message) {
         // Create an error object with details from the API response
         const error = new Error(`API request failed with status ${response.status}: ${response.statusText}`);
         error.response = responseData; // Attach the API's error details
+        console.error(error);
         return reject(error);
       }
+
+      console.info('SMS message sent successfully:', responseData);
 
       return resolve(responseData);
 
