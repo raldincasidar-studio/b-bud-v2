@@ -5,6 +5,11 @@
         <h2 class="text-h4 font-weight-bold">Household Account Management</h2>
         <p class="text-grey-darken-1">Activate, deactivate, and view resident accounts.</p>
       </v-col>
+      <v-col class="text-right">
+        <v-btn to="/new-residents-account" size="large" color="primary" prepend-icon="mdi-account-plus">
+          NEW RESIDENT
+        </v-btn>
+      </v-col>
     </v-row>
 
     <v-card class="mt-4" flat border>
@@ -52,6 +57,10 @@
           {{ item.first_name }} {{ item.last_name }}
         </template>
 
+        <template v-slot:item.address_house_number="{ item }">
+          {{ item.address_house_number }}
+        </template>
+
         <template v-slot:item.status="{ item }">
           <v-chip :color="getStatusColor(item.status)" label size="small">
             {{ item.status }}
@@ -68,7 +77,7 @@
 
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <v-menu offset-y>
+            <!-- <v-menu offset-y>
               <template v-slot:activator="{ props }">
                 <v-btn
                   icon="mdi-dots-vertical" size="small" variant="text" v-bind="props"
@@ -85,7 +94,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu>
+            </v-menu> -->
         </template>
 
         <template v-slot:no-data>
@@ -167,9 +176,10 @@ const dialogButtonColor = computed(() => {
 
 
 const headers = ref([
-  { title: 'Acc Number', key: '_id', sortable: false },
-  { title: 'Resident Name', key: 'full_name', sortable: false },
-  { title: 'Email', key: 'email', sortable: false },
+  { title: 'Account Number', key: '_id', sortable: false },
+  { title: 'Household Name', key: 'full_name', sortable: false },
+  // { title: 'Email', key: 'email', sortable: false },
+  { title: 'Household No.', key: 'address_house_number', sortable: false },
   { title: 'Date Added', key: 'date_added', sortable: true },
   { title: 'Date Approved', key: 'date_approved', sortable: true },
   { title: 'Account Status', key: 'status', sortable: true, align: 'center' },
