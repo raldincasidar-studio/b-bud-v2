@@ -35,6 +35,9 @@ const transporter = nodemailer.createTransport({
 
 const OTP_EXPIRY_MINUTES = 10; // OTP will be valid for 10 minutes
 
+
+const SEMAPHORE_API_KEY = '';
+
 // Function to generate a random 6-digit OTP
 function generateOTP() {
   return crypto.randomInt(100000, 999999).toString();
@@ -6059,6 +6062,70 @@ app.delete('/api/budgets/:id', async (req, res) => {
         res.status(500).json({ error: 'Failed to delete budget entry.' });
     }
 });
+
+
+
+/**
+ * Sends an SMS message using the Semaphore API.
+ *
+ * @param {string|string[]} number - A single recipient's number or an array of numbers.
+ * @param {string} message - The content of the SMS message.
+ * @returns {Promise<any>} A promise that resolves with the API response.
+ * @throws {Error} Throws an error if the API request fails.
+ */
+function sendMessage(number, message) {
+  return new Promise(async (resolve, reject) => {
+    const endpoint = 'https://api.semaphore.co/api/v4/messages';
+
+    // Validate required parameters
+    if (!number || !message) {
+      return reject(new Error('Missing required parameters: apiKey, number, and message are required.'));
+    }
+
+    // Note from the API documentation: Do not start your message with "TEST".
+    if (message.trim().toUpperCase().startsWith('TEST')) {
+      return reject(new Error('Messages starting with "TEST" are silently ignored by the API and will not be sent.'));
+    }
+
+    // Construct the form-urlencoded body
+    const params = new URLSearchParams();
+    params.append('apikey', SEMAPHORE_API_KEY);
+    // If 'number' is an array, join it into a comma-separated string as per the API docs
+    params.append('number', Array.isArray(number) ? number.join(',') : number);
+    params.append('message', message);
+
+    params.append('sendername', 'B-Bud Systems');
+
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: params,
+      });
+
+      // The API is expected to return JSON, even for errors.
+      const responseData = await response.json();
+
+      // Check if the HTTP response is not OK (status code not in the 200-299 range)
+      if (!response.ok) {
+        // Create an error object with details from the API response
+        const error = new Error(`API request failed with status ${response.status}: ${response.statusText}`);
+        error.response = responseData; // Attach the API's error details
+        return reject(error);
+      }
+
+      return resolve(responseData);
+
+    } catch (error) {
+      // This will catch network errors (e.g., no internet connection) or errors thrown above
+      console.error('An error occurred while sending the message:', error);
+      // Re-throw the error so the calling function can handle it
+      return reject(error);
+    }
+  });
+}
 
 
 // Server
