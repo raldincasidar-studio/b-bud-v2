@@ -322,7 +322,7 @@ const transactionAlerts = computed(() => [
     icon: 'mdi-account-clock-outline',
     color: 'blue-grey',
     subtext: 'New residents awaiting verification.',
-    linkTo: '/residents?status=Pending',
+    linkTo: '/residents-account-management?status=Pending',
     itemLinkPrefix: '/residents', 
     recentItems: apiData.value.recentPendingResidents,
   },
