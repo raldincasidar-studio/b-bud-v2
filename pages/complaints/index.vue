@@ -170,6 +170,15 @@ watch(selectedStatus, () => {
   loadComplaints({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
 
+onMounted(() => {
+    const statusQuery = new URLSearchParams(window.location.search).get('status');
+    if (statusQuery) {
+        setTimeout(() => {
+            selectedStatus.value = statusQuery;
+        }, 1000)
+    }    
+})
+
 async function loadComplaints(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
