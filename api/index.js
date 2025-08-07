@@ -36,7 +36,8 @@ const transporter = nodemailer.createTransport({
 const OTP_EXPIRY_MINUTES = 10; // OTP will be valid for 10 minutes
 
 
-const SEMAPHORE_API_KEY = '';
+// Semaphore API Key
+const SEMAPHORE_API_KEY = '48f0e4cc838b499efc9d2322c9b4a1a8';
 
 // Function to generate a random 6-digit OTP
 function generateOTP() {
