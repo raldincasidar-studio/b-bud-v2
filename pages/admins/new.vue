@@ -26,7 +26,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">First Name <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.firstname"
-              label="Juan"
+              label="(e.g., Juan)"
               variant="outlined"
               :error-messages="v$.firstname.$errors.map(e => e.$message)"
               @blur="v$.firstname.$touch"
@@ -36,7 +36,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">Middle Name (Optional)</label>
             <v-text-field
               v-model="form.middlename"
-              label="Reyes"
+              label="(e.g., Reyes)"
               variant="outlined"
             ></v-text-field>
           </v-col>
@@ -44,7 +44,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">Last Name <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.lastname"
-              label="Dela Cruz"
+              label="(e.g., Dela Cruz)"
               variant="outlined"
               :error-messages="v$.lastname.$errors.map(e => e.$message)"
               @blur="v$.lastname.$touch"
@@ -54,7 +54,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">Username <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.username"
-              label="Juan123"
+              label="(e.g., Juan123)"
               variant="outlined"
               :error-messages="v$.username.$errors.map(e => e.$message)"
               @blur="v$.username.$touch"
@@ -64,7 +64,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">Email Address <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.email"
-              label="juanluna@gmail.com"
+              label="(e.g., juanluna@gmail.com)"
               type="email"
               variant="outlined"
               :error-messages="v$.email.$errors.map(e => e.$message)"
@@ -75,7 +75,7 @@
             <label class="v-label mb-3 font-weight-bold text-black">Contact Number <span class="text-red">*</span></label>
             <v-text-field
               v-model="form.contact_number"
-              label="09356770642"
+              label="(e.g., 09184489973)"
               variant="outlined"
               maxlength="11"
               :error-messages="v$.contact_number.$errors.map(e => e.$message)"

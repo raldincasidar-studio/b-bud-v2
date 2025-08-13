@@ -57,7 +57,7 @@
                   v-model="editableNotification.by"
                   label="Author (e.g., Admin Name)*"
                   :rules="[rules.required]"
-                  :readonly="!editMode"
+                  :readonly
                   variant="outlined"
                 ></v-text-field>
               </v-col>

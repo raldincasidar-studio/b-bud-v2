@@ -226,7 +226,7 @@
       </v-card>
     </v-dialog>
 
-    <!-- Proof Image Viewer Dialog -->
+    <!-- UPDATED: Proof Image Viewer Dialog with Zoom -->
     <v-dialog v-model="showProofDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
       <v-card>
         <v-toolbar dark color="primary">
@@ -236,8 +236,22 @@
             <v-icon>mdi-close</v-icon>
           </v-btn>
         </v-toolbar>
-        <v-card-text class="d-flex justify-center align-center" style="background-color: rgba(0,0,0,0.8);">
-          <v-img :src="selectedProofUrl" contain max-height="90vh" max-width="90vw"></v-img>
+        <v-card-text
+          class="d-flex justify-center align-center"
+          style="background-color: rgba(0,0,0,0.8); position: relative; overflow: auto;"
+        >
+          <v-img
+            :src="selectedProofUrl"
+            contain
+            max-height="90vh"
+            max-width="90vw"
+            :style="imageStyle"
+          ></v-img>
+          <div class="zoom-controls">
+            <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
+            <v-btn icon="mdi-fit-to-screen-outline" @click="resetZoom" class="mx-1" title="Reset Zoom"></v-btn>
+            <v-btn icon="mdi-magnify-plus-outline" @click="zoomIn" class="mx-1" title="Zoom In"></v-btn>
+          </div>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -246,7 +260,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, watch } from 'vue';
+import { reactive, ref, onMounted, watch, computed } from 'vue'; // <-- Added computed
 import { useRoute, useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
@@ -276,22 +290,11 @@ const form = reactive({
 });
 
 const complaintCategories = ref([
-  'Theft / Robbery',
-  'Scam / Fraud',
-  'Physical Assault / Violence',
-  'Verbal Abuse / Threats',
-  'Sexual Harassment / Abuse',
-  'Vandalism',
-  'Noise Disturbance',
-  'Illegal Parking / Obstruction',
-  'Drunk and Disorderly Behavior',
-  'Curfew Violation / Minor Offenses',
-  'Illegal Gambling',
-  'Animal Nuisance / Stray Animal Concern',
-  'Garbage / Sanitation Complaints',
-  'Boundary Disputes / Trespassing',
-  'Barangay Staff / Official Misconduct',
-  'Others',
+  'Theft / Robbery', 'Scam / Fraud', 'Physical Assault / Violence', 'Verbal Abuse / Threats',
+  'Sexual Harassment / Abuse', 'Vandalism', 'Noise Disturbance', 'Illegal Parking / Obstruction',
+  'Drunk and Disorderly Behavior', 'Curfew Violation / Minor Offenses', 'Illegal Gambling',
+  'Animal Nuisance / Stray Animal Concern', 'Garbage / Sanitation Complaints',
+  'Boundary Disputes / Trespassing', 'Barangay Staff / Official Misconduct', 'Others',
 ]);
 
 const originalFormState = ref({});
@@ -302,6 +305,9 @@ const deleting = ref(false);
 const confirmDeleteDialog = ref(false);
 const showProofDialog = ref(false);
 const selectedProofUrl = ref('');
+
+// --- NEW: State for Zoom Viewer ---
+const zoomLevel = ref(1);
 
 const complainantSearchQuery = ref('');
 const complainantSearchResults = ref([]);
@@ -329,6 +335,13 @@ const rules = {
 };
 const v$ = useVuelidate(rules, form);
 
+// --- COMPUTED PROPERTIES ---
+const imageStyle = computed(() => ({
+  transform: `scale(${zoomLevel.value})`,
+  transition: 'transform 0.2s ease-out'
+}));
+
+// --- FUNCTIONS ---
 async function updateComplaintStatus(status){
   const {data, error} = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body: { status } });
   if (error.value) $toast.fire({ title: error.value.data?.error || 'Failed to update status', icon: 'error' });
@@ -336,7 +349,6 @@ async function updateComplaintStatus(status){
   await fetchComplaint();
 }
 
-// --- LIFECYCLE & DATA FETCHING ---
 onMounted(async () => {
   await fetchComplaint();
 });
@@ -351,27 +363,28 @@ async function fetchComplaint(){
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
-
         if (form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed') {
           await fetchNotes();
         } else {
           investigationNotes.value = [];
         }
-
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/complaints'); }
     finally { loading.value = false; }
 }
 
-// --- FORM & UI LOGIC ---
-const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) resetForm(); };
-const cancelEdit = () => { resetForm(); toggleEditMode(false); };
-const resetForm = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); };
+const cancelEdit = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); editMode.value = false; };
+
 const openProofDialog = (url) => {
   selectedProofUrl.value = url;
+  zoomLevel.value = 1; // Reset zoom when opening
   showProofDialog.value = true;
 };
 
-// --- SEARCH LOGIC ---
+// --- NEW: Zoom control functions ---
+const zoomIn = () => { zoomLevel.value += 0.2; };
+const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
+const resetZoom = () => { zoomLevel.value = 1; };
+
 const debounce = (fn,delay) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn.apply(this,a), delay); }; };
 const searchResidentsAPI = debounce(async (query, type) => {
     const loadingRef = type === 'complainant' ? isLoadingComplainants : isLoadingPersonComplained;
@@ -410,7 +423,7 @@ const onComplainantSelect = (selectedId) => {
     const resident = complainantSearchResults.value.find(r => r._id === selectedId);
     if (!resident) return;
     form.complainant_resident_id = resident._id; form.complainant_display_name = resident.name;
-    form.complainant_address = resident.address; form.contact_number = resident.contact_number;
+    form.complainant_address = resident.address; form.contact_number = resident.contact.number;
     complainantSearchQuery.value = resident.name; complainantSearchResults.value = [];
 };
 
@@ -423,7 +436,6 @@ const onPersonComplainedSelect = (selectedId) => {
     personComplainedSearchResults.value = [];
 };
 
-// --- SAVE & DELETE ---
 async function saveChanges() {
   const isFormCorrect = await v$.value.$validate();
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
@@ -435,7 +447,7 @@ async function saveChanges() {
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update complaint.');
     $toast.fire({ title: 'Complaint updated successfully!', icon: 'success' });
     await fetchComplaint();
-    toggleEditMode(false);
+    editMode.value = false;
   } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { saving.value = false; }
 }
@@ -455,7 +467,6 @@ async function deleteComplaint(){
   }
 }
 
-// --- NOTES LOGIC ---
 async function fetchNotes() {
   notesLoading.value = true;
   try {
@@ -492,7 +503,6 @@ async function addNote() {
   }
 }
 
-// --- HELPER FUNCTIONS ---
 const formatDateForInput = (iso, type='date') => { if (!iso) return ''; const d = new Date(iso); return type === 'date' ? d.toISOString().split('T')[0] : d.toTimeString().slice(0,5); };
 const formatDateTime = (iso) => {
   if (!iso) return '';
@@ -508,5 +518,17 @@ const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'war
 .v-label { opacity: 1; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity)); display: block; margin-bottom: 4px; font-weight: 500; }
 .cursor-pointer {
   cursor: pointer;
+}
+.zoom-controls {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: rgba(40, 40, 40, 0.75);
+  padding: 8px;
+  border-radius: 24px;
+  z-index: 10;
+  display: flex;
+  gap: 8px;
 }
 </style>

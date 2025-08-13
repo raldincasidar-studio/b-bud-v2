@@ -32,11 +32,12 @@
               @blur="v$.requestor_resident.$touch"
               no-filter
             >
+              <!-- UPDATED: Template now shows full name and full address -->
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
                   :title="item.raw.name"
-                  :subtitle="item.raw.email"
+                  :subtitle="item.raw.address"
                   :disabled="item.raw.account_status !== 'Active'"
                 >
                   <template v-slot:append>
@@ -174,7 +175,6 @@ import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
 import { useMyFetch } from '../../composables/useMyFetch';
-// useCookie is a Nuxt composable, often auto-imported. If not, add this line:
 import { useNuxtApp, useCookie } from '#app';
 
 const { $toast } = useNuxtApp();
@@ -188,7 +188,7 @@ const documentTypes = [
 
 const form = reactive({
   requestor_resident: null,
-  processed_by_personnel: '', // This will be filled from the cookie
+  processed_by_personnel: '',
   request_type: null,
   purpose: null,
   details: {}
@@ -213,20 +213,15 @@ const rules = {
 };
 const v$ = useVuelidate(rules, form);
 
-// --- Lifecycle Hooks ---
 onMounted(() => {
-  // --- UPDATED LOGIC ---
-  // Fetch the logged-in user's data from the cookie, just like in the borrowed assets page.
   const userData = useCookie('userData');
   if (userData.value) {
     form.processed_by_personnel = userData.value.name;
   } else {
-    // Optional: handle case where cookie is not found
     form.processed_by_personnel = 'Unknown User';
     console.warn('Could not retrieve user data from cookie.');
   }
 });
-
 
 const debounce = (fn,delay) => { let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,a),delay); }; };
 
@@ -240,12 +235,23 @@ const searchResidentsAPI = debounce(async (query) => {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if(error.value) throw new Error('Error searching residents.');
         
-        requestorSearchResults.value = data.value?.residents.map(r => ({
-            _id: r._id,
-            name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
-            email: r.email,
-            account_status: r.account_status
-        })) || [];
+        // --- UPDATED: Mapping now includes the full address ---
+        requestorSearchResults.value = data.value?.residents.map(r => {
+            const addressParts = [
+                r.address_house_number,
+                r.address_street,
+                r.address_subdivision_zone
+            ].filter(Boolean); // Removes any null/undefined/empty parts
+            const fullAddress = addressParts.join(', ').trim();
+
+            return {
+                _id: r._id,
+                name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+                address: fullAddress || 'No address available', // Fallback text
+                email: r.email,
+                account_status: r.account_status
+            };
+        }) || [];
 
     } catch(e) {
         $toast.fire({ title: e.message, icon: 'error' });
