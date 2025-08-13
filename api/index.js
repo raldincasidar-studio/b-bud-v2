@@ -664,7 +664,7 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
          // --- NEW: Add photo and proof fields to be saved in the database ---
-        proof_of_relationship_type: data.proof_of_relationship_type || null,
+        proof_of_relationship_file: data.proof_of_relationship_file || null,
         proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
 
         // Address Info (Use head's address if provided)
@@ -851,6 +851,12 @@ app.post('/api/admin/residents', async (req, res) => {
 
             const headResidentDocument = createResidentDocument(headData, true);
             
+            // --- FIX: Explicitly assign all Base64 fields for the HEAD ---
+            headResidentDocument.proof_of_residency_base64 = headData.proof_of_residency_base64 || null;
+            headResidentDocument.voter_registration_proof_base64 = headData.voter_registration_proof_base64 || null;
+            headResidentDocument.pwd_card_base64 = headData.pwd_card_base64 || null;
+            headResidentDocument.senior_citizen_card_base64 = headData.senior_citizen_card_base64 || null;
+            
             // Apply the hardcoded 'Approved' status
             headResidentDocument.status = finalStatus;
             headResidentDocument.date_approved = finalApprovalDate;
@@ -890,6 +896,12 @@ app.post('/api/admin/residents', async (req, res) => {
                 }
                 
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
+                
+                // --- FIX: Explicitly assign all Base64 fields for the MEMBER ---
+                newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
+                newMemberDoc.voter_registration_proof_base64 = memberData.voter_registration_proof_base64 || null;
+                newMemberDoc.pwd_card_base64 = memberData.pwd_card_base64 || null;
+                newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
 
                 // Apply the hardcoded 'Approved' status to all members
                 newMemberDoc.status = finalStatus;
@@ -982,7 +994,7 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 
             // Step 4: Add the new fields for photo and proof of relationship from the frontend payload
             newMemberDoc.photo_base64 = memberData.photo_base64 || null;
-            newMemberDoc.proof_of_relationship_type = memberData.proof_of_relationship_type || null;
+            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
             newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
             
             // Step 5: Ensure new members always start with 'Pending' status
@@ -1226,9 +1238,11 @@ app.get('/api/residents', async (req, res) => {
 // GET ALL APPROVED RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents/approved', async (req, res) => {
   try {
+    // --- UPDATED: Added is_household_head to the destructured query params ---
     const {
       search, is_voter, is_senior, is_pwd,
-      occupation, minAge, maxAge, sortBy, sortOrder
+      occupation, minAge, maxAge, sortBy, sortOrder,
+      is_household_head // <-- ADDED
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
@@ -1238,13 +1252,20 @@ app.get('/api/residents/approved', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
 
-    // --- UPDATE: Simplified filter to only get Approved residents ---
     const filters = [ { status: 'Approved' } ];
 
     if (is_voter === 'true') filters.push({ is_registered_voter: true });
     if (is_pwd === 'true') filters.push({ is_pwd: true });
     if (is_senior === 'true') filters.push({ is_senior_citizen: true });
     if (occupation) filters.push({ occupation_status: occupation });
+
+    // --- NEW: Added logic to handle the household role filter ---
+    if (is_household_head === 'true') {
+        filters.push({ is_household_head: true });
+    } else if (is_household_head === 'false') {
+        filters.push({ is_household_head: false });
+    }
+    // If is_household_head is not provided, no role filter is applied (shows all roles).
     
     if (minAge || maxAge) {
       const ageFilter = {};
@@ -1273,20 +1294,20 @@ app.get('/api/residents/approved', async (req, res) => {
 
     const finalQuery = { $and: filters };
 
-    // --- UPDATE: Default sort is by 'date_approved' for this endpoint ---
     let sortOptions = { date_approved: -1 };
     if (sortBy) {
-        const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
+        // Note: The frontend sends 'household_role' as the sortBy key, but the actual field is 'is_household_head'.
+        // You may need to map this if you want to sort by role.
+        const sortKey = sortBy === 'date_added' ? 'created_at' : (sortBy === 'household_role' ? 'is_household_head' : sortBy);
         sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
         first_name: 1, middle_name: 1, last_name: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
-        date_added: "$created_at", // Rename field in output
+        date_added: "$created_at",
         date_approved: 1
     };
     
@@ -4289,7 +4310,7 @@ app.post('/api/complaints', async (req, res) => {
 
   // --- 2. UPDATE VALIDATION ---
   if (!complainant_resident_id || !complainant_display_name || !complainant_address || !contact_number || 
-      !category || !date_of_complaint || !time_of_complaint || !person_complained_against_name || !status || !notes_description) {
+      !category || !date_of_complaint || !time_of_complaint  || !status || !notes_description) {
     return res.status(400).json({ error: 'Missing required fields for complaint request.' });
   }
   if (!ObjectId.isValid(complainant_resident_id)) {

@@ -37,6 +37,15 @@
           <v-chip filter value="Deactivated">Deactivated</v-chip>
         </v-chip-group>
       </v-card-text> -->
+
+      <!-- NEW: Filter for Household Role -->
+      <v-card-text>
+        <v-chip-group v-model="roleFilter" column color="primary">
+          <v-chip filter value="All">All Roles</v-chip>
+          <v-chip filter value="Head">Head</v-chip>
+          <v-chip filter value="Member">Member</v-chip>
+        </v-chip-group>
+      </v-card-text>
       <v-divider></v-divider>
 
       <!-- The data table will now fetch data based on URL and local filters -->
@@ -60,7 +69,9 @@
         <template v-slot:item.household_role="{ item }">
           <v-chip :color="item.is_household_head ? 'blue' : 'grey'" label size="small">{{ item.is_household_head ? 'Head' : 'Member' }}</v-chip>
         </template>
-        <template v-slot:item.date_added="{ item }">{{ formatDate(item.date_added) }}</template>
+        
+        <!-- UPDATED: Template calls the new formatDateTime function -->
+        <template v-slot:item.date_added="{ item }">{{ formatDateTime(item.date_added) }}</template>
 
         <template v-slot:item.action="{ item }">
           <div class="d-flex align-center justify-center">
@@ -129,8 +140,8 @@ const route = useRoute();
 
 // --- State Definitions ---
 const searchKey = ref('');
-// --- MODIFIED: Initialize statusFilter from URL query, default to 'All'
 const statusFilter = ref(route.query.status || 'All');
+const roleFilter = ref('All'); // <-- NEW: State for household role filter
 const totalItems = ref(0);
 const residents = ref([]);
 const loading = ref(true);
@@ -142,14 +153,14 @@ const declineDialog = ref(false);
 const residentToDecline = ref(null);
 const declineReason = ref('');
 
-// Table Headers (MODIFIED: "Status" column removed, "Details" renamed to "Actions")
+// UPDATED: Table Headers to reflect Date & Time
 const headers = ref([
   { title: 'House No.', key: 'address_house_number', sortable: false },
   { title: 'Full Name', key: 'full_name', sortable: false },
   { title: 'Email', key: 'email', sortable: true },
   { title: 'Contact No.', key: 'contact_number', sortable: false },
   { title: 'Household Role', key: 'household_role', sortable: true, align: 'center' },
-  { title: 'Date Registered', key: 'date_added', sortable: true },
+  { title: 'Date & Time Registered', key: 'date_added', sortable: true }, // <-- UPDATED Title
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 
@@ -214,37 +225,32 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
   }
 }
 
-// --- REVISED: Data Loading Function ---
-// This function now intelligently combines filters from the URL and the local UI.
+// REVISED: Data Loading Function to include Role Filter
 async function loadResidents(options) {
   loading.value = true;
-  const { page, itemsPerPage: rpp, sortBy } = options; // sortBy is an array in Vuetify 3
+  const { page, itemsPerPage: rpp, sortBy } = options; 
   
   try {
-    // 1. Start with filters from the URL (e.g., is_voter=true, minAge=60)
     const queryFromUrl = { ...route.query };
     
-    // 2. Build query from local UI state. These will override URL params if keys are the same.
     const queryFromUi = {
       search: searchKey.value,
       page,
       itemsPerPage: rpp,
       status: statusFilter.value === 'All' ? undefined : statusFilter.value,
+      // NEW: Send role filter to API. 'true' for Head, 'false' for Member, 'undefined' for All.
+      is_household_head: roleFilter.value === 'All' ? undefined : (roleFilter.value === 'Head')
     };
 
-    // Add sorting info from the data table options
     if (sortBy && sortBy.length > 0) {
       queryFromUi.sortBy = sortBy[0].key;
       queryFromUi.sortOrder = sortBy[0].order;
     }
 
-    // 3. Merge, giving local UI filters precedence over URL filters
     const finalQuery = { ...queryFromUrl, ...queryFromUi };
     
-    // Clean up empty/null/undefined values before sending to API
     Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
 
-    // 4. Make the API call with the combined filters
     const { data, error } = await useMyFetch('/api/residents/approved', { query: finalQuery });
 
     if (error.value) throw new Error('Failed to load residents.');
@@ -260,40 +266,50 @@ async function loadResidents(options) {
   }
 }
 
-// --- Watchers for Local UI Filters (Largely unchanged) ---
+// Watchers for Local UI Filters
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
-    // When search changes, go back to page 1
     loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
   }, 500);
 });
 
 watch(statusFilter, () => {
-  // When status chip changes, go back to page 1
   loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
 
-// --- NEW: Watcher for URL changes ---
-// This ensures the table reacts to browser back/forward or new links from the dashboard.
+// NEW: Watcher for the role filter
+watch(roleFilter, () => {
+  loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+});
+
+// Watcher for URL changes
 watch(() => route.fullPath, (newPath, oldPath) => {
     if (newPath === oldPath) return;
 
-    // A. Sync the local status filter UI with the URL's status parameter
     const newStatus = route.query.status || 'All';
     if (newStatus !== statusFilter.value) {
-        // This will update the chip group. The `watch(statusFilter)` above will then trigger the reload.
         statusFilter.value = newStatus;
     } else {
-        // B. If status didn't change but other params did (e.g. ?is_voter=true), trigger reload manually.
         loadResidents({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
     }
 }, { deep: true });
 
+// UPDATED: Helper function to format both date and time
+const formatDateTime = (dateString) => {
+    if (!dateString) return 'N/A';
+    const options = { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+    };
+    return new Date(dateString).toLocaleString('en-US', options);
+};
 
-// --- Helper Functions (unchanged) ---
-const formatDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A';
 const getStatusColor = (s) => ({ 'Approved': 'success', 'Pending': 'warning', 'Declined': 'error', 'Deactivated': 'grey' }[s] || 'default');
 </script>
 

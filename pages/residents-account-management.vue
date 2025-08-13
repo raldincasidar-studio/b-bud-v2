@@ -67,34 +67,19 @@
           </v-chip>
         </template>
 
+        <!-- UPDATED SLOT to call formatDateTime -->
         <template v-slot:item.date_added="{ item }">
-            {{ formatDate(item.date_added) }}
+            {{ formatDateTime(item.date_added) }}
         </template>
 
+        <!-- UPDATED SLOT to call formatDateTime -->
         <template v-slot:item.date_approved="{ item }">
-            {{ formatDate(item.date_approved) }}
+            {{ formatDateTime(item.date_approved) }}
         </template>
 
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <!-- <v-menu offset-y>
-              <template v-slot:activator="{ props }">
-                <v-btn
-                  icon="mdi-dots-vertical" size="small" variant="text" v-bind="props"
-                  :loading="updatingStatusFor === item._id" :disabled="updatingStatusFor === item._id"
-                ></v-btn>
-              </template>
-              <v-list dense>
-                <v-list-item
-                  v-for="action in getAvailableActions(item.status)"
-                  :key="action.status"
-                  @click="handleActionClick(item, action.status)"
-                >
-                  <template v-slot:prepend><v-icon :icon="action.icon" :color="action.color" size="small"></v-icon></template>
-                  <v-list-item-title>{{ action.title }}</v-list-item-title>
-                </v-list-item>
-              </v-list>
-            </v-menu> -->
+            <!-- Your menu actions can go here -->
         </template>
 
         <template v-slot:no-data>
@@ -103,7 +88,7 @@
       </v-data-table-server>
     </v-card>
 
-    <!-- UPDATED: Generic Dialog for Actions Requiring a Reason -->
+    <!-- Generic Dialog for Actions Requiring a Reason -->
     <v-dialog v-model="actionReasonDialog" persistent max-width="500px">
       <v-card>
         <v-card-title class="text-h5">{{ dialogTitle }} Account</v-card-title>
@@ -147,16 +132,14 @@ const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
 const currentTableOptions = ref({});
 
-// --- NEW/UPDATED STATE for the Reason Dialog ---
 const actionReasonDialog = ref(false);
 const residentToAction = ref(null);
 const actionReason = ref('');
-const actionType = ref(''); // e.g., 'Declined', 'Deactivated', 'Reactivated'
+const actionType = ref('');
 
-// --- COMPUTED PROPERTIES for the new dialog ---
 const dialogTitle = computed(() => {
     if (actionType.value === 'Pending') return 'Reactivate';
-    return actionType.value; // 'Decline', 'Deactivate'
+    return actionType.value;
 });
 
 const dialogActionText = computed(() => {
@@ -174,14 +157,13 @@ const dialogButtonColor = computed(() => {
   return colors[actionType.value] || 'primary';
 });
 
-
+// UPDATED headers with new titles
 const headers = ref([
   { title: 'Account Number', key: '_id', sortable: false },
   { title: 'Household Name', key: 'full_name', sortable: false },
-  // { title: 'Email', key: 'email', sortable: false },
   { title: 'Household No.', key: 'address_house_number', sortable: false },
-  { title: 'Date Added', key: 'date_added', sortable: true },
-  { title: 'Date Approved', key: 'date_approved', sortable: true },
+  { title: 'Date & Time Added', key: 'date_added', sortable: true },
+  { title: 'Date & Time Approved', key: 'date_approved', sortable: true },
   { title: 'Account Status', key: 'status', sortable: true, align: 'center' },
   { title: 'Actions', key: 'actions', sortable: false, align: 'center', width: '150px' },
 ]);
@@ -191,7 +173,6 @@ const getAvailableActions = (currentStatus) => {
         'Approve': { status: 'Approved', title: 'Approve Account', icon: 'mdi-check-circle-outline', color: 'success' },
         'Decline': { status: 'Declined', title: 'Decline Account', icon: 'mdi-close-circle-outline', color: 'error' },
         'Deactivate': { status: 'Deactivated', title: 'Deactivate Account', icon: 'mdi-account-off-outline', color: 'warning' },
-        // UPDATED: 'Pending' is the status for reactivating
         'Reactivate': { status: 'Pending', title: 'Reactivate (Set to Pending)', icon: 'mdi-account-reactivate-outline', color: 'orange' },
     };
     if (currentStatus === 'Pending') return [actions.Approve, actions.Decline];
@@ -200,14 +181,10 @@ const getAvailableActions = (currentStatus) => {
     return [];
 };
 
-// --- UPDATED: Centralized action handling ---
 const handleActionClick = (resident, newStatus) => {
-    // Actions that don't need a reason
     if (newStatus === 'Approved') {
         updateResidentStatus(resident, newStatus);
-    } 
-    // Actions that DO need a reason
-    else {
+    } else {
         openActionReasonDialog(resident, newStatus);
     }
 };
@@ -228,12 +205,10 @@ const confirmActionWithReason = async () => {
     actionReasonDialog.value = false;
 };
 
-// --- UPDATED: Now accepts a reason and sends it in the payload ---
 async function updateResidentStatus(resident, newStatus, reason = null) {
   updatingStatusFor.value = resident._id;
   try {
     const payload = { status: newStatus };
-    // NEW: Add the reason to the payload if it exists
     if (reason) { 
       payload.reason = reason; 
     }
@@ -245,7 +220,6 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
 
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
     
-    // NEW: Provide more specific feedback
     let successMessage = 'Status updated successfully!';
     if (newStatus === 'Deactivated') {
         successMessage = 'Account deactivated. Associated requests are being invalidated.';
@@ -315,11 +289,18 @@ const getStatusColor = (s) => ({
   'Deactivated': 'grey-darken-1'
 }[s] || 'default');
 
-const formatDate = (dateString) => {
+// UPDATED function to format both date and time
+const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric'
-    });
+    const options = { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+    };
+    return new Date(dateString).toLocaleString('en-US', options);
 };
 </script>
 

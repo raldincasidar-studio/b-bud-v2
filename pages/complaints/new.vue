@@ -31,11 +31,12 @@
               @blur="v$.complainant_resident.$touch"
               no-filter
             >
+              <!-- UPDATED: Template now shows full name and full address -->
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
                   :title="item.raw.name"
-                  :subtitle="item.raw.email"
+                  :subtitle="item.raw.address" 
                   :disabled="item.raw.account_status !== 'Active'"
                 >
                   <template v-slot:append>
@@ -84,6 +85,7 @@
               variant="outlined"
               :error-messages="v$.date_of_complaint.$errors.map(e => e.$message)"
               @blur="v$.date_of_complaint.$touch"
+              readonly
             ></v-text-field>
           </v-col>
           <v-col cols="12" md="3">
@@ -95,6 +97,7 @@
               variant="outlined"
               :error-messages="v$.time_of_complaint.$errors.map(e => e.$message)"
               @blur="v$.time_of_complaint.$touch"
+              readonly
             ></v-text-field>
           </v-col>
         </v-row>
@@ -202,7 +205,6 @@ import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
 import { useMyFetch } from '../../composables/useMyFetch';
-// useCookie is a Nuxt composable, often auto-imported. If not, add this line:
 import { useNuxtApp, useCookie } from '#app';
 
 const { $toast } = useNuxtApp();
@@ -216,7 +218,7 @@ const form = reactive({
   time_of_complaint: new Date().toTimeString().slice(0,5),
   category: '',
   person_complained_against_name: '',
-  processed_by_personnel: '', // This will be filled from the cookie
+  processed_by_personnel: '',
   status: 'New',
   notes_description: '',
   proof_files: [],
@@ -249,7 +251,7 @@ const rules = {
     contact_number: { required },
     date_of_complaint: { required },
     time_of_complaint: { required },
-    person_complained_against_name: { required: helpers.withMessage('The person being complained against is required.', required) },
+    person_complained_against_name: {},
     category: { required },
     processed_by_personnel: { required: helpers.withMessage('Processed by personnel is required.', required) },
     status: { required },
@@ -257,15 +259,11 @@ const rules = {
 };
 const v$ = useVuelidate(rules, form);
 
-// --- Lifecycle Hooks ---
 onMounted(() => {
-  // --- UPDATED LOGIC ---
-  // Fetch the logged-in user's data from the cookie, just like in the borrowed assets page.
   const userData = useCookie('userData');
   if (userData.value) {
     form.processed_by_personnel = userData.value.name;
   } else {
-    // Optional: handle case where cookie is not found
     form.processed_by_personnel = 'Unknown User';
     console.warn('Could not retrieve user data from cookie.');
   }
@@ -283,14 +281,23 @@ const searchResidentsAPI = debounce(async (query) => {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if (error.value) throw new Error(`Error searching for complainant.`);
         
-        complainantSearchResults.value = data.value?.residents.map(r => ({
-            _id: r._id,
-            name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
-            email: r.email,
-            address: `${r.address_house_number||''} ${r.address_street||''}, ${r.address_subdivision_zone||''}`,
-            contact_number: r.contact_number,
-            account_status: r.account_status
-        })) || [];
+        complainantSearchResults.value = data.value?.residents.map(r => {
+            const addressParts = [
+                r.address_house_number,
+                r.address_street,
+                r.address_subdivision_zone
+            ].filter(Boolean);
+            const fullAddress = addressParts.join(', ').trim();
+
+            return {
+                _id: r._id,
+                name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
+                email: r.email,
+                address: fullAddress || 'No address available',
+                contact_number: r.contact_number,
+                account_status: r.account_status
+            }
+        }) || [];
         
     } catch (e) {
         $toast.fire({ title: e.message, icon: 'error' });
