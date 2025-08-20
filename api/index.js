@@ -6319,9 +6319,69 @@ app.delete('/api/budgets/:id', async (req, res) => {
  * @returns {Promise<any>} A promise that resolves with the API response.
  * @throws {Error} Throws an error if the API request fails.
  */
+// function sendMessage(number, message) {
+//   return new Promise(async (resolve, reject) => {
+//     const endpoint = 'https://api.semaphore.co/api/v4/messages';
+
+//     // Validate required parameters
+//     if (!number || !message) {
+//       return reject(new Error('Missing required parameters: apiKey, number, and message are required.'));
+//     }
+
+//     // Note from the API documentation: Do not start your message with "TEST".
+//     if (message.trim().toUpperCase().startsWith('TEST')) {
+//       return reject(new Error('Messages starting with "TEST" are silently ignored by the API and will not be sent.'));
+//     }
+
+//     // Construct the form-urlencoded body
+//     const params = new URLSearchParams();
+//     params.append('apikey', SEMAPHORE_API_KEY);
+//     // If 'number' is an array, join it into a comma-separated string as per the API docs
+//     params.append('number', Array.isArray(number) ? number.join(',') : number);
+//     params.append('message', message);
+
+//     params.append('sendername', 'B-Bud Systems');
+
+//     try {
+//       const response = await fetch(endpoint, {
+//         method: 'POST',
+//         headers: {
+//           'Content-Type': 'application/x-www-form-urlencoded',
+//         },
+//         body: params,
+//       });
+
+//       // The API is expected to return JSON, even for errors.
+//       const responseData = await response.json();
+
+//       // Check if the HTTP response is not OK (status code not in the 200-299 range)
+//       if (!response.ok) {
+//         // Create an error object with details from the API response
+//         const error = new Error(`API request failed with status ${response.status}: ${response.statusText}`);
+//         error.response = responseData; // Attach the API's error details
+//         console.error(error);
+//         return reject(error);
+//       }
+
+//       console.info('SMS message sent successfully:', responseData);
+
+//       return resolve(responseData);
+
+//     } catch (error) {
+//       // This will catch network errors (e.g., no internet connection) or errors thrown above
+//       console.error('An error occurred while sending the message:', error);
+//       // Re-throw the error so the calling function can handle it
+//       return reject(error);
+//     }
+//   });
+// }
+
+// temporary
 function sendMessage(number, message) {
   return new Promise(async (resolve, reject) => {
-    const endpoint = 'https://api.semaphore.co/api/v4/messages';
+      const API_KEY = 'b8c3fa61-d93f-4a9f-a077-93057bcba635'
+      const DEVICE_ID = '68a60f711b59e7ea6c3663d7'
+      const endpoint = `https://api.textbee.dev/api/v1/gateway/devices/${DEVICE_ID}/send-sms`;
 
     // Validate required parameters
     if (!number || !message) {
@@ -6342,13 +6402,18 @@ function sendMessage(number, message) {
 
     params.append('sendername', 'B-Bud Systems');
 
+    console.log('Message from SMS:', message);
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
+          'Content-Type': 'application/json',
+          'x-api-key': API_KEY
         },
-        body: params,
+        body: JSON.stringify({
+            recipients: Array.isArray(number) ? number : [number],
+            message
+        }),
       });
 
       // The API is expected to return JSON, even for errors.
