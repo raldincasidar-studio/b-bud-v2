@@ -41,9 +41,9 @@
           class="elevation-0"
           item-value="_id"
         >
-          <!-- This slot correctly targets 'item.createdAt' -->
+          <!-- This slot correctly targets 'item.createdAt' and displays the formatted date and time -->
           <template v-slot:item.createdAt="{ item }">
-            {{ formatDate(item.createdAt) }}
+            {{ formatDateTime(item.createdAt) }}
           </template>
 
           <template v-slot:item.action="{ item }">
@@ -64,13 +64,13 @@
 <script setup>
 import { ref } from 'vue';
 
-// The headers array correctly uses the key 'createdAt'
+// Headers array updated to reflect that time is also shown.
 const headers = [
   { title: 'Full Name', align: 'start', key: 'name', sortable: true },
   { title: 'Username', align: 'start', key: 'username', sortable: true },
   { title: 'Email Address', align: 'start', key: 'email', sortable: false },
   { title: 'Role', align: 'start', key: 'role', sortable: true },
-  { title: 'Date Added', align: 'start', key: 'createdAt', sortable: true },
+  { title: 'Date & Time Added', align: 'start', key: 'createdAt', sortable: true }, // Changed title
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ];
 
@@ -115,9 +115,17 @@ async function updateTable(options) {
   }
 }
 
-// The formatDate function correctly handles the date string
-const formatDate = (dateString) => {
+// Function updated to format both date and time.
+const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
-    return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    const options = { 
+        year: 'numeric', 
+        month: 'short', 
+        day: 'numeric', 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+    };
+    return new Date(dateString).toLocaleString('en-US', options);
 };
 </script>

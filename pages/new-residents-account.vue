@@ -200,13 +200,19 @@
               <v-text-field v-model="memberForm.last_name" label="Last Name *" variant="outlined" :error-messages="vMember$.last_name.$errors.map(e => e.$message)" @blur="vMember$.last_name.$touch()"></v-text-field>
             </v-col>
             
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="6">
               <label class="v-label">Relationship to Head *</label>
               <v-select v-model="memberForm.relationship_to_head" :items="relationshipOptions" label="Relationship to Head *" variant="outlined" :error-messages="vMember$.relationship_to_head.$errors.map(e => e.$message)" @blur="vMember$.relationship_to_head.$touch()"></v-select>
             </v-col>
-            <v-col cols="12" md="8" v-if="memberForm.relationship_to_head === 'Other'">
+            <v-col cols="12" md="6" v-if="memberForm.relationship_to_head === 'Other'">
                 <label class="v-label">Please Specify Relationship *</label>
                 <v-text-field v-model="memberForm.other_relationship" label="Please Specify Relationship *" variant="outlined" :error-messages="vMember$.other_relationship.$errors.map(e => e.$message)" @blur="vMember$.other_relationship.$touch()"></v-text-field>
+            </v-col>
+
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Proof of Relationship</label>
+              <v-file-input v-model="memberForm.proof_of_relationship_file" label="Upload Proof of Relationship" variant="outlined" accept="image/*,.pdf" hint="Required for relationship validation'." persistent-hint :error-messages="vMember$.proof_of_relationship_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.proof_of_relationship_file.$touch()"></v-file-input>
+              <v-img v-if="memberRelationshipProofPreviewUrl" :src="memberRelationshipProofPreviewUrl" class="mt-2" max-height="150" contain></v-img>
             </v-col>
 
             <v-col cols="12" md="3">
@@ -374,13 +380,10 @@ last_name: {
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
   address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
   years_at_current_address: { required, numeric }, proof_of_residency_file: { required: helpers.withMessage('Proof of Residency is required.', required) },
-  // REVISED VALIDATION
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => form.is_voter && !form.voter_id_number)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf(() => form.is_pwd && !form.pwd_card_file)) },
   pwd_card_file: { requiredIf: helpers.withMessage('PWD Card or ID Number is required.', requiredIf(() => form.is_pwd && !form.pwd_id)) },
-  // senior_citizen_id: { requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file)) },
-  // senior_citizen_card_file: { requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_id)) },
 };
 const vHead$ = useVuelidate(headRules, form);
 
@@ -401,6 +404,7 @@ const getInitialMemberForm = () => ({
   is_voter: false, voter_id_number: '', voter_id_file: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null,
+  proof_of_relationship_file: null
 });
 
 const memberForm = reactive(getInitialMemberForm());
@@ -408,6 +412,7 @@ const memberForm = reactive(getInitialMemberForm());
 const memberVoterIdPreviewUrl = ref(null);
 const memberPwdCardPreviewUrl = ref(null);
 const memberSeniorCardPreviewUrl = ref(null);
+const memberRelationshipProofPreviewUrl = ref(null);
 
 const memberAge = computed(() => calculateAge(memberForm.date_of_birth));
 const isMemberSenior = computed(() => memberAge.value !== null && memberAge.value >= 60);
@@ -420,7 +425,7 @@ const memberRules = {
   citizenship: { required }, occupation_status: { required },
   email: { requiredIf: requiredIf(() => !!memberForm.password), email },
   password: { requiredIf: requiredIf(() => !!memberForm.email), minLength: minLength(6) },
-  // REVISED VALIDATION
+  proof_of_relationship_file: { required: helpers.withMessage('Proof of Relationship is required.', required) },
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => memberForm.is_voter && !memberForm.voter_id_file)) },
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => memberForm.is_voter && !memberForm.voter_id_number)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf(() => memberForm.is_pwd && !memberForm.pwd_card_file)) },
@@ -440,6 +445,7 @@ watch(() => form.proof_of_residency_file, (newFile) => { proofResidencyPreviewUr
 watch(() => memberForm.voter_id_file, (newFile) => { memberVoterIdPreviewUrl.value = urlCreator(newFile); });
 watch(() => memberForm.pwd_card_file, (newFile) => { memberPwdCardPreviewUrl.value = urlCreator(newFile); });
 watch(() => memberForm.senior_citizen_card_file, (newFile) => { memberSeniorCardPreviewUrl.value = urlCreator(newFile); });
+watch(() => memberForm.proof_of_relationship_file, (newFile) => { memberRelationshipProofPreviewUrl.value = urlCreator(newFile); });
 
 const openMemberDialog = (index = null) => { 
   if (index !== null) {
@@ -459,6 +465,7 @@ const closeMemberDialog = () => {
     memberVoterIdPreviewUrl.value = null;
     memberPwdCardPreviewUrl.value = null;
     memberSeniorCardPreviewUrl.value = null;
+    memberRelationshipProofPreviewUrl.value = null;
     showMemberPassword.value = false;
 };
 
@@ -477,21 +484,40 @@ const saveMember = async () => {
 const removeMember = (index) => { form.household_members_to_create.splice(index, 1); };
 
 
-const convertFileToBase64 = (file) => {
+const convertFileToBase64 = (files) => {
   return new Promise((resolve, reject) => {
-    // If the file is null or undefined, resolve immediately.
-    if (!file) { 
-      resolve(null); 
-      return; 
+    if (!files) {
+      resolve(null);
+      return;
     }
+
+    let file = null;
+
+    if (typeof files === 'string') {
+      resolve(files);
+      return;
+    }
+
+    if (Array.isArray(files) && files.length > 0) {
+      file = files[0];
+    }
+    else if (files instanceof File || files instanceof Blob) {
+      file = files;
+    }
+
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result);
     reader.onerror = reject;
-    // Pass the file object directly.
-    reader.readAsDataURL(file); 
+    reader.readAsDataURL(file);
   });
 };
 
+// --- UPDATED AND CORRECTED FUNCTION ---
 async function saveResidentAndHousehold() {
   const isFormCorrect = await vHead$.value.$validate();
   
@@ -507,14 +533,17 @@ async function saveResidentAndHousehold() {
 
   saving.value = true;
   try {
-    const payload = JSON.parse(JSON.stringify(form));
+    // Create a shallow copy of the form to build the payload.
+    // Avoids JSON.stringify issues with File objects.
+    const payload = { ...form };
+    
+    // Assign calculated and head-specific properties
     payload.age = headCalculatedAge.value;
     payload.is_household_head = true;
-    
-    // Set status for the Household Head
     payload.status = 'Approved';
     payload.date_approved = new Date().toISOString();
     
+    // Convert all files for the HEAD to base64
     [
       payload.voter_registration_proof_base64,
       payload.pwd_card_base64,
@@ -527,41 +556,58 @@ async function saveResidentAndHousehold() {
       convertFileToBase64(form.proof_of_residency_file)
     ]);
     
-    // --- KEY CHANGES START HERE ---
-    // Loop through members and set their status to 'Approved'
-    for (const member of payload.household_members_to_create) {
-        // 1. Set status for each member
-        member.status = 'Approved';
-        member.date_approved = new Date().toISOString();
+    // Process all members: convert their files and prepare them for the payload
+    payload.household_members_to_create = await Promise.all(
+      form.household_members_to_create.map(async (member) => {
+        // Create a copy of the member to avoid mutating the original state
+        const newMemberPayload = { ...member };
+        
+        // Set status for each member
+        newMemberPayload.status = 'Approved';
+        newMemberPayload.date_approved = new Date().toISOString();
 
-        [
-            member.voter_registration_proof_base64,
-            member.pwd_card_base64,
-            member.senior_citizen_card_base64
+        // Convert all files for this member to base64
+        const [
+            voter_registration_proof_base64,
+            pwd_card_base64,
+            senior_citizen_card_base64,
+            proof_of_relationship_base64 // This now gets converted correctly
         ] = await Promise.all([
             convertFileToBase64(member.voter_id_file),
             convertFileToBase64(member.pwd_card_file),
-            convertFileToBase64(member.senior_citizen_card_file)
+            convertFileToBase64(member.senior_citizen_card_file),
+            convertFileToBase64(member.proof_of_relationship_file)
         ]);
 
-        delete member.voter_id_file;
-        delete member.pwd_card_file;
-        delete member.senior_citizen_card_file;
-    }
-    // --- KEY CHANGES END HERE ---
+        // Assign base64 strings to the new member payload
+        newMemberPayload.voter_registration_proof_base64 = voter_registration_proof_base64;
+        newMemberPayload.pwd_card_base64 = pwd_card_base64;
+        newMemberPayload.senior_citizen_card_base64 = senior_citizen_card_base64;
+        newMemberPayload.proof_of_relationship_base64 = proof_of_relationship_base64;
+
+        // Clean up original file properties from the payload
+        delete newMemberPayload.voter_id_file;
+        delete newMemberPayload.pwd_card_file;
+        delete newMemberPayload.senior_citizen_card_file;
+        delete newMemberPayload.proof_of_relationship_file;
+        
+        return newMemberPayload;
+      })
+    );
     
+    // Clean up original file properties and confirmPassword from the top-level payload
     delete payload.voter_id_file;
     delete payload.pwd_card_file;
     delete payload.senior_citizen_card_file;
     delete payload.proof_of_residency_file;
     delete payload.confirmPassword;
     
+    // Send the fully prepared payload to the backend
     const { data, error } = await useMyFetch("/api/admin/residents", { method: 'post', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Error registering household.');
     
     $toast.fire({ title: 'Household registered successfully! All accounts are now active.', icon: 'success' });
     
-    // 2. Correct the redirect path
     router.push('/residents-account-management');
 
   } catch (err) {
