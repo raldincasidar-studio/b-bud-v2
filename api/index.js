@@ -9,9 +9,10 @@ const path = require('path');
 const moment = require('moment');
 const nodemailer = require('nodemailer');
 const { MongoClient, ObjectId } = require("mongodb");
+const { GoogleGenAI, createUserContent, createPartFromUri, Type } = require('@google/genai');
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
-
+const GEMINI_API_KEY = 'AIzaSyAfdQbfiDCfRzks39OipdxtwRZ1GbnghqE'
 // --- SMTP Configuration ---
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
@@ -157,7 +158,7 @@ app.post('/api/login', async (req, res) => {
   const usersCollection = dab.collection('admins');
   const user = await usersCollection.findOne({username: username});
 
-  console.log(user);
+//   console.log(user);
 
   if (!user) {
     res.json({error: 'Invalid username or password'});
@@ -734,9 +735,37 @@ app.post('/api/residents', async (req, res) => {
             headResidentDocument.updated_at = new Date();
             headResidentDocument.date_approved = null;
 
+            
+            // validate the proof of resident image
+            const proofOfResidencyResult = await validateProofOfResidency(headData, headData.proof_of_residency_base64);
+            // console.log('Proof of resident result: ', proofOfResidencyResult);
+            if (!proofOfResidencyResult.isValid) {
+                return res.status(400).json({ error: proofOfResidencyResult.message, message: 'Proof of residency validation failed' });
+            }
+
+            // validate the proof of voter image
+            if (headData.is_voter) {
+                const proofOfVoterResult = await validateProofOfVoter(headData, headData.voter_registration_proof_base64);
+                // console.log('Proof of voter result: ', proofOfVoterResult);
+                if (!proofOfVoterResult.isValid) {
+                    return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                }
+            }
+
+            // validate the proof of PWD image
+            if (headData.is_pwd) {
+                const proofOfPWDResult = await validateProofOfPWD(headData, headData.pwd_card_base64);
+                // console.log('Proof of PWD result: ', proofOfPWDResult);
+                if (!proofOfPWDResult.isValid) {
+                    return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                }
+            }
+
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
             newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+
+            
 
             // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
@@ -771,6 +800,24 @@ app.post('/api/residents', async (req, res) => {
                 newMemberDoc.created_at = new Date();
                 newMemberDoc.updated_at = new Date();
                 newMemberDoc.date_approved = null;
+
+                // validate the vouter id if the member is a voter
+                if (memberData.is_voter) {
+                    const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
+                    // console.log('Proof of voter result: ', proofOfVoterResult);
+                    if (!proofOfVoterResult.isValid) {
+                        return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                    }
+                }
+
+                // validate the proof of PWD image
+                if (memberData.is_pwd) {
+                    const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
+                    // console.log('Proof of PWD result: ', proofOfPWDResult);
+                    if (!proofOfPWDResult.isValid) {
+                        return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                    }
+                }
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 createdMemberIds.push(memberInsertResult.insertedId);
@@ -812,7 +859,8 @@ app.post('/api/residents', async (req, res) => {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         // Generic server error for anything else
-        res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+        console.error('Mobile Registration error: ', error);
+        res.status(500).json({ error: error, message: 'Could not complete registration.' });
     } finally {
         // This will run whether the transaction succeeded or failed
         await session.endSession();
@@ -6338,4 +6386,224 @@ app.listen(PORT, () => {
 // Helper function
 function generateToken(length = 32) {
   return crypto.randomBytes(length).toString("hex"); // 32 bytes = 64 hex chars
+}
+
+// For Google Gemini Helper
+
+const ai = new GoogleGenAI({apiKey: GEMINI_API_KEY});
+
+// VALIDATE Proof of Residence via AI and return the result { isValid: bool, message: string }
+async function validateProofOfResidency(userJSON, fileInBase64) {
+
+  try {
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            isValid: {
+            type: Type.BOOLEAN,
+            description: "True if the document is a valid proof of residency and the details match the provided JSON data, otherwise false.",
+            },
+            message: {
+            type: Type.STRING,
+            description: "A message explaining whether the document is valid or not, and the reason for the validation result.",
+            },
+        },
+        required: ["isValid", "message"],
+    };
+
+    // 3. Construct the prompt for the Gemini model
+    const prompt = `
+    I will provide you with a json of data and an image. I want you to validate this proof of residency document image that they submitted if accurate to the document they submitted. A proof of residency document might include some water bills, electricity bills, or any other receipts or documents that proves that it is a legit resident inputted in the json. Here is the json. Just return two json keys: true (for valid) and false for invalid and message. Make the message not too long, short but complete description.
+    `;
+    
+    // 4. Select the Gemini model and configure it to return JSON
+    const model = ai.chats.create({ model: 'gemini-2.5-pro'})
+
+    // 5. Generate the content
+    console.log("Generating content from the model...");
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {text: prompt},
+        {text: JSON.stringify(userJSON)},
+        {
+          inlineData: {
+            mimeType: getMimeTypeFromBase64(fileInBase64),
+            data: stripDataUriPrefix(fileInBase64),
+          }
+        }
+      ],
+      config: {
+        responseSchema: responseSchema,
+        responseMimeType: "application/json"
+      }
+    });
+    // const response = result.response;
+    const responseText = result.text;
+
+    console.log("Received response from Gemini.", result);
+
+    // 6. Parse and return the JSON response
+    console.log('========================= AI RESPONSE ==========================');
+    console.log(responseText);
+    return JSON.parse(responseText);
+    // return { isValid: true, message: 'Proof of Residency successfully validated.' }
+    return responseText;
+
+  } catch (error) {
+    console.error("An error occurred during audio analysis:", error);
+    throw error;
+  }
+}
+
+async function validateProofOfVoter(userJSON, fileInBase64) {
+
+  try {
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            isValid: {
+            type: Type.BOOLEAN,
+            description: "True if the document is a valid Philippines Voter's ID and the details match the provided JSON data, otherwise false.",
+            },
+            message: {
+            type: Type.STRING,
+            description: "A message explaining whether the document is valid or not, and the reason for the validation result.",
+            },
+        },
+        required: ["isValid", "message"],
+    };
+
+    // 3. Construct the prompt for the Gemini model
+    const prompt = `
+    Your task is to validate if the submitted image is a legitimate Philippine Voter's ID and if the data on it matches the provided JSON data.
+
+    1. First, verify that the image provided is a genuine Philippine Voter's ID. Check for specific features of a real Voter's ID.
+    2. Second, carefully compare the full name, address, date of birth, and other relevant details from the ID against the provided JSON object.
+
+    Return a JSON object with two keys: "isValid" (boolean) and "message" (a short but complete explanation of the result).
+    - If everything is correct, set "isValid" to true and the message to 'Voter\\'s ID successfully validated.'
+    - If the details do not match or if the document is not a valid Voter's ID, set "isValid" to false and briefly explain the reason (e.g., 'Name on ID does not match the provided data.' or 'The provided image is not a valid Philippine Voter\\'s ID.').
+    `;
+    
+    // 4. Select the Gemini model and configure it to return JSON
+    const model = ai.chats.create({ model: 'gemini-2.5-pro'})
+
+    // 5. Generate the content
+    console.log("Generating content from the model...");
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {text: prompt},
+        {text: JSON.stringify(userJSON)},
+        {
+          inlineData: {
+            mimeType: getMimeTypeFromBase64(fileInBase64),
+            data: stripDataUriPrefix(fileInBase64),
+          }
+        }
+      ],
+      config: {
+        responseSchema: responseSchema,
+        responseMimeType: "application/json"
+      }
+    });
+    // const response = result.response;
+    const responseText = result.text;
+
+    console.log("Received response from Gemini.", result);
+
+    // 6. Parse and return the JSON response
+    console.log('========================= AI RESPONSE ==========================');
+    console.log(responseText);
+    return JSON.parse(responseText);
+    // return { isValid: true, message: 'Voters ID successfully validated.' }
+    return responseText;
+
+  } catch (error) {
+    console.error("An error occurred during audio analysis:", error);
+    throw error;
+  }
+}
+
+async function validateProofOfPWD(userJSON, fileInBase64) {
+
+  try {
+    const responseSchema = {
+        type: Type.OBJECT,
+        properties: {
+            isValid: {
+            type: Type.BOOLEAN,
+            description: "True if the document is a valid Philippine PWD ID and the details match the provided JSON data, otherwise false.",
+            },
+            message: {
+            type: Type.STRING,
+            description: "A message explaining whether the document is valid or not, and the reason for the validation result.",
+            },
+        },
+        required: ["isValid", "message"],
+    };
+
+    // 3. Construct the prompt for the Gemini model
+    const prompt = `
+    Your task is to validate if the submitted image is a legitimate Philippine PWD (Person with Disability) ID and if the data on it matches the provided JSON data.
+
+    1. First, verify that the image provided is a genuine Philippine PWD ID. Check for specific features of a real PWD ID, such as the official logos, layout, and required fields.
+    2. Second, carefully compare the full name, address, date of birth, PWD number, and other relevant details from the ID against the provided JSON object.
+
+    Return a JSON object with two keys: "isValid" (boolean) and "message" (a short but complete explanation of the result).
+    - If everything is correct, set "isValid" to true and the message to 'PWD ID successfully validated.'
+    - If the details do not match or if the document is not a valid PWD ID, set "isValid" to false and briefly explain the reason (e.g., 'Full name on ID does not match the provided data.' or 'The provided image is not a valid Philippine PWD ID.').
+    `;
+    
+    // 4. Select the Gemini model and configure it to return JSON
+    const model = ai.chats.create({ model: 'gemini-2.5-pro'})
+
+    // 5. Generate the content
+    console.log("Generating content from the model...");
+    const result = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [
+        {text: prompt},
+        {text: JSON.stringify(userJSON)},
+        {
+          inlineData: {
+            mimeType: getMimeTypeFromBase64(fileInBase64),
+            data: stripDataUriPrefix(fileInBase64),
+          }
+        }
+      ],
+      config: {
+        responseSchema: responseSchema,
+        responseMimeType: "application/json"
+      }
+    });
+    // const response = result.response;
+    const responseText = result.text;
+
+    console.log("Received response from Gemini.", result);
+
+    // 6. Parse and return the JSON response
+    console.log('========================= AI RESPONSE ==========================');
+    console.log(responseText);
+    return JSON.parse(responseText);
+    return responseText;
+
+  } catch (error) {
+    console.error("An error occurred during ID analysis:", error);
+    throw error;
+  }
+}
+
+function getMimeTypeFromBase64(fileInBase64) {
+  const mime = require('mime-types');
+  const dataUriRegex = /^data:(.*?);base64,(.*)$/;
+  const match = fileInBase64.match(dataUriRegex);
+  const mimeType = match && match[1];
+  console.log("MIME TYPE", mimeType);
+  return mimeType;
+}
+
+function stripDataUriPrefix(dataUri) {
+  return dataUri.replace(/^data:[^;]+;base64,/, "");
 }

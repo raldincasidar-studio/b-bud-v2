@@ -106,7 +106,7 @@
         <!-- Person Complained Against Section -->
         <v-row>
           <v-col cols="12" md="6">
-            <label class="v-label mb-1">Person Complained Against <span class="text-red">*</span></label>
+            <label class="v-label mb-1">Person Complained Against</label>
             <v-text-field
               v-model="form.person_complained_against_name"
               label="Name of Person Complained Against"

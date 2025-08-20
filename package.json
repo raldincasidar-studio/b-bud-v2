@@ -10,6 +10,7 @@
     "postinstall": "nuxt prepare"
   },
   "dependencies": {
+    "@google/genai": "^1.15.0",
     "@mdi/font": "^7.4.47",
     "@nuxtjs/axios": "^5.13.6",
     "@sparticuz/chromium": "^137.0.1",
