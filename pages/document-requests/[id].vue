@@ -132,6 +132,28 @@
         </v-card-text>
       </v-card>
 
+      <!-- ATTACHED FILES -->
+      <v-card class="mt-6" flat border>
+        <v-card-title class="text-h6 font-weight-medium">Files Attached</v-card-title>
+        <v-card-text v-if="['Ready for Pickup', 'Released'].includes(request.document_status)">
+            <v-row>
+                <v-col cols="12" sm="12" md="4" lg="4">
+                    <v-card class="pa-4 py-10" border flat v-ripple @click="generateAndSetToPickup">
+                        <v-card-title class="text-center">
+                            <v-icon size="xxx-large" color="primary">mdi-file-pdf-box</v-icon>
+                        </v-card-title>
+                        <v-card-title>{{ request.request_type }}</v-card-title>
+                        <v-card-subtitle>View File</v-card-subtitle>
+                    </v-card>
+                </v-col>
+            </v-row>
+        </v-card-text>
+        <v-card-text v-else class="py-5">
+          <p class="text-grey-darken-1">No files generated yet. Please generate the file and it will be automatically saved here once generated.</p>
+        </v-card-text>
+      </v-card>
+      
+
       <!-- ACTION CARD - WORKFLOW LOGIC -->
       <v-card class="mt-6" flat border>
         <v-card-title class="text-h6 font-weight-medium">Actions</v-card-title>

@@ -3587,7 +3587,7 @@ const checkResidentAccountStatus = async (residentId, dab) => {
     throw new Error('Invalid resident specified.'); 
   }
 
-  if (resident.account_status !== 'Active') {
+  if (resident.account_status === 'Deactivated') {
     // This is the specific error we want to catch
     throw new Error(`This resident's account is On Hold/Deactivated. They cannot make new requests until their pending issues are resolved.`);
   }
@@ -5667,7 +5667,7 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
     
     // 5. Serve the PDF
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${request.request_type.replace(/ /g, '_')}_${requestor.last_name}.pdf"`);
+    // res.setHeader('Content-Disposition', `attachment; filename="${request.request_type.replace(/ /g, '_')}_${requestor.last_name}.pdf"`);
     res.send(pdfBuffer);
 
   } catch (error) {
