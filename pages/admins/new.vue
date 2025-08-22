@@ -74,7 +74,7 @@
           <v-col cols="12" md="6">
             <label class="v-label mb-3 font-weight-bold text-black">Contact Number <span class="text-red">*</span></label>
             <v-text-field
-              v-model="form.contact_number"
+              v-model.trim="form.contact_number"
               label="(e.g., 09184489973)"
               variant="outlined"
               maxlength="11"
@@ -130,7 +130,7 @@
 import { reactive, ref, computed } from "vue";
 import { useMyFetch } from "~/composables/useMyFetch";
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs } from '@vuelidate/validators';
+import { required, email, minLength, sameAs, helpers } from '@vuelidate/validators';
 
 const { $toast } = useNuxtApp();
 const router = useRouter();
@@ -155,7 +155,14 @@ const rules = {
   lastname: { required },
   username: { required },
   email: { required, email },
-  contact_number: { required },
+  contact_number: { 
+    required, 
+    // Temporarily change this rule for testing
+    validPhoneNumber: helpers.withMessage(
+        'Follow format of 09xxxxxxxxx.',
+        helpers.regex(/^09\d{9}$/) // This matches 09 followed by 9 more digits
+    )
+  },
   password: { required, minLength: minLength(6) },
   repeat_password: { 
     required, 
@@ -168,6 +175,9 @@ const v$ = useVuelidate(rules, form);
 
 const saveAdmin = async () => {
   const isFormCorrect = await v$.value.$validate();
+
+  // ADD THIS LINE FOR DEBUGGING
+  console.log(v$.value.contact_number);
 
   if (!isFormCorrect) {
     return $toast.fire({
