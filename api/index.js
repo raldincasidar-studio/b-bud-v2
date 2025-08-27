@@ -6175,12 +6175,14 @@ app.get('/api/budgets', async (req, res) => {
         const dab = await db();
         const collection = dab.collection('budgets');
 
-        const { search, sortBy, sortOrder } = req.query;
+        const { search, sortBy, sortOrder, filterDay, filterMonth, filterYear } = req.query; // Destructure new filter parameters
         const page = parseInt(req.query.page) || 1;
         const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
         const skip = (page - 1) * itemsPerPage;
 
         let query = {};
+
+        // Search filter
         if (search) {
             const searchRegex = new RegExp(search.trim(), 'i');
             query = {
@@ -6188,6 +6190,38 @@ app.get('/api/budgets', async (req, res) => {
                     { budgetName: searchRegex },
                     { category: searchRegex }
                 ]
+            };
+        }
+
+        // Date filters
+        if (filterDay) {
+            // filterDay comes as 'YYYY-MM-DD'
+            const startOfDay = new Date(filterDay);
+            startOfDay.setUTCHours(0, 0, 0, 0); // Start of the selected day in UTC
+            const endOfDay = new Date(filterDay);
+            endOfDay.setUTCHours(23, 59, 59, 999); // End of the selected day in UTC
+
+            query.date = {
+                $gte: startOfDay,
+                $lte: endOfDay,
+            };
+        } else if (filterMonth && filterYear) {
+            // filterMonth is 1-12, filterYear is YYYY
+            const startOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth) - 1, 1)); // Month is 0-indexed in JS Date
+            const endOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth), 0)); // Last day of the month
+
+            query.date = {
+                $gte: startOfMonth,
+                $lte: endOfMonth,
+            };
+        } else if (filterYear) {
+            // filterYear is YYYY
+            const startOfYear = new Date(Date.UTC(filterYear, 0, 1));
+            const endOfYear = new Date(Date.UTC(filterYear, 11, 31, 23, 59, 59, 999));
+
+            query.date = {
+                $gte: startOfYear,
+                $lte: endOfYear,
             };
         }
         
