@@ -48,7 +48,8 @@ function generateOTP() {
 let CLIENT_DB;
 
 async function db() {
-  CLIENT_DB = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  // REMOVED deprecated options: useNewUrlParser and useUnifiedTopology
+  CLIENT_DB = new MongoClient(MONGODB_URI);
   try {
     await CLIENT_DB.connect();
     return CLIENT_DB.db('bbud-backend');
@@ -637,17 +638,12 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
 
 // Helper function to create a resident document from payload data.
 // This reduces code duplication between head and member creation.
+// Helper function to create a resident document from payload data.
 const createResidentDocument = (data, isHead = false, headAddress = null) => {
     const age = calculateAge(data.date_of_birth);
-    let passwordHash = null;
     let email = data.email ? String(data.email).toLowerCase() : null;
+    let contact_number = data.contact_number ? String(data.contact_number).trim() : null;
 
-    // Password is required for the head, and for members creating an account.
-    if (data.password) {
-        passwordHash = md5(data.password);
-
-    }
-    
     return {
         // Personal Info
         first_name: data.first_name,
@@ -657,14 +653,13 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         date_of_birth: new Date(data.date_of_birth),
         age: age,
         civil_status: data.civil_status,
-        citizenship: data.citizenship, // REVISION: Added field
+        citizenship: data.citizenship,
         occupation_status: data.occupation_status,
         email: email,
-        password_hash: passwordHash,
-        contact_number: data.contact_number,
+        password_hash: null, // Password will be set/hashed during activation for pending accounts
+        contact_number: contact_number,
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
-         // --- NEW: Add photo and proof fields to be saved in the database ---
         proof_of_relationship_file: data.proof_of_relationship_file || null,
         proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
 
@@ -673,8 +668,8 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         address_street: headAddress ? headAddress.address_street : data.address_street,
         address_subdivision_zone: headAddress ? headAddress.address_subdivision_zone : data.address_subdivision_zone,
         address_city_municipality: headAddress ? headAddress.address_city_municipality : data.address_city_municipality,
-        years_at_current_address: isHead ? data.years_at_current_address : null, // REVISION: Added field (only for head)
-        proof_of_residency_base64: isHead ? data.proof_of_residency_base64 : null, // REVISION: Added field (only for head)
+        years_at_current_address: isHead ? data.years_at_current_address : null,
+        proof_of_residency_base64: isHead ? data.proof_of_residency_base64 : null,
 
         // Voter Info
         is_voter: data.is_voter || false,
@@ -686,42 +681,42 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         pwd_id: data.is_pwd ? data.pwd_id : null,
         pwd_card_base64: data.is_pwd ? data.pwd_card_base64 : null,
 
-        // REVISION: Senior Citizen Info now based on the flag, not just age
         is_senior_citizen: data.is_senior_citizen || false,
         senior_citizen_id: data.is_senior_citizen ? data.senior_citizen_id : null,
         senior_citizen_card_base64: data.is_senior_citizen ? data.senior_citizen_card_base64 : null,
         
         // System-set Fields
         is_household_head: isHead,
-        household_member_ids: isHead ? [] : undefined, // Only heads have this array initially
-        status: 'Pending',
+        household_member_ids: isHead ? [] : undefined,
+        status: 'Pending', // All new accounts start as Pending, awaiting activation
         created_at: new Date(),
         updated_at: new Date(),
+        date_approved: null, // Will be set upon approval/activation
+        
+        // --- NEW: Account activation fields (temporary) ---
+        // account_number: null, // Removed as per your request
+        activation_otp: null,
+        activation_otp_expiry: null,
+        pending_password_hash: null, // Will hold the new password during activation flow
+        account_status: 'Active', // Default account_status unless issues like overdue
     };
 };
 
-
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - CORRECTED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED
 app.post('/api/residents', async (req, res) => {
-    // --- FIX: ESTABLISH DB CONNECTION AND GET COLLECTION FIRST ---
-    // This was the source of the crash. `db()` must be called before using `CLIENT_DB`.
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-
-    // --- NOW IT'S SAFE TO START A SESSION ---
     const session = CLIENT_DB.startSession();
 
     try {
         let newHouseholdHead;
 
-        // Start the transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
-                // Use throw new Error within a transaction to abort it automatically
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
@@ -730,46 +725,38 @@ app.post('/api/residents', async (req, res) => {
             }
 
             const headResidentDocument = createResidentDocument(headData, true);
-            
-            headResidentDocument.created_at = new Date();
-            headResidentDocument.updated_at = new Date();
-            headResidentDocument.date_approved = null;
+            // Store head's email, contact_number, and password as pending
+            headResidentDocument.email = headData.email.toLowerCase();
+            headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null;
+            headResidentDocument.pending_password_hash = md5(headData.password); // Store new password temporarily for the head's own activation
 
-            
-            // validate the proof of resident image
+            // ... (validation for proof of residency, voter, PWD as existing, remains the same) ...
             const proofOfResidencyResult = await validateProofOfResidency(headData, headData.proof_of_residency_base64);
-            // console.log('Proof of resident result: ', proofOfResidencyResult);
             if (!proofOfResidencyResult.isValid) {
-                return res.status(400).json({ error: proofOfResidencyResult.message, message: 'Proof of residency validation failed' });
+                throw new Error(proofOfResidencyResult.message);
             }
-
-            // validate the proof of voter image
             if (headData.is_voter) {
                 const proofOfVoterResult = await validateProofOfVoter(headData, headData.voter_registration_proof_base64);
-                // console.log('Proof of voter result: ', proofOfVoterResult);
                 if (!proofOfVoterResult.isValid) {
-                    return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                    throw new Error(proofOfVoterResult.message);
                 }
             }
-
-            // validate the proof of PWD image
             if (headData.is_pwd) {
                 const proofOfPWDResult = await validateProofOfPWD(headData, headData.pwd_card_base64);
-                // console.log('Proof of PWD result: ', proofOfPWDResult);
                 if (!proofOfPWDResult.isValid) {
-                    return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                    throw new Error(proofOfPWDResult.message);
                 }
             }
-
+            
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
-            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+            // Removed account_number assignment here.
 
-            
+            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
 
             // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
-            const processedEmails = new Set([headData.email.toLowerCase()]);
+            const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []);
 
             for (const memberData of membersToCreate) {
                 if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
@@ -777,50 +764,32 @@ app.post('/api/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                if (memberAge >= 15 && (memberData.email || memberData.password)) {
-                    if (!memberData.email || !memberData.password) {
-                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
-                    }
-                    const memberEmail = memberData.email.toLowerCase();
-                    if (processedEmails.has(memberEmail)) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
-                    }
-                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
-                    if (existingMemberEmail) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
-                    }
-                    processedEmails.add(memberEmail);
-                } else {
-                    memberData.email = null;
-                    memberData.password = null;
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
+                newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+                newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+                if (memberData.password) {
+                    newMemberDoc.pending_password_hash = md5(memberData.password);
                 }
                 
-                const newMemberDoc = createResidentDocument(memberData, false, headData);
-
-                newMemberDoc.created_at = new Date();
-                newMemberDoc.updated_at = new Date();
-                newMemberDoc.date_approved = null;
-
-                // validate the vouter id if the member is a voter
+                // ... (validation for voter, PWD as existing, remains the same) ...
                 if (memberData.is_voter) {
                     const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
-                    // console.log('Proof of voter result: ', proofOfVoterResult);
                     if (!proofOfVoterResult.isValid) {
-                        return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                        throw new Error(proofOfVoterResult.message);
                     }
                 }
-
-                // validate the proof of PWD image
                 if (memberData.is_pwd) {
                     const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
-                    // console.log('Proof of PWD result: ', proofOfPWDResult);
                     if (!proofOfPWDResult.isValid) {
-                        return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                        throw new Error(proofOfPWDResult.message);
                     }
                 }
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
-                createdMemberIds.push(memberInsertResult.insertedId);
+                const insertedMemberId = memberInsertResult.insertedId;
+                // Removed account_number assignment here.
+
+                createdMemberIds.push(insertedMemberId);
             }
 
             // --- Step 3: Link Members to the Head ---
@@ -834,23 +803,22 @@ app.post('/api/residents', async (req, res) => {
             }
         }); // End of the transaction
 
-        // If the transaction was successful, create an audit log
+        // The audit log description below will also need to be adjusted as 'account_number' is not available in newHouseholdHead
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
-          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`,
+          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`, // Simplified description
           action: "REGISTER",
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
         }, req)
 
         res.status(201).json({
-            message: 'Household registered successfully! All accounts are pending approval.',
-            resident: newHouseholdHead
+            message: 'Household registered successfully! All accounts are pending activation.',
+            resident: newHouseholdHead // The frontend will need to derive the account number from _id
         });
 
     } catch (error) {
-        // This block will catch errors thrown from inside the transaction
         console.error("Error during household registration transaction:", error);
         if (error.message.startsWith('Conflict:')) {
             return res.status(409).json({ error: 'Email Conflict', message: error.message });
@@ -858,16 +826,14 @@ app.post('/api/residents', async (req, res) => {
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
-        // Generic server error for anything else
         console.error('Mobile Registration error: ', error);
         res.status(500).json({ error: error, message: 'Could not complete registration.' });
     } finally {
-        // This will run whether the transaction succeeded or failed
         await session.endSession();
     }
 });
 
-// POST /api/admin/residents - FOR ADMIN ENDPOINT CREATE RESIDENT
+// POST /api/admin/residents - FOR ADMIN ENDPOINT CREATE RESIDENT (UPDATED)
 app.post('/api/admin/residents', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
@@ -876,16 +842,13 @@ app.post('/api/admin/residents', async (req, res) => {
     try {
         let newHouseholdHead;
 
-        // Status is always 'Approved' for this route.
-        const finalStatus = 'Approved';
+        const finalStatus = 'Approved'; // Admin can set to Approved directly
         const finalApprovalDate = new Date();
 
-        // Start the database transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
-            // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
@@ -898,14 +861,15 @@ app.post('/api/admin/residents', async (req, res) => {
             }
 
             const headResidentDocument = createResidentDocument(headData, true);
+            headResidentDocument.password_hash = md5(headData.password); // Admin sets password directly for immediate login
+            headResidentDocument.email = headData.email.toLowerCase(); // Ensure email is saved
+            headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null; // Ensure contact is saved
             
-            // --- FIX: Explicitly assign all Base64 fields for the HEAD ---
             headResidentDocument.proof_of_residency_base64 = headData.proof_of_residency_base64 || null;
             headResidentDocument.voter_registration_proof_base64 = headData.voter_registration_proof_base64 || null;
             headResidentDocument.pwd_card_base64 = headData.pwd_card_base64 || null;
             headResidentDocument.senior_citizen_card_base64 = headData.senior_citizen_card_base64 || null;
             
-            // Apply the hardcoded 'Approved' status
             headResidentDocument.status = finalStatus;
             headResidentDocument.date_approved = finalApprovalDate;
             headResidentDocument.created_at = new Date();
@@ -913,9 +877,10 @@ app.post('/api/admin/residents', async (req, res) => {
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
+            // Removed account_number assignment here.
+
             newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
 
-            // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
             const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []);
 
@@ -925,43 +890,32 @@ app.post('/api/admin/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                if (memberAge >= 15 && (memberData.email || memberData.password)) {
-                    if (!memberData.email || !memberData.password) {
-                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
-                    }
-                    const memberEmail = memberData.email.toLowerCase();
-                    if (processedEmails.has(memberEmail)) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
-                    }
-                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
-                    if (existingMemberEmail) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
-                    }
-                    processedEmails.add(memberEmail);
-                } else {
-                    memberData.email = null;
-                    memberData.password = null;
-                }
-                
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
-                
-                // --- FIX: Explicitly assign all Base64 fields for the MEMBER ---
+                if (memberData.password) {
+                    newMemberDoc.password_hash = md5(memberData.password);
+                } else {
+                    newMemberDoc.password_hash = null;
+                }
+                newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+                newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+
                 newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
                 newMemberDoc.voter_registration_proof_base64 = memberData.voter_registration_proof_base64 || null;
                 newMemberDoc.pwd_card_base64 = memberData.pwd_card_base64 || null;
                 newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
 
-                // Apply the hardcoded 'Approved' status to all members
                 newMemberDoc.status = finalStatus;
                 newMemberDoc.date_approved = finalApprovalDate;
                 newMemberDoc.created_at = new Date();
                 newMemberDoc.updated_at = new Date();
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
-                createdMemberIds.push(memberInsertResult.insertedId);
+                const insertedMemberId = memberInsertResult.insertedId;
+                // Removed account_number assignment here.
+
+                createdMemberIds.push(insertedMemberId);
             }
 
-            // --- Step 3: Link Members to the Head ---
             if (createdMemberIds.length > 0) {
                 await residentsCollection.updateOne(
                     { _id: insertedHeadId },
@@ -970,9 +924,8 @@ app.post('/api/admin/residents', async (req, res) => {
                 );
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
-        }); // End of transaction
+        });
 
-        
         await createAuditLog({
           userId: 'SYSTEM_ADMIN', 
           userName: 'System Admin', 
@@ -996,6 +949,108 @@ app.post('/api/admin/residents', async (req, res) => {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+    } finally {
+        await session.endSession();
+    }
+});
+
+// POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD (UPDATED)
+app.post('/api/residents/:householdHeadId/members', async (req, res) => {
+    const { householdHeadId } = req.params;
+    const memberData = req.body;
+
+    if (!ObjectId.isValid(householdHeadId)) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Invalid household head ID format.' });
+    }
+    if (!memberData || !memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Missing required member information.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newMemberId;
+
+        await session.withTransaction(async () => {
+            const householdHead = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) }, { session });
+            if (!householdHead || !householdHead.is_household_head) {
+                throw new Error('Household head not found or the specified user is not a household head.');
+            }
+
+            if (memberData.email) {
+                const existingEmail = await residentsCollection.findOne({ email: memberData.email.toLowerCase() }, { session });
+                if (existingEmail) {
+                    throw new Error(`Conflict: The email address '${memberData.email}' is already in use.`);
+                }
+            }
+
+            const newMemberDoc = createResidentDocument(memberData, false, householdHead);
+            newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+            newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+            if (memberData.password) {
+                newMemberDoc.pending_password_hash = md5(memberData.password);
+            }
+            
+            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
+            newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
+            
+            if (memberData.is_voter) {
+                const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
+                if (!proofOfVoterResult.isValid) {
+                    throw new Error(proofOfVoterResult.message);
+                }
+            }
+            if (memberData.is_pwd) {
+                const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
+                if (!proofOfPWDResult.isValid) {
+                    throw new Error(proofOfPWDResult.message);
+                }
+            }
+            // Add validation for senior citizen if needed
+
+            newMemberDoc.status = 'Pending';
+            newMemberDoc.date_approved = null;
+            newMemberDoc.created_at = new Date();
+            newMemberDoc.updated_at = new Date();
+
+            const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+            newMemberId = memberInsertResult.insertedId;
+            // Removed account_number assignment here.
+
+            await residentsCollection.updateOne(
+                { _id: new ObjectId(householdHeadId) },
+                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
+                { session }
+            );
+        });
+
+        const headDetails = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) });
+        // The audit log description below will need to be adjusted as 'account_number' is not directly available
+        await createAuditLog({
+          userId: householdHeadId,
+          userName: `${headDetails.first_name} ${headDetails.last_name}`,
+          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`, // Simplified description
+          action: "ADD_MEMBER",
+          entityType: "Resident",
+          entityId: newMemberId.toString(),
+        }, req);
+
+        res.status(201).json({ message: 'Household member added successfully.', memberId: newMemberId });
+
+    } catch (error) {
+        console.error("Error adding household member:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        if (error.message.startsWith('Validation failed for member:')) {
+            return res.status(400).json({ error: 'Validation Error', message: error.message });
+        }
+        if (error.message === 'Household head not found or the specified user is not a household head.') {
+            return res.status(404).json({ error: 'Not Found', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: error.message || 'Could not add household member.' });
     } finally {
         await session.endSession();
     }
@@ -6344,6 +6399,239 @@ app.delete('/api/budgets/:id', async (req, res) => {
 });
 
 
+
+
+// =================== ACCOUNT ACTIVATION FLOW =================== //
+
+// 1. REQUEST OTP FOR ACCOUNT ACTIVATION (UPDATED for _id suffix matching and pending_password_hash $or condition)
+app.post('/api/residents/activate-account/request-otp', async (req, res) => {
+    const { account_number, email, contact_number, password } = req.body; // account_number is now the 4-digit suffix
+
+    if (!account_number || !password) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number and Password are required.' });
+    }
+    if (String(account_number).trim().length !== 4) { // Validate 4-digit input
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number must be 4 characters long.' });
+    }
+    if (!email && !contact_number) { // Require at least one contact method
+        return res.status(400).json({ error: 'Validation failed', message: 'Either Email or Contact Number is required.' });
+    }
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Password must be at least 6 characters long.' });
+    }
+
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+        const hashedPassword = md5(password); // Hash the provided password
+
+        // --- Aggregation Pipeline to find resident by _id suffix ---
+        const residentResult = await residentsCollection.aggregate([
+            {
+                $match: {
+                    status: 'Pending', // Only allow activation for pending accounts
+                    password_hash: null, // Ensure no password has been set yet
+                    // FIX: Use $or for pending_password_hash: null OR $exists: false
+                    $or: [
+                        { pending_password_hash: null },
+                        { pending_password_hash: { $exists: false } }
+                    ]
+                }
+            },
+            {
+                $addFields: {
+                    // Derive the 4-character account number from the _id string
+                    derivedAccountNumber: { $substrCP: [{ $toString: "$_id" }, { $subtract: [{ $strLenCP: { $toString: "$_id" } }, 4] }, 4] }
+                }
+            },
+            {
+                $match: {
+                    // Ensure the input account_number is compared in lowercase
+                    derivedAccountNumber: String(account_number).trim().toLowerCase()
+                }
+            },
+            { $limit: 1 } // We only expect one match
+        ]).toArray();
+
+        const resident = residentResult.length > 0 ? residentResult[0] : null;
+
+        if (!resident) {
+            return res.status(404).json({
+                error: 'Account not found or already active.',
+                message: 'No pending account found matching the provided details. It might be already active or require admin approval.'
+            });
+        }
+
+        // --- Step 1: Update Resident's Contact Info and Store Pending Password ---
+        const updateFields = {
+            email: email ? String(email).trim().toLowerCase() : null,
+            contact_number: contact_number ? String(contact_number).trim() : null,
+            pending_password_hash: hashedPassword, // Store new password temporarily
+            updated_at: new Date()
+        };
+
+        // Generate and store activation OTP
+        const otp = generateOTP();
+        const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+        updateFields.activation_otp = otp;
+        updateFields.activation_otp_expiry = otpExpiry;
+
+        await residentsCollection.updateOne(
+            { _id: resident._id }, // Update using the actual _id
+            { $set: updateFields }
+        );
+
+        // --- Step 2: Send OTP to the (newly updated) contact method ---
+        let sendSuccess = false;
+        let recipientIdentifier = '';
+
+        // Prioritize email if provided
+        if (email) {
+            recipientIdentifier = email;
+            const mailOptions = {
+                from: `"B-BUD System" <${SMTP_USER}>`,
+                to: recipientIdentifier,
+                subject: 'Your B-BUD Account Activation Code',
+                html: `
+                    <p>Hello ${resident.first_name || 'User'},</p>
+                    <p>To activate your account, please use the following One-Time Password (OTP):</p>
+                    <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
+                    <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+                    <p>If you did not request this, please ignore this email.</p>
+                    <br><p>Thanks,<br>The B-BUD Team</p>`,
+            };
+            try {
+                await transporter.sendMail(mailOptions);
+                console.log(`Activation OTP email sent to ${recipientIdentifier} (OTP: ${otp})`);
+                sendSuccess = true;
+            } catch (emailError) {
+                console.error("Error sending activation OTP email:", emailError);
+            }
+        }
+
+        // If email wasn't sent or failed, try SMS if contact number is provided
+        if (!sendSuccess && contact_number) {
+            recipientIdentifier = contact_number;
+            try {
+                await sendMessage(recipientIdentifier, `Your B-BUD account activation OTP is ${otp}. It is valid for ${OTP_EXPIRY_MINUTES} minutes.`);
+                console.log(`Activation OTP SMS sent to ${recipientIdentifier} (OTP: ${otp})`);
+                sendSuccess = true;
+            } catch (smsError) {
+                console.error("Error sending activation OTP SMS:", smsError);
+            }
+        }
+
+        if (sendSuccess) {
+            res.status(200).json({
+                message: `An OTP has been sent to ${recipientIdentifier} to activate your account.`,
+                otpRequired: true,
+            });
+        } else {
+            // If neither email nor SMS could be sent, clear the temporary data
+            await residentsCollection.updateOne(
+                { _id: resident._id },
+                { $unset: { activation_otp: "", activation_otp_expiry: "", pending_password_hash: "" } }
+            );
+            return res.status(500).json({
+                error: 'DeliveryFailed',
+                message: 'Could not send the activation OTP to your provided contact details. Please ensure they are valid.'
+            });
+        }
+
+    } catch (error) {
+        console.error("Error processing account activation request:", error);
+        res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred.' });
+    }
+});
+
+// 2. VERIFY OTP AND FINALIZE ACCOUNT ACTIVATION (UPDATED for _id suffix matching and pending_password_hash)
+app.post('/api/residents/activate-account/verify-otp', async (req, res) => {
+    const { account_number, otp } = req.body; // account_number is the 4-digit suffix
+
+    if (!account_number || !otp) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number and OTP are required.' });
+    }
+    if (String(account_number).trim().length !== 4) { // Validate 4-digit input
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number must be 4 characters long.' });
+    }
+    if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+        return res.status(400).json({ error: 'Validation failed', message: 'OTP must be a 6-digit number.' });
+    }
+
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        // --- Aggregation Pipeline to find resident by _id suffix and OTP details ---
+        const residentResult = await residentsCollection.aggregate([
+            {
+                $match: {
+                    activation_otp: otp,
+                    activation_otp_expiry: { $gt: new Date() }, // OTP must not be expired
+                    status: 'Pending', // Should still be pending
+                    pending_password_hash: { $exists: true, $ne: null } // Ensure a pending password exists
+                }
+            },
+            {
+                $addFields: {
+                    // Derive the 4-character account number from the _id string
+                    derivedAccountNumber: { $substrCP: [{ $toString: "$_id" }, { $subtract: [{ $strLenCP: { $toString: "$_id" } }, 4] }, 4] }
+                }
+            },
+            {
+                $match: {
+                    // Ensure the input account_number is compared in lowercase
+                    derivedAccountNumber: String(account_number).trim().toLowerCase()
+                }
+            },
+            { $limit: 1 } // We only expect one match
+        ]).toArray();
+
+        const resident = residentResult.length > 0 ? residentResult[0] : null;
+
+        if (!resident) {
+            return res.status(400).json({ error: 'InvalidOTP', message: 'Invalid or expired OTP, or account details do not match. Please request a new OTP.' });
+        }
+
+        // OTP is valid, proceed to activate the account
+        // Move pending_password_hash to password_hash and set status to Approved
+        await residentsCollection.updateOne(
+            { _id: resident._id }, // Update using the actual _id
+            {
+                $set: {
+                    password_hash: resident.pending_password_hash, // Finalize the new password
+                    status: 'Approved', // Mark account as approved/active
+                    date_approved: new Date(), // Set approval date
+                    updated_at: new Date()
+                },
+                $unset: { // Clear temporary activation fields
+                    activation_otp: "",
+                    activation_otp_expiry: "",
+                    pending_password_hash: "" // Clear the temporary password hash
+                }
+            }
+        );
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            userId: resident._id,
+            userName: `${resident.first_name} ${resident.last_name}`,
+            description: `Resident account for '${resident.first_name} ${resident.last_name}' (Account No suffix: ${account_number}) activated successfully via OTP.`,
+            action: "ACTIVATE_ACCOUNT",
+            entityType: "Resident",
+            entityId: resident._id.toString(),
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.status(200).json({ message: 'Account activated successfully! You can now log in with your new password.' });
+
+    } catch (error) {
+        console.error("Error during account activation OTP verification:", error);
+        res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred during activation.' });
+    }
+});
+
+// =================== END ACCOUNT ACTIVATION FLOW =================== //
 
 /**
  * Sends an SMS message using the Semaphore API.
