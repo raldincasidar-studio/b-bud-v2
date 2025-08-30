@@ -30,15 +30,22 @@
             <label class="v-label">Last Name *</label>
             <v-text-field v-model="form.last_name" label="Last Name *" variant="outlined" :error-messages="vHead$.last_name.$errors.map(e => e.$message)" @blur="vHead$.last_name.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" md="3">
+          <!-- New Suffix Field for Head -->
+          <v-col cols="12" md="4">
+            <label class="v-label">Suffix</label>
+            <v-select v-model="form.suffix" :items="suffixOptions" label="Suffix" variant="outlined" clearable></v-select>
+          </v-col>
+          <!-- End New Suffix Field -->
+
+          <v-col cols="12" md="4">
             <label class="v-label">Sex *</label>
             <v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex *" variant="outlined" placeholder="Select Sex" :error-messages="vHead$.sex.$errors.map(e => e.$message)" @blur="vHead$.sex.$touch()"></v-select>
           </v-col>
-          <v-col cols="12" md="3">
+          <v-col cols="12" md="4">
             <label class="v-label">Date of Birth *</label>
             <v-text-field v-model="form.date_of_birth" label="Date of Birth *" type="date" variant="outlined" :error-messages="vHead$.date_of_birth.$errors.map(e => e.$message)" @blur="vHead$.date_of_birth.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" md="2">
+          <v-col cols="12" md="4">
             <label class="v-label">Age</label>
             <v-text-field :model-value="headCalculatedAge" label="Age" type="number" variant="outlined" readonly hint="Auto-calculated" persistent-hint></v-text-field>
           </v-col>
@@ -168,7 +175,10 @@
           <thead><tr><th class="text-left">Name</th><th class="text-left">Relationship</th><th class="text-left">Age</th><th class="text-left">Actions</th></tr></thead>
           <tbody>
             <tr v-for="(member, index) in form.household_members_to_create" :key="index">
-              <td>{{ member.first_name }} {{ member.last_name }}</td><td>{{ member.relationship_to_head === 'Other' ? member.other_relationship : member.relationship_to_head }}</td><td>{{ calculateAge(member.date_of_birth) }}</td>
+              <!-- UPDATED: Display middle name and suffix for members -->
+              <td>{{ member.first_name }} {{ member.middle_name ? member.middle_name + ' ' : '' }}{{ member.last_name }}{{ member.suffix ? ' ' + member.suffix : '' }}</td>
+              <td>{{ member.relationship_to_head === 'Other' ? member.other_relationship : member.relationship_to_head }}</td>
+              <td>{{ calculateAge(member.date_of_birth) }}</td>
               <td>
                 <v-btn icon="mdi-pencil-outline" variant="text" color="primary" size="small" @click="openMemberDialog(index)"></v-btn>
                 <v-btn icon="mdi-delete-outline" variant="text" color="error" size="small" @click="removeMember(index)"></v-btn>
@@ -195,10 +205,16 @@
               <label class="v-label">Middle Name</label>
               <v-text-field v-model="memberForm.middle_name" label="Middle Name" variant="outlined"></v-text-field>
             </v-col>
-            <v-col cols="12" md="4">
+            <v-col cols="12" md="3">
               <label class="v-label">Last Name *</label>
               <v-text-field v-model="memberForm.last_name" label="Last Name *" variant="outlined" :error-messages="vMember$.last_name.$errors.map(e => e.$message)" @blur="vMember$.last_name.$touch()"></v-text-field>
             </v-col>
+            <!-- New Suffix Field for Member -->
+            <v-col cols="12" md="1">
+              <label class="v-label">Suffix</label>
+              <v-select v-model="memberForm.suffix" :items="suffixOptions" label="Suffix" variant="outlined" clearable></v-select>
+            </v-col>
+            <!-- End New Suffix Field -->
             
             <v-col cols="12" md="6">
               <label class="v-label">Relationship to Head *</label>
@@ -331,8 +347,11 @@ const showHeadPassword = ref(false);
 const showHeadConfirmPassword = ref(false);
 const showMemberPassword = ref(false);
 
+const suffixOptions = ['Jr.', 'Sr.', 'I', 'II', 'III', 'IV', 'V', 'VI']; // Define suffix options
+
 const form = reactive({
-  first_name: '', middle_name: '', last_name: '', sex: null, date_of_birth: '',
+  first_name: '', middle_name: '', last_name: '', suffix: null, // Added suffix
+  sex: null, date_of_birth: '',
   civil_status: null, citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '',
   password: '', confirmPassword: '',
   address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
@@ -373,6 +392,7 @@ last_name: {
   required, 
   alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
 },
+suffix: {}, // Suffix is optional, so no validation rule needed by default
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
@@ -397,7 +417,7 @@ const relationshipOptions = [
 ];
 
 const getInitialMemberForm = () => ({
-  first_name: '', middle_name: '', last_name: '',
+  first_name: '', middle_name: '', last_name: '', suffix: null, // Added suffix
   relationship_to_head: null, other_relationship: '',
   sex: null, date_of_birth: '', civil_status: null, citizenship: 'Filipino',
   occupation_status: null, contact_number: '', email: '', password: '',
@@ -419,6 +439,7 @@ const isMemberSenior = computed(() => memberAge.value !== null && memberAge.valu
 
 const memberRules = {
   first_name: { required }, last_name: { required },
+  suffix: {}, // Suffix is optional for members too
   relationship_to_head: { required },
   other_relationship: { requiredIf: helpers.withMessage('Please specify the relationship.', requiredIf(() => memberForm.relationship_to_head === 'Other')) },
   sex: { required }, date_of_birth: { required }, civil_status: { required },
@@ -535,10 +556,10 @@ async function saveResidentAndHousehold() {
   try {
     // Create a shallow copy of the form to build the payload.
     // Avoids JSON.stringify issues with File objects.
-    const payload = { ...form };
+    const payload = { ...form }; // 'form' already includes 'suffix'
     
     // Assign calculated and head-specific properties
-    payload.age = headCalculatedAge.value;
+    payload.age = headCalculatedAge.value; // Send age for head, backend also calculates it
     payload.is_household_head = true;
     payload.status = 'Approved';
     payload.date_approved = new Date().toISOString();
@@ -560,11 +581,13 @@ async function saveResidentAndHousehold() {
     payload.household_members_to_create = await Promise.all(
       form.household_members_to_create.map(async (member) => {
         // Create a copy of the member to avoid mutating the original state
-        const newMemberPayload = { ...member };
+        const newMemberPayload = { ...member }; // 'member' object already includes 'suffix'
         
         // Set status for each member
         newMemberPayload.status = 'Approved';
         newMemberPayload.date_approved = new Date().toISOString();
+        // Backend's createResidentDocument recalculates age, so explicitly sending it from frontend is not strictly necessary.
+        // newMemberPayload.age = calculateAge(member.date_of_birth); // Optional: if you want to send age from frontend
 
         // Convert all files for this member to base64
         const [
@@ -600,7 +623,7 @@ async function saveResidentAndHousehold() {
     delete payload.pwd_card_file;
     delete payload.senior_citizen_card_file;
     delete payload.proof_of_residency_file;
-    delete payload.confirmPassword;
+    delete payload.confirmPassword; // confirmPassword is only for frontend validation
     
     // Send the fully prepared payload to the backend
     const { data, error } = await useMyFetch("/api/admin/residents", { method: 'post', body: payload });

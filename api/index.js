@@ -649,6 +649,7 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         first_name: data.first_name,
         middle_name: data.middle_name || null,
         last_name: data.last_name,
+        suffix: data.suffix || null,
         sex: data.sex,
         date_of_birth: new Date(data.date_of_birth),
         age: age,
@@ -3786,7 +3787,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
     // Check if the error is from our account status gatekeeper
     if (error.message.includes("On Hold/Deactivated")) {
       return res.status(403).json({ // 403 Forbidden is the correct HTTP status
-        error: 'Permission Denied',
+        error: 'Cannot borrow due to account status. On Hold/Deactivated.',
         message: error.message
       });
     }
