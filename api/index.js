@@ -821,7 +821,7 @@ app.post('/api/residents', async (req, res) => {
     } catch (error) {
         console.error("Error during household registration transaction:", error);
         if (error.message.startsWith('Conflict:')) {
-            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+            return res.status(409).json({ error: 'The email is already been registered.', message: error.message });
         }
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
@@ -4558,6 +4558,7 @@ app.get('/api/complaints', async (req, res) => {
 app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
   const { residentId } = req.params;
   const search = req.query.search || '';
+  const status = req.query.status || ''; // <-- ADDED: Read the status query parameter
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -4571,33 +4572,53 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('complaints');
 
-    const mainMatchStage = { complainant_resident_id: residentObjectId };
+    // Build the initial match query for the complainant's resident ID
+    let finalMatchQuery = { complainant_resident_id: residentObjectId };
 
-    let searchMatchSubStage = {};
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      searchMatchSubStage = {
-        $or: [
-          { ref_no: { $regex: searchRegex } },
-          { person_complained_against_name: { $regex: searchRegex } },
-          { "person_complained_details.first_name": { $regex: searchRegex } }, // If looking up person complained
-          { "person_complained_details.last_name": { $regex: searchRegex } },
-          { status: { $regex: searchRegex } },
-          { notes_description: { $regex: searchRegex } },
-          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } } // Search by Ref #
-        ],
-      };
+    // Add status filter if a status is provided (and it's not 'All' which results in undefined on frontend)
+    if (status) {
+        finalMatchQuery.status = status;
     }
 
-    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
+    // Add search filter if a search term is provided
+    if (search) {
+        const searchRegex = new RegExp(search.trim(), 'i');
+        const searchCriteria = [
+            { ref_no: { $regex: searchRegex } },
+            { person_complained_against_name: { $regex: searchRegex } },
+            { "person_complained_details.first_name": { $regex: searchRegex } },
+            { "person_complained_details.last_name": { $regex: searchRegex } },
+            { status: { $regex: searchRegex } }, // Also search within status for flexibility
+            { notes_description: { $regex: searchRegex } },
+            { category: { $regex: searchRegex } }, // Added category to search
+        ];
+        
+        // If we already have filters (like status), combine with $and
+        if (finalMatchQuery.status) {
+            finalMatchQuery = {
+                $and: [
+                    { complainant_resident_id: residentObjectId },
+                    { status: finalMatchQuery.status },
+                    { $or: searchCriteria }
+                ]
+            };
+        } else {
+            // No specific status filter, just combine resident ID and search
+            finalMatchQuery = {
+                $and: [
+                    { complainant_resident_id: residentObjectId },
+                    { $or: searchCriteria }
+                ]
+            };
+        }
+    }
 
     const aggregationPipeline = [
-      { $match: combinedMatchStage },
-      // Lookup person complained against (details might be useful for the complainant)
+      { $match: finalMatchQuery }, // Use the correctly constructed finalMatchQuery
       {
         $lookup: {
           from: 'residents',
-          localField: 'person_complained_against_resident_id', // Assuming this field exists
+          localField: 'person_complained_against_resident_id',
           foreignField: '_id',
           as: 'person_complained_details_array'
         }
@@ -4607,9 +4628,8 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
         $project: {
           _id: 1,
           ref_no: 1, 
-          // complainant_name is known (it's the current user), but API can return it for consistency
-          complainant_display_name: 1, // The stored display name at time of complaint
-          person_complained_against_name: { // Show looked-up name if available, else stored name
+          complainant_display_name: 1,
+          person_complained_against_name: { 
             $ifNull: [
               { $concat: [
                   "$person_complained_details.first_name", " ",
@@ -4621,12 +4641,13 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
             ]
           },
           date_of_complaint: 1,
-          time_of_complaint: 1, // Added this field
+          time_of_complaint: 1,
           status: 1,
           notes_description: 1,
           created_at: 1,
           updated_at: 1,
-          // Include other relevant fields for the complainant to see
+          category: 1,
+          proofs_base64: 1,
         }
       },
       { $sort: { date_of_complaint: -1, created_at: -1 } },
@@ -4636,21 +4657,9 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
 
-    const countPipeline = [
-        { $match: combinedMatchStage },
-        // If search includes person_complained_details, lookup is needed for accurate count
-        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
-        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        { $match: search ? searchMatchSubStage : {} }, // Apply sub-search again after potential lookup
-        { $count: 'total' }
-    ];
-    // More precise count by applying full combined match directly
+    // The preciseCountPipeline also needs to use the same finalMatchQuery for consistency
     const preciseCountPipeline = [
-        { $match: mainMatchStage }, // Start with the resident
-        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
-        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // If searchMatchSubStage references fields from person_complained_details, apply it after lookup
-        { $match: search ? searchMatchSubStage : {} },
+        { $match: finalMatchQuery }, // Use the same finalMatchQuery
         { $count: 'total' }
     ];
 
@@ -4669,6 +4678,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch complaints for this resident." });
   }
 });
+
 
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {

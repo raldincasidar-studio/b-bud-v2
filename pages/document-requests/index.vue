@@ -123,7 +123,7 @@ const initialSortBy = ref([{ key: 'date_of_request', order: 'desc' }]);
 
 const statusFilters = ref([
   { name: 'Pending', color: 'orange-darken-1', icon: 'mdi-clock-outline' },
-  { name: 'Follow up', color: 'blue-darken-1', icon: 'mdi-account-voice' },
+  // { name: 'Follow up', color: 'blue-darken-1', icon: 'mdi-account-voice' },
   { name: 'Processing', color: 'blue-darken-1', icon: 'mdi-cogs' },
   { name: 'Approved', color: 'cyan-darken-1', icon: 'mdi-check-circle-outline' },
   { name: 'Ready for Pickup', color: 'teal-darken-1', icon: 'mdi-package-variant-closed' },
