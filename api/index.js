@@ -1306,7 +1306,7 @@ app.get('/api/residents', async (req, res) => {
     
     // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
@@ -1407,7 +1407,7 @@ app.get('/api/residents/approved', async (req, res) => {
     }
     
     const projection = {
-        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
@@ -1475,6 +1475,7 @@ app.get('/api/residents/search', async (req, res) => {
         first_name: 1,
         last_name: 1,
         middle_name: 1,
+        suffix: 1,
         email: 1,
         sex: 1,
         contact_number: 1,
@@ -1920,15 +1921,19 @@ app.put('/api/residents/:id', async (req, res) => {
   
   // REVISION: Expanded field lists to match the new form
   const simpleFields = [
-    'first_name', 'middle_name', 'last_name', 'sex', 'civil_status',
+    'first_name', 'middle_name', 'last_name', 'suffix', // <-- ADDED SUFFIX HERE
+    'sex', 'civil_status',
     'occupation_status', 'citizenship', 'contact_number',
-    'address_house_number', 'address_street', 'address_subdivision_zone'
+    'address_house_number', 'address_street', 'address_subdivision_zone',
+    'relationship_to_head', 'other_relationship' // Added for non-head residents
   ];
   const booleanFields = ['is_voter', 'is_pwd', 'is_senior_citizen', 'is_household_head'];
   const numericFields = ['years_at_current_address'];
   
   // Process simple text fields
   simpleFields.forEach(field => {
+    // Check if the payload contains the field and if its value is different from the current one
+    // Also allows explicit setting to null/empty string if payload provides it
     if (updatePayload.hasOwnProperty(field)) {
       updateFields[field] = updatePayload[field];
     }
@@ -1944,19 +1949,23 @@ app.put('/api/residents/:id', async (req, res) => {
   // Process numbers
   numericFields.forEach(field => {
      if (updatePayload.hasOwnProperty(field)) {
-        updateFields[field] = updatePayload[field] ? parseInt(updatePayload[field], 10) : null;
+        // Coerce to number, or null if empty/invalid.
+        // Frontend sends null for empty fields, but empty string might come too.
+        updateFields[field] = updatePayload[field] !== null && updatePayload[field] !== '' ? parseInt(updatePayload[field], 10) : null;
     }
   });
 
   // Process Date of Birth and Age
   if (updatePayload.hasOwnProperty('date_of_birth')) {
     updateFields.date_of_birth = updatePayload.date_of_birth ? new Date(updatePayload.date_of_birth) : null;
+    // Re-calculate age on the backend for data integrity
     updateFields.age = calculateAge(updateFields.date_of_birth);
   }
 
   // Process Email with uniqueness check
   if (updatePayload.hasOwnProperty('email')) {
     const newEmail = String(updatePayload.email).trim().toLowerCase();
+    // Only check if email has actually changed
     if (currentResident.email !== newEmail) {
         const existingEmailUser = await residentsCollection.findOne({ email: newEmail, _id: { $ne: new ObjectId(id) } });
         if (existingEmailUser) {
@@ -1968,30 +1977,48 @@ app.put('/api/residents/:id', async (req, res) => {
 
   // REVISION: Process Voter, PWD, and Senior info with cleanup logic
   // Voter
-  if (updatePayload.is_voter === true) {
+  if (updatePayload.hasOwnProperty('is_voter')) { // Check if is_voter was sent
+      updateFields.is_voter = Boolean(updatePayload.is_voter);
+      if (updatePayload.is_voter === true) {
+          if (updatePayload.hasOwnProperty('voter_id_number')) updateFields.voter_id_number = updatePayload.voter_id_number;
+          if (updatePayload.hasOwnProperty('voter_registration_proof_base64')) updateFields.voter_registration_proof_base64 = updatePayload.voter_registration_proof_base64;
+      } else { // If is_voter is false, clear associated fields
+          updateFields.voter_id_number = null;
+          updateFields.voter_registration_proof_base64 = null;
+      }
+  } else { // If is_voter wasn't sent, but other voter fields were, still update them
       if (updatePayload.hasOwnProperty('voter_id_number')) updateFields.voter_id_number = updatePayload.voter_id_number;
       if (updatePayload.hasOwnProperty('voter_registration_proof_base64')) updateFields.voter_registration_proof_base64 = updatePayload.voter_registration_proof_base64;
-  } else if (updatePayload.is_voter === false) {
-      updateFields.voter_id_number = null;
-      updateFields.voter_registration_proof_base64 = null;
   }
 
   // PWD
-  if (updatePayload.is_pwd === true) {
+  if (updatePayload.hasOwnProperty('is_pwd')) { // Check if is_pwd was sent
+      updateFields.is_pwd = Boolean(updatePayload.is_pwd);
+      if (updatePayload.is_pwd === true) {
+          if (updatePayload.hasOwnProperty('pwd_id')) updateFields.pwd_id = updatePayload.pwd_id;
+          if (updatePayload.hasOwnProperty('pwd_card_base64')) updateFields.pwd_card_base64 = updatePayload.pwd_card_base64;
+      } else { // If is_pwd is false, clear associated fields
+          updateFields.pwd_id = null;
+          updateFields.pwd_card_base64 = null;
+      }
+  } else { // If is_pwd wasn't sent, but other PWD fields were, still update them
       if (updatePayload.hasOwnProperty('pwd_id')) updateFields.pwd_id = updatePayload.pwd_id;
       if (updatePayload.hasOwnProperty('pwd_card_base64')) updateFields.pwd_card_base64 = updatePayload.pwd_card_base64;
-  } else if (updatePayload.is_pwd === false) {
-      updateFields.pwd_id = null;
-      updateFields.pwd_card_base64 = null;
   }
 
   // Senior Citizen
-  if (updatePayload.is_senior_citizen === true) {
+  if (updatePayload.hasOwnProperty('is_senior_citizen')) { // Check if is_senior_citizen was sent
+      updateFields.is_senior_citizen = Boolean(updatePayload.is_senior_citizen);
+      if (updatePayload.is_senior_citizen === true) {
+          if (updatePayload.hasOwnProperty('senior_citizen_id')) updateFields.senior_citizen_id = updatePayload.senior_citizen_id;
+          if (updatePayload.hasOwnProperty('senior_citizen_card_base64')) updateFields.senior_citizen_card_base64 = updatePayload.senior_citizen_card_base64;
+      } else { // If is_senior_citizen is false, clear associated fields
+          updateFields.senior_citizen_id = null;
+          updateFields.senior_citizen_card_base64 = null;
+      }
+  } else { // If is_senior_citizen wasn't sent, but other senior fields were, still update them
       if (updatePayload.hasOwnProperty('senior_citizen_id')) updateFields.senior_citizen_id = updatePayload.senior_citizen_id;
       if (updatePayload.hasOwnProperty('senior_citizen_card_base64')) updateFields.senior_citizen_card_base64 = updatePayload.senior_citizen_card_base64;
-  } else if (updatePayload.is_senior_citizen === false) {
-      updateFields.senior_citizen_id = null;
-      updateFields.senior_citizen_card_base64 = null;
   }
   
   // REVISION: Process Proof of Residency file
@@ -1999,23 +2026,47 @@ app.put('/api/residents/:id', async (req, res) => {
     updateFields.proof_of_residency_base64 = updatePayload.proof_of_residency_base64;
   }
 
-  // Household Membership
+  // REVISION: Process Proof of Relationship file (for non-head residents)
+  if (!currentResident.is_household_head && updatePayload.hasOwnProperty('proof_of_relationship_base64')) {
+      updateFields.proof_of_relationship_base64 = updatePayload.proof_of_relationship_base64;
+  }
+
+  // Household Membership (mainly for heads)
   if (updatePayload.hasOwnProperty('is_household_head')) {
-    if (updatePayload.is_household_head === false) {
-      updateFields.household_member_ids = []; // Clear members if no longer a head
+    updateFields.is_household_head = Boolean(updatePayload.is_household_head);
+    if (updateFields.is_household_head === false) {
+      // If no longer a head, clear household_member_ids
+      updateFields.household_member_ids = []; 
+      // Also potentially clear household_head_id from this resident if it was a self-reference error
+      updateFields.household_head_id = null; 
     } else if (updatePayload.hasOwnProperty('household_member_ids')) {
+      // If still a head, update household_member_ids (expects an array of string IDs from frontend)
       updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
         ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
         : [];
     }
+  } else if (updatePayload.hasOwnProperty('household_member_ids') && currentResident.is_household_head) {
+      // If is_household_head wasn't changed but member IDs are sent (meaning it's an update to an existing head)
+      updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
+        ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
+        : [];
   }
+  // For non-heads, if household_head_id is in payload, update it.
+  if (!currentResident.is_household_head && updatePayload.hasOwnProperty('household_head_id')) {
+      if (ObjectId.isValid(updatePayload.household_head_id)) {
+          updateFields.household_head_id = new ObjectId(updatePayload.household_head_id);
+      } else {
+          updateFields.household_head_id = null;
+      }
+  }
+
 
   // Password Change
   if (updatePayload.newPassword) {
     if (String(updatePayload.newPassword).length < 6) {
         return res.status(400).json({ error: 'Validation failed', message: 'New password must be at least 6 characters.' });
     }
-    // WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT
+    // WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT (as mentioned in previous responses)
     updateFields.password_hash = md5(updatePayload.newPassword);
   }
 
@@ -2030,7 +2081,7 @@ app.put('/api/residents/:id', async (req, res) => {
     const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0 }});
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `Resident '${updatedResident.first_name} ${updatedResident.last_name}' information was updated.`,
+      description: `Resident '${updatedResident.first_name} ${updatedResident.last_name}${updatedResident.suffix ? ' ' + updatedResident.suffix : ''}' information was updated.`, // Added suffix to audit log
       action: "UPDATE",
       entityType: "Resident",
       entityId: id,

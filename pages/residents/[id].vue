@@ -21,7 +21,8 @@
               Status: {{ form.status }}
             </v-chip>
           </div>
-          <p class="text-grey-darken-1">{{ form.first_name }} {{ form.last_name }}</p>
+          <!-- UPDATED: Display suffix in the header -->
+          <p class="text-grey-darken-1">{{ form.first_name }} {{ form.middle_name ? form.middle_name + ' ' : '' }}{{ form.last_name }}{{ form.suffix ? ' ' + form.suffix : '' }}</p>
         </v-col>
         <v-col class="text-right" cols="auto">
           <div v-if="!editMode" class="d-inline-block me-3">
@@ -69,9 +70,12 @@
             <v-col cols="12" md="4"><v-text-field v-model="form.first_name" label="First Name*" :readonly="!editMode" variant="outlined" :error-messages="v$.first_name.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.middle_name" label="Middle Name" :readonly="!editMode" variant="outlined"></v-text-field></v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.last_name" label="Last Name*" :readonly="!editMode" variant="outlined" :error-messages="v$.last_name.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="3"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" :readonly="!editMode" variant="outlined" placeholder="Select Sex" :error-messages="v$.sex.$errors.map(e => e.$message)"></v-select></v-col>
-            <v-col cols="12" md="3"><v-text-field v-model="form.date_of_birth" label="Date of Birth*" type="date" :readonly="!editMode" variant="outlined" :error-messages="v$.date_of_birth.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="2"><v-text-field :model-value="calculatedAge" label="Age" readonly variant="outlined" hint="Auto-calculated" persistent-hint></v-text-field></v-col>
+            <v-col cols="12" md="4">
+              <v-select v-model="form.suffix" :items="suffixOptions" label="Suffix" :readonly="!editMode" variant="outlined" clearable></v-select>
+            </v-col>
+            <v-col cols="12" md="4"><v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex*" :readonly="!editMode" variant="outlined" placeholder="Select Sex" :error-messages="v$.sex.$errors.map(e => e.$message)"></v-select></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.date_of_birth" label="Date of Birth*" type="date" :readonly="!editMode" variant="outlined" :error-messages="v$.date_of_birth.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field :model-value="calculatedAge" label="Age" readonly variant="outlined" hint="Auto-calculated" persistent-hint></v-text-field></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" :readonly="!editMode" variant="outlined" placeholder="Select Civil Status" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" :readonly="!editMode" variant="outlined" placeholder="Select Citizenship" :error-messages="v$.citizenship.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
@@ -285,8 +289,11 @@ const route = useRoute();
 const router = useRouter();
 const residentId = route.params.id;
 
+const suffixOptions = ['Jr.', 'Sr.', 'I', 'II', 'III', 'IV', 'V', 'VI']; // Define suffix options
+
 const form = reactive({
-  first_name: '', middle_name: '', last_name: '', sex: null, date_of_birth: '', civil_status: null,
+  first_name: '', middle_name: '', last_name: '', suffix: null, // ADDED SUFFIX
+  sex: null, date_of_birth: '', civil_status: null,
   citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
   address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
   years_at_current_address: null, proof_of_residency_file: null, proof_of_residency_base64: null,
@@ -381,7 +388,8 @@ const resetZoom = () => { zoomLevel.value = 1; };
 
 
 const rules = {
-  first_name: { required }, last_name: { required }, sex: { required }, date_of_birth: { required },
+  first_name: { required }, last_name: { required }, suffix: {}, // ADDED SUFFIX RULE (optional)
+  sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
   address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
@@ -477,6 +485,8 @@ async function fetchResident() {
     const residentData = data.value;
     Object.assign(form, { ...residentData.resident, household_members_details: residentData.householdMembers || [] });
     form.date_of_birth = form.date_of_birth ? new Date(form.date_of_birth).toISOString().split('T')[0] : '';
+    // ensure suffix is properly initialized even if null from backend
+    form.suffix = residentData.resident.suffix || null; 
     originalFormState.value = JSON.parse(JSON.stringify(form));
   } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/residents'); }
   finally { loading.value = false; }
@@ -499,7 +509,7 @@ async function saveChanges() {
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
   saving.value = true;
   try {
-    const payload = { ...form };
+    const payload = { ...form }; // 'form' now includes 'suffix'
     payload.household_member_ids = form.household_members_details.map(m => m._id);
     delete payload.household_members_details;
     

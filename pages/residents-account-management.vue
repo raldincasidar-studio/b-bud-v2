@@ -54,7 +54,7 @@
         </template>
 
         <template v-slot:item.full_name="{ item }">
-          {{ item.first_name }} {{ item.last_name }}
+          {{ item.first_name }} {{ item.middle_name }} {{ item.last_name }} {{ item.suffix }}
         </template>
 
         <template v-slot:item.address_house_number="{ item }">
