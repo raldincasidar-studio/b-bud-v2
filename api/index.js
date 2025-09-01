@@ -1161,9 +1161,8 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         const dab = await db();
         const residentsCollection = dab.collection('residents');
         const documentRequestsCollection = dab.collection('document_requests');
-        
-        // ✨ --- ADDED: Get borrowed_assets collection --- ✨
         const borrowedAssetsCollection = dab.collection('borrowed_assets');
+        const complaintsCollection = dab.collection('complaints'); // ADDED: Declare complaints collection
 
         const resident = await residentsCollection.findOne({ _id: new ObjectId(id) });
         if (!resident) {
@@ -1187,39 +1186,62 @@ app.patch('/api/residents/:id/status', async (req, res) => {
             updateDocument.$set.date_approved = new Date();
         } 
         else if (status === 'Deactivated') {
-            const invalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${reason}`;
-            
-            // --- Existing logic for Document Requests (Unaffected) ---
-            await documentRequestsCollection.updateMany(
+            console.log(`Resident ${id} is being deactivated. Initiating cascading updates.`);
+            const defaultDeactivationReason = "Account deactivated by admin.";
+            const actualReason = reason && reason.trim() !== '' ? reason : defaultDeactivationReason; // Use provided reason or a default
+
+            // --- Existing logic for Document Requests ---
+            const docReqInvalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${actualReason}`;
+            const docReqUpdateResult = await documentRequestsCollection.updateMany(
                 { 
                     requestor_resident_id: new ObjectId(id),
-                    document_status: { $in: ['Pending', 'Processing', 'Approved', 'Ready for Pickup'] }
+                    document_status: { $in: ['Pending', 'Processing'] }
                 },
                 { 
                     $set: { 
                         document_status: 'Declined', 
-                        status_reason: invalidationReason,
+                        status_reason: docReqInvalidationReason,
                         updated_at: new Date()
                     } 
                 }
             );
+            console.log(`[Deactivation Cascading] Document Requests: ${docReqUpdateResult.modifiedCount} requests declined for resident ${id}.`);
             
-            // ✨ --- NEW: Logic to Reject Borrowed Asset Transactions --- ✨
-            const rejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${reason}"`;
-            await borrowedAssetsCollection.updateMany(
+            // --- Logic to Reject Borrowed Asset Transactions ---
+            const borrowedAssetsRejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${actualReason}"`;
+            const borrowedAssetsUpdateResult = await borrowedAssetsCollection.updateMany(
                 {
                     borrower_resident_id: new ObjectId(id),
-                    status: { $in: ['Pending', 'Processing', 'Approved'] } // Active statuses to be rejected
+                    status: { $in: ['Pending', 'Processing'] } // Active statuses to be rejected
                 },
                 {
                     $set: {
                         status: 'Rejected',
-                        notes: rejectionNote, // Set a clear rejection reason in the notes
+                        notes: borrowedAssetsRejectionNote, // Set a clear rejection reason in the notes
                         updated_at: new Date()
                     }
                 }
             );
-            // ✨ --- END OF NEW LOGIC --- ✨
+            console.log(`[Deactivation Cascading] Borrowed Assets: ${borrowedAssetsUpdateResult.modifiedCount} transactions rejected for resident ${id}.`);
+
+            // --- ADDED: Logic to Dismiss/Decline Pending Complaints ---
+            const complaintDismissReason = `Complaint automatically dismissed due to complainant's deactivated account. Reason: "${actualReason}"`;
+            const complaintsUpdateResult = await complaintsCollection.updateMany(
+                {
+                    complainant_resident_id: new ObjectId(id),
+                    // These are the "active" statuses for a complaint
+                    status: { $in: ['New'] } 
+                },
+                {
+                    $set: {
+                        status: 'Dismissed', // Set to 'Dismissed'
+                        status_reason: complaintDismissReason, // Set the specific reason
+                        updated_at: new Date()
+                    }
+                }
+            );
+            console.log(`[Deactivation Cascading] Complaints: ${complaintsUpdateResult.modifiedCount} complaints dismissed for resident ${id}.`);
+            // --- END ADDED LOGIC ---
         }
 
         const result = await residentsCollection.updateOne(
@@ -1245,7 +1267,6 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
     }
 });
-
 
 // GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
@@ -3679,8 +3700,9 @@ app.delete("/api/notifications/:id", async (req, res) => {
 // ====================== HELPER FUNCTION =========================== //
 
 /**
- * Checks if a resident's account is 'Active'.
- * Throws an error if the account is not found or is deactivated.
+ * Checks if a resident's account is 'Active' and 'Approved'.
+ * Throws an error if the account is not found, is pending approval, declined,
+ * deactivated (primary status), or on hold (secondary account_status).
  * This acts as a security gatekeeper for creating new requests.
  * @param {ObjectId} residentId - The ID of the resident to check.
  * @param {Db} dab - The database connection instance.
@@ -3694,10 +3716,27 @@ const checkResidentAccountStatus = async (residentId, dab) => {
     throw new Error('Invalid resident specified.'); 
   }
 
-  if (resident.account_status === 'Deactivated') {
-    // This is the specific error we want to catch
-    throw new Error(`This resident's account is On Hold/Deactivated. They cannot make new requests until their pending issues are resolved.`);
+  // --- Primary Status Check (Registration Lifecycle) ---
+  if (resident.status === 'Pending') {
+    throw new Error(`Resident account is pending approval. You cannot make new requests until your account is approved by an administrator.`);
   }
+  if (resident.status === 'Declined') {
+    throw new Error(`Resident account has been declined. You cannot make new requests.`);
+  }
+  // Note: If resident.status is 'Deactivated', the account_status below would likely also be 'Deactivated',
+  // but explicitly checking here ensures the message is specific to primary deactivation.
+  if (resident.status === 'Deactivated') {
+    throw new Error(`Resident account has been permanently deactivated. You cannot make new requests.`);
+  }
+
+  // --- Secondary Status Check (Post-Approval Holds, e.g., for borrowed assets) ---
+  if (resident.account_status === 'Deactivated') {
+    // This is for accounts that are 'Approved' but then put 'On Hold' due to other issues.
+    throw new Error(`This resident's account is currently On Hold/Deactivated due to unresolved issues. You cannot make new requests until these issues are resolved.`);
+  }
+
+  // If the code reaches here, the resident's primary status is 'Approved'
+  // and their secondary account_status is 'Active' or equivalent, allowing requests.
 };
 
 // Add this helper function near the top of your file with the others
@@ -4778,6 +4817,7 @@ app.get('/api/complaints/:id', async (req, res) => {
           proofs_base64: 1, 
           complainant_details: 1,
           person_complained_details: 1,
+           status_reason: 1,
         }
       }
     ];
@@ -4969,11 +5009,16 @@ app.post('/api/complaints/:id/notes', async (req, res) => {
 // PATCH /api/complaints/:id/status
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, reason } = req.body; // <-- MODIFIED: Destructure 'reason' from req.body
   const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
   
   if (!status || !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+  }
+
+  // NEW: Require reason for 'Dismissed' status
+  if (status === 'Dismissed' && (!reason || reason.trim() === '')) {
+      return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this complaint.` });
   }
 
   const dab = await db();
@@ -4999,26 +5044,44 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
         return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
     }
 
+    const updateSet = { status: status, updated_at: new Date() };
+
+    // NEW: Conditionally add or unset `status_reason` based on the new status and reason
+    if (reason && status === 'Dismissed') { // Only save reason for 'Dismissed'
+        updateSet.status_reason = reason;
+    } else {
+        // If status is changed to one that doesn't require a reason, unset any old reason
+        await complaintsCollection.updateOne(
+            { _id: originalComplaint._id },
+            { $unset: { status_reason: "" } }
+        );
+    }
+
     await complaintsCollection.updateOne(
       { _id: originalComplaint._id },
-      { $set: { status: status, updated_at: new Date() } }
+      { $set: updateSet } // Use the dynamic updateSet
     );
 
     await createAuditLog({
-        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'.`,
+        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'. Reason: ${reason || 'N/A'}`, // Include reason in audit log
         action: "STATUS_CHANGE",
         entityType: "Complaint",
         entityId: originalComplaint._id.toString(),
     }, req);
 
     if (originalComplaint.complainant_resident_id) {
+      // NEW: Adjust notification content to include the reason if provided
+      const notificationContent = reason 
+        ? `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}. Reason: ${reason}`
+        : `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`;
+
       await createNotification(dab, {
         name: `Complaint Status Update (Ref: ${originalComplaint.ref_no})`,
-        content: `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`,
+        content: notificationContent, // Use the adjusted content
         by: "System Administration",
         type: "Notification",
-        target_audience: 'Specific Residents', // Ensure this matches your createNotification function
-        target_residents: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
+        target_audience: 'SpecificResidents', // Ensure this matches your createNotification function
+        recipient_ids: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
       });
     }
 

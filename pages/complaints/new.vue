@@ -31,17 +31,23 @@
               @blur="v$.complainant_resident.$touch"
               no-filter
             >
-              <!-- UPDATED: Template now shows full name and full address -->
+              <!-- UPDATED: Template now checks both 'status' and 'account_status' -->
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
                   :title="item.raw.name"
                   :subtitle="item.raw.address" 
-                  :disabled="item.raw.account_status !== 'Active'"
+                  :disabled="item.raw.status !== 'Approved' || item.raw.account_status !== 'Active'"
                 >
                   <template v-slot:append>
                     <v-chip
-                      v-if="item.raw.account_status !== 'Active'"
+                      v-if="item.raw.status !== 'Approved'"
+                      color="orange-darken-1" variant="tonal" size="small" label
+                    >
+                      {{ item.raw.status }}
+                    </v-chip>
+                    <v-chip
+                      v-else-if="item.raw.account_status !== 'Active'"
                       color="warning" variant="tonal" size="small" label
                     >
                       On Hold
@@ -242,9 +248,20 @@ const isLoadingComplainants = ref(false);
 const rules = {
     complainant_resident: {
         required: helpers.withMessage('A complainant must be selected.', required),
+        // UPDATED: Check both 'status' and 'account_status'
         isActive: helpers.withMessage(
-            "This resident's account is On Hold and cannot file complaints.",
-            (value) => !value || value.account_status === 'Active'
+            (value) => {
+                if (!value) return "Complainant not selected.";
+                if (value.status === 'Pending') return "Resident account is pending approval and cannot file complaints.";
+                if (value.status === 'Declined') return "Resident account has been declined and cannot file complaints.";
+                if (value.status === 'Deactivated') return "Resident account has been permanently deactivated and cannot file complaints.";
+                if (value.account_status !== 'Active') return "This resident's account is On Hold and cannot file complaints.";
+                return true; // If all checks pass, it's active
+            },
+            (value) => {
+                if (!value) return true; // Let 'required' handle null/undefined
+                return value.status === 'Approved' && value.account_status === 'Active';
+            }
         )
     },
     complainant_address: { required },
@@ -295,6 +312,7 @@ const searchResidentsAPI = debounce(async (query) => {
                 email: r.email,
                 address: fullAddress || 'No address available',
                 contact_number: r.contact_number,
+                status: r.status, // ADDED: Project 'status'
                 account_status: r.account_status
             }
         }) || [];

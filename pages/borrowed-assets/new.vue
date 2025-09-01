@@ -54,21 +54,36 @@
                   </v-list-item>
                 </template>
 
-                <!-- UPDATED TEMPLATE: Visually identifies and disables 'On Hold' accounts -->
+                <!-- UPDATED TEMPLATE: Now checks both 'status' and 'account_status' -->
                  <template v-slot:item="{ props, item }">
                   <v-list-item
                     v-bind="props"
                     :title="item.raw.fullName"
                     :subtitle="item.raw.address_street"
-                    :disabled="item.raw.account_status !== 'Active'"
+                    :disabled="item.raw.status !== 'Approved' || item.raw.account_status !== 'Active'"
                   >
                     <template v-slot:append>
                       <v-chip
-                        v-if="item.raw.account_status !== 'Active'"
-                        color="warning"
-                        variant="tonal"
-                        size="small"
-                        label
+                        v-if="item.raw.status === 'Pending'"
+                        color="orange-darken-1" variant="tonal" size="small" label
+                      >
+                        Pending
+                      </v-chip>
+                      <v-chip
+                        v-else-if="item.raw.status === 'Declined'"
+                        color="red-darken-2" variant="tonal" size="small" label
+                      >
+                        Declined
+                      </v-chip>
+                      <v-chip
+                        v-else-if="item.raw.status === 'Deactivated'"
+                        color="grey-darken-1" variant="tonal" size="small" label
+                      >
+                        Deactivated
+                      </v-chip>
+                      <v-chip
+                        v-else-if="item.raw.account_status !== 'Active'"
+                        color="warning" variant="tonal" size="small" label
                       >
                         On Hold
                       </v-chip>
@@ -182,7 +197,7 @@
 import { ref, reactive, watch, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
-import { useNuxtApp } from '#app';
+import { useNuxtApp, useCookie } from '#app';
 
 const { $toast } = useNuxtApp();
 const router = useRouter();
@@ -217,18 +232,21 @@ const useDebounce = (fn, delay = 500) => {
   };
 };
 
-// FILE: .../borrowed-assets/new.vue
-// Line to ADD inside the rules object
-
 const rules = {
   required: value => !!value || 'This field is required.',
   requiredObject: value => (!!value && typeof value === 'object' && value !== null) || 'You must select a borrower.',
   
-  // ---> ADD THIS NEW RULE <---
+  // UPDATED: Check both 'status' and 'account_status'
   borrowerIsActive: value => {
     if (!value) return true; // Let the 'requiredObject' rule handle empty selections.
-    // This rule checks the status of the selected resident object.
-    return value.account_status === 'Active' || `This resident's account is On Hold and cannot borrow new items.`;
+    
+    // Detailed message based on resident's status
+    if (value.status === 'Pending') return `Resident account is pending approval and cannot borrow new items.`;
+    if (value.status === 'Declined') return `Resident account has been declined and cannot borrow new items.`;
+    if (value.status === 'Deactivated') return `Resident account has been permanently deactivated and cannot borrow new items.`;
+    if (value.account_status !== 'Active') return `This resident's account is On Hold and cannot borrow new items.`;
+    
+    return true; // If all checks pass, the borrower is active and can proceed
   },
   
   futureDate: value => new Date(value) >= new Date(new Date().toDateString()) || 'Date cannot be in the past.',
@@ -258,6 +276,7 @@ const searchBorrowers = useDebounce(async (query) => {
       borrowerSearchResults.value = data.value.residents.map(r => ({
         ...r,
         fullName: `${r.first_name} ${r.middle_name || ''} ${r.last_name}`.replace(/\s+/g, ' ').trim(),
+        status: r.status, // ADDED: Project 'status' here
       }));
     }
   } catch(e) {
@@ -269,27 +288,21 @@ const searchBorrowers = useDebounce(async (query) => {
 });
 
 watch(borrowerSearchQuery, (query) => {
-  // Don't search if the query is the same as the selected borrower's name
   if (selectedBorrower.value && query === selectedBorrower.value.fullName) return;
   searchBorrowers(query);
 });
 
-// --- In borrowed-assets/new.vue ---
-
 async function fetchInventory() {
   isLoadingInventory.value = true;
   try {
-    // 1. Call the new, correct endpoint. We use a large itemsPerPage to get all assets.
     const { data, error } = await useMyFetch('/api/assets', { 
-      query: { itemsPerPage: 1000 } // Get all assets for the dropdown
+      query: { itemsPerPage: 1000 }
     });
 
     if (error.value) {
       throw new Error('Failed to load asset inventory.');
     }
 
-    // 2. The new endpoint returns an 'assets' array, not 'inventory'.
-    // The fields 'name' and 'available' are already calculated correctly by the server.
     inventoryItems.value = data.value?.assets || [];
 
   } catch(e) {
