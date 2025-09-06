@@ -6,7 +6,12 @@
         <p class="text-grey-darken-1">Track and manage all resident complaints.</p>
       </v-col>
       <v-col class="text-right">
-        <v-btn size="large" to="/complaints/new" prepend-icon="mdi-comment-alert-outline" color="primary">
+        <v-btn
+          size="large"
+          to="/complaints/new"
+          prepend-icon="mdi-comment-alert-outline"
+          color="primary"
+          >
           File New Complaint
         </v-btn>
       </v-col>
@@ -57,6 +62,7 @@
         :loading="loading"
         @update:options="loadComplaints"
         item-value="_id"
+        :sort-by="initialSortBy"
       >
         <template v-slot:item.ref_no="{ item }">
           <span class="font-weight-medium text-caption">{{ item.ref_no }}</span>
@@ -64,13 +70,8 @@
         <template v-slot:item.date_of_complaint="{ item }">
           {{ formatDate(item.date_of_complaint) }}
         </template>
-        <template v-slot:item.notes_description="{ item }">
-          <div class="text-truncate" style="max-width: 250px;" :title="item.notes_description">
-            {{ item.notes_description }}
-          </div>
-        </template>
+        <!-- The notes_description slot has been removed to match your old UI -->
 
-        <!-- MODIFIED: Status chip in the table now has an icon -->
         <template v-slot:item.status="{ item }">
           <div class="d-flex align-center justify-center">
             <v-chip
@@ -99,21 +100,26 @@
 </template>
 
 <script setup>
-import { ref, watch } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
+import { useRoute } from 'vue-router';
 
 const { $toast } = useNuxtApp();
+const route = useRoute();
 
 const searchKey = ref('');
-const selectedStatus = ref('All'); // 'All' is the default selection
+const selectedStatus = ref('All');
 const totalItems = ref(0);
 const complaints = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
 const updatingStatusFor = ref(null);
 
-// --- Centralized Status Configuration ---
+const initialSortBy = ref([{ key: 'date_of_complaint', order: 'desc' }]);
+
+// No longer fetching current user status on this page, per previous request.
+
 const STATUS_CONFIG = {
   'All':                 { color: 'primary', icon: 'mdi-filter-variant' },
   'New':                 { color: 'info', icon: 'mdi-bell-ring-outline' },
@@ -123,7 +129,6 @@ const STATUS_CONFIG = {
   'Dismissed':           { color: 'error', icon: 'mdi-cancel' },
 };
 
-// Use the keys from the config to drive the UI, ensuring 'All' is first.
 const statusFilterItems = ref(Object.keys(STATUS_CONFIG));
 
 const headers = ref([
@@ -132,11 +137,11 @@ const headers = ref([
   { title: 'Complained Against', key: 'person_complained_against', sortable: true },
   { title: 'Date Filed', key: 'date_of_complaint', sortable: true },
   { title: 'Category', key: 'category', sortable: false },
+  // The 'Description' header entry has been removed to match your old UI.
   { title: 'Status', key: 'status', sortable: true, align: 'center', width: '220px'},
   { title: 'Details', key: 'action', sortable: false, align: 'center' },
 ]);
 
-// --- REFACTORED: getAvailableActions now uses STATUS_CONFIG ---
 const getAvailableActions = (currentStatus) => {
   const allActions = {
     'New': { status: 'New', title: 'Mark as New' },
@@ -146,7 +151,6 @@ const getAvailableActions = (currentStatus) => {
     'Dismissed': { status: 'Dismissed', title: 'Dismiss Complaint' },
   };
 
-  // Return all actions that are not the current status, enriching them with color/icon from config
   return Object.values(allActions)
     .filter(action => action.status !== currentStatus)
     .map(action => ({
@@ -156,7 +160,6 @@ const getAvailableActions = (currentStatus) => {
     }));
 };
 
-// --- Debounced search ---
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
@@ -166,9 +169,18 @@ watch(searchKey, () => {
 });
 
 watch(selectedStatus, () => {
-  // When status filter changes, reload data from the first page
   loadComplaints({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
+
+watch(() => route.fullPath, (newPath, oldPath) => {
+    if (newPath === oldPath) return; 
+    const newStatus = route.query.status || 'All';
+    if (newStatus !== selectedStatus.value) {
+        selectedStatus.value = newStatus;
+    } else {
+        loadComplaints({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+    }
+}, { deep: true });
 
 onMounted(() => {
     const statusQuery = new URLSearchParams(window.location.search).get('status');
@@ -182,18 +194,27 @@ onMounted(() => {
 async function loadComplaints(options) {
   loading.value = true;
   const { page, itemsPerPage: rpp, sortBy } = options;
-  const queryParams = {
+  
+  const queryFromUrl = { ...route.query };
+
+  const queryFromUi = {
     search: searchKey.value,
     page: page,
     itemsPerPage: rpp,
+    status: selectedStatus.value === 'All' ? undefined : selectedStatus.value,
   };
 
-  if (selectedStatus.value && selectedStatus.value !== 'All') {
-    queryParams.status = selectedStatus.value;
+  if (sortBy && sortBy.length > 0) {
+    queryFromUi.sortBy = sortBy[0].key;
+    queryFromUi.sortOrder = sortBy[0].order;
   }
+  
+  const finalQuery = { ...queryFromUrl, ...queryFromUi };
+  
+  Object.keys(finalQuery).forEach(key => (finalQuery[key] === undefined || finalQuery[key] === null || finalQuery[key] === '') && delete finalQuery[key]);
 
   try {
-    const { data, error } = await useMyFetch('/api/complaints', { query: queryParams });
+    const { data, error } = await useMyFetch('/api/complaints', { query: finalQuery });
     if (error.value) throw new Error('Failed to load complaints.');
     complaints.value = data.value?.complaints || [];
     totalItems.value = data.value?.total || 0;
@@ -215,7 +236,6 @@ async function updateComplaintStatus(complaintItem, newStatus) {
 
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
     
-    // On success, update the item in the local list to reflect the change
     const itemIndex = complaints.value.findIndex(c => c._id === complaintItem._id);
     if (itemIndex > -1) {
       complaints.value[itemIndex].status = newStatus;
@@ -229,13 +249,11 @@ async function updateComplaintStatus(complaintItem, newStatus) {
   }
 }
 
-// --- Helper Functions ---
 const formatDate = (dateString) => {
   if (!dateString) return 'N/A';
   return new Date(dateString).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
-// Helper functions to use the central STATUS_CONFIG object
 const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
 const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
 

@@ -48,7 +48,8 @@ function generateOTP() {
 let CLIENT_DB;
 
 async function db() {
-  CLIENT_DB = new MongoClient(MONGODB_URI, { useNewUrlParser: true, useUnifiedTopology: true });
+  // REMOVED deprecated options: useNewUrlParser and useUnifiedTopology
+  CLIENT_DB = new MongoClient(MONGODB_URI);
   try {
     await CLIENT_DB.connect();
     return CLIENT_DB.db('bbud-backend');
@@ -637,34 +638,29 @@ app.post('/api/residents/forgot-password/verify-otp', async (req, res) => {
 
 // Helper function to create a resident document from payload data.
 // This reduces code duplication between head and member creation.
+// Helper function to create a resident document from payload data.
 const createResidentDocument = (data, isHead = false, headAddress = null) => {
     const age = calculateAge(data.date_of_birth);
-    let passwordHash = null;
     let email = data.email ? String(data.email).toLowerCase() : null;
+    let contact_number = data.contact_number ? String(data.contact_number).trim() : null;
 
-    // Password is required for the head, and for members creating an account.
-    if (data.password) {
-        passwordHash = md5(data.password);
-
-    }
-    
     return {
         // Personal Info
         first_name: data.first_name,
         middle_name: data.middle_name || null,
         last_name: data.last_name,
+        suffix: data.suffix || null,
         sex: data.sex,
         date_of_birth: new Date(data.date_of_birth),
         age: age,
         civil_status: data.civil_status,
-        citizenship: data.citizenship, // REVISION: Added field
+        citizenship: data.citizenship,
         occupation_status: data.occupation_status,
         email: email,
-        password_hash: passwordHash,
-        contact_number: data.contact_number,
+        password_hash: null, // Password will be set/hashed during activation for pending accounts
+        contact_number: contact_number,
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
-         // --- NEW: Add photo and proof fields to be saved in the database ---
         proof_of_relationship_file: data.proof_of_relationship_file || null,
         proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
 
@@ -673,8 +669,8 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         address_street: headAddress ? headAddress.address_street : data.address_street,
         address_subdivision_zone: headAddress ? headAddress.address_subdivision_zone : data.address_subdivision_zone,
         address_city_municipality: headAddress ? headAddress.address_city_municipality : data.address_city_municipality,
-        years_at_current_address: isHead ? data.years_at_current_address : null, // REVISION: Added field (only for head)
-        proof_of_residency_base64: isHead ? data.proof_of_residency_base64 : null, // REVISION: Added field (only for head)
+        years_at_current_address: isHead ? data.years_at_current_address : null,
+        proof_of_residency_base64: isHead ? data.proof_of_residency_base64 : null,
 
         // Voter Info
         is_voter: data.is_voter || false,
@@ -686,42 +682,42 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         pwd_id: data.is_pwd ? data.pwd_id : null,
         pwd_card_base64: data.is_pwd ? data.pwd_card_base64 : null,
 
-        // REVISION: Senior Citizen Info now based on the flag, not just age
         is_senior_citizen: data.is_senior_citizen || false,
         senior_citizen_id: data.is_senior_citizen ? data.senior_citizen_id : null,
         senior_citizen_card_base64: data.is_senior_citizen ? data.senior_citizen_card_base64 : null,
         
         // System-set Fields
         is_household_head: isHead,
-        household_member_ids: isHead ? [] : undefined, // Only heads have this array initially
-        status: 'Pending',
+        household_member_ids: isHead ? [] : undefined,
+        status: 'Pending', // All new accounts start as Pending, awaiting activation
         created_at: new Date(),
         updated_at: new Date(),
+        date_approved: null, // Will be set upon approval/activation
+        
+        // --- NEW: Account activation fields (temporary) ---
+        // account_number: null, // Removed as per your request
+        activation_otp: null,
+        activation_otp_expiry: null,
+        pending_password_hash: null, // Will hold the new password during activation flow
+        account_status: 'Active', // Default account_status unless issues like overdue
     };
 };
 
-
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - CORRECTED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED
 app.post('/api/residents', async (req, res) => {
-    // --- FIX: ESTABLISH DB CONNECTION AND GET COLLECTION FIRST ---
-    // This was the source of the crash. `db()` must be called before using `CLIENT_DB`.
     const dab = await db();
     const residentsCollection = dab.collection('residents');
-
-    // --- NOW IT'S SAFE TO START A SESSION ---
     const session = CLIENT_DB.startSession();
 
     try {
         let newHouseholdHead;
 
-        // Start the transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
-                // Use throw new Error within a transaction to abort it automatically
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
@@ -730,46 +726,38 @@ app.post('/api/residents', async (req, res) => {
             }
 
             const headResidentDocument = createResidentDocument(headData, true);
-            
-            headResidentDocument.created_at = new Date();
-            headResidentDocument.updated_at = new Date();
-            headResidentDocument.date_approved = null;
+            // Store head's email, contact_number, and password as pending
+            headResidentDocument.email = headData.email.toLowerCase();
+            headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null;
+            headResidentDocument.pending_password_hash = md5(headData.password); // Store new password temporarily for the head's own activation
 
-            
-            // validate the proof of resident image
+            // ... (validation for proof of residency, voter, PWD as existing, remains the same) ...
             const proofOfResidencyResult = await validateProofOfResidency(headData, headData.proof_of_residency_base64);
-            // console.log('Proof of resident result: ', proofOfResidencyResult);
             if (!proofOfResidencyResult.isValid) {
-                return res.status(400).json({ error: proofOfResidencyResult.message, message: 'Proof of residency validation failed' });
+                throw new Error(proofOfResidencyResult.message);
             }
-
-            // validate the proof of voter image
             if (headData.is_voter) {
                 const proofOfVoterResult = await validateProofOfVoter(headData, headData.voter_registration_proof_base64);
-                // console.log('Proof of voter result: ', proofOfVoterResult);
                 if (!proofOfVoterResult.isValid) {
-                    return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                    throw new Error(proofOfVoterResult.message);
                 }
             }
-
-            // validate the proof of PWD image
             if (headData.is_pwd) {
                 const proofOfPWDResult = await validateProofOfPWD(headData, headData.pwd_card_base64);
-                // console.log('Proof of PWD result: ', proofOfPWDResult);
                 if (!proofOfPWDResult.isValid) {
-                    return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                    throw new Error(proofOfPWDResult.message);
                 }
             }
-
+            
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
-            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+            // Removed account_number assignment here.
 
-            
+            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
 
             // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
-            const processedEmails = new Set([headData.email.toLowerCase()]);
+            const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []);
 
             for (const memberData of membersToCreate) {
                 if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
@@ -777,50 +765,32 @@ app.post('/api/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                if (memberAge >= 15 && (memberData.email || memberData.password)) {
-                    if (!memberData.email || !memberData.password) {
-                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
-                    }
-                    const memberEmail = memberData.email.toLowerCase();
-                    if (processedEmails.has(memberEmail)) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
-                    }
-                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
-                    if (existingMemberEmail) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
-                    }
-                    processedEmails.add(memberEmail);
-                } else {
-                    memberData.email = null;
-                    memberData.password = null;
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
+                newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+                newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+                if (memberData.password) {
+                    newMemberDoc.pending_password_hash = md5(memberData.password);
                 }
                 
-                const newMemberDoc = createResidentDocument(memberData, false, headData);
-
-                newMemberDoc.created_at = new Date();
-                newMemberDoc.updated_at = new Date();
-                newMemberDoc.date_approved = null;
-
-                // validate the vouter id if the member is a voter
+                // ... (validation for voter, PWD as existing, remains the same) ...
                 if (memberData.is_voter) {
                     const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
-                    // console.log('Proof of voter result: ', proofOfVoterResult);
                     if (!proofOfVoterResult.isValid) {
-                        return res.status(400).json({ error: proofOfVoterResult.message, message: 'Proof of voter validation failed' });
+                        throw new Error(proofOfVoterResult.message);
                     }
                 }
-
-                // validate the proof of PWD image
                 if (memberData.is_pwd) {
                     const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
-                    // console.log('Proof of PWD result: ', proofOfPWDResult);
                     if (!proofOfPWDResult.isValid) {
-                        return res.status(400).json({ error: proofOfPWDResult.message, message: 'Proof of PWD validation failed' });
+                        throw new Error(proofOfPWDResult.message);
                     }
                 }
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
-                createdMemberIds.push(memberInsertResult.insertedId);
+                const insertedMemberId = memberInsertResult.insertedId;
+                // Removed account_number assignment here.
+
+                createdMemberIds.push(insertedMemberId);
             }
 
             // --- Step 3: Link Members to the Head ---
@@ -834,40 +804,37 @@ app.post('/api/residents', async (req, res) => {
             }
         }); // End of the transaction
 
-        // If the transaction was successful, create an audit log
+        // The audit log description below will also need to be adjusted as 'account_number' is not available in newHouseholdHead
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
           userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
-          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`,
+          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`, // Simplified description
           action: "REGISTER",
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
         }, req)
 
         res.status(201).json({
-            message: 'Household registered successfully! All accounts are pending approval.',
-            resident: newHouseholdHead
+            message: 'Household registered successfully! All accounts are pending activation.',
+            resident: newHouseholdHead // The frontend will need to derive the account number from _id
         });
 
     } catch (error) {
-        // This block will catch errors thrown from inside the transaction
         console.error("Error during household registration transaction:", error);
         if (error.message.startsWith('Conflict:')) {
-            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+            return res.status(409).json({ error: 'The email is already been registered.', message: error.message });
         }
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
-        // Generic server error for anything else
         console.error('Mobile Registration error: ', error);
         res.status(500).json({ error: error, message: 'Could not complete registration.' });
     } finally {
-        // This will run whether the transaction succeeded or failed
         await session.endSession();
     }
 });
 
-// POST /api/admin/residents - FOR ADMIN ENDPOINT CREATE RESIDENT
+// POST /api/admin/residents - FOR ADMIN ENDPOINT CREATE RESIDENT (UPDATED)
 app.post('/api/admin/residents', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
@@ -876,16 +843,13 @@ app.post('/api/admin/residents', async (req, res) => {
     try {
         let newHouseholdHead;
 
-        // Status is always 'Approved' for this route.
-        const finalStatus = 'Approved';
+        const finalStatus = 'Approved'; // Admin can set to Approved directly
         const finalApprovalDate = new Date();
 
-        // Start the database transaction
         await session.withTransaction(async () => {
             const headData = req.body;
             const membersToCreate = headData.household_members_to_create || [];
 
-            // --- Step 1: Validate and Prepare the Household Head ---
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
@@ -898,14 +862,15 @@ app.post('/api/admin/residents', async (req, res) => {
             }
 
             const headResidentDocument = createResidentDocument(headData, true);
+            headResidentDocument.password_hash = md5(headData.password); // Admin sets password directly for immediate login
+            headResidentDocument.email = headData.email.toLowerCase(); // Ensure email is saved
+            headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null; // Ensure contact is saved
             
-            // --- FIX: Explicitly assign all Base64 fields for the HEAD ---
             headResidentDocument.proof_of_residency_base64 = headData.proof_of_residency_base64 || null;
             headResidentDocument.voter_registration_proof_base64 = headData.voter_registration_proof_base64 || null;
             headResidentDocument.pwd_card_base64 = headData.pwd_card_base64 || null;
             headResidentDocument.senior_citizen_card_base64 = headData.senior_citizen_card_base64 || null;
             
-            // Apply the hardcoded 'Approved' status
             headResidentDocument.status = finalStatus;
             headResidentDocument.date_approved = finalApprovalDate;
             headResidentDocument.created_at = new Date();
@@ -913,9 +878,10 @@ app.post('/api/admin/residents', async (req, res) => {
 
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
+            // Removed account_number assignment here.
+
             newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
 
-            // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
             const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []);
 
@@ -925,43 +891,32 @@ app.post('/api/admin/residents', async (req, res) => {
                 }
                 const memberAge = calculateAge(memberData.date_of_birth);
                 
-                if (memberAge >= 15 && (memberData.email || memberData.password)) {
-                    if (!memberData.email || !memberData.password) {
-                        throw new Error(`Validation failed for member ${memberData.first_name}: Email and password are both required if creating an account.`);
-                    }
-                    const memberEmail = memberData.email.toLowerCase();
-                    if (processedEmails.has(memberEmail)) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is duplicated in this request.`);
-                    }
-                    const existingMemberEmail = await residentsCollection.findOne({ email: memberEmail }, { session });
-                    if (existingMemberEmail) {
-                        throw new Error(`Conflict: The email address '${memberEmail}' is already in use.`);
-                    }
-                    processedEmails.add(memberEmail);
-                } else {
-                    memberData.email = null;
-                    memberData.password = null;
-                }
-                
                 const newMemberDoc = createResidentDocument(memberData, false, headData);
-                
-                // --- FIX: Explicitly assign all Base64 fields for the MEMBER ---
+                if (memberData.password) {
+                    newMemberDoc.password_hash = md5(memberData.password);
+                } else {
+                    newMemberDoc.password_hash = null;
+                }
+                newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+                newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+
                 newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
                 newMemberDoc.voter_registration_proof_base64 = memberData.voter_registration_proof_base64 || null;
                 newMemberDoc.pwd_card_base64 = memberData.pwd_card_base64 || null;
                 newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
 
-                // Apply the hardcoded 'Approved' status to all members
                 newMemberDoc.status = finalStatus;
                 newMemberDoc.date_approved = finalApprovalDate;
                 newMemberDoc.created_at = new Date();
                 newMemberDoc.updated_at = new Date();
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
-                createdMemberIds.push(memberInsertResult.insertedId);
+                const insertedMemberId = memberInsertResult.insertedId;
+                // Removed account_number assignment here.
+
+                createdMemberIds.push(insertedMemberId);
             }
 
-            // --- Step 3: Link Members to the Head ---
             if (createdMemberIds.length > 0) {
                 await residentsCollection.updateOne(
                     { _id: insertedHeadId },
@@ -970,9 +925,8 @@ app.post('/api/admin/residents', async (req, res) => {
                 );
                 newHouseholdHead.household_member_ids = createdMemberIds;
             }
-        }); // End of transaction
+        });
 
-        
         await createAuditLog({
           userId: 'SYSTEM_ADMIN', 
           userName: 'System Admin', 
@@ -996,6 +950,108 @@ app.post('/api/admin/residents', async (req, res) => {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         res.status(500).json({ error: 'Server Error', message: 'Could not complete registration.' });
+    } finally {
+        await session.endSession();
+    }
+});
+
+// POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD (UPDATED)
+app.post('/api/residents/:householdHeadId/members', async (req, res) => {
+    const { householdHeadId } = req.params;
+    const memberData = req.body;
+
+    if (!ObjectId.isValid(householdHeadId)) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Invalid household head ID format.' });
+    }
+    if (!memberData || !memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
+        return res.status(400).json({ error: 'Validation Error', message: 'Missing required member information.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const session = CLIENT_DB.startSession();
+
+    try {
+        let newMemberId;
+
+        await session.withTransaction(async () => {
+            const householdHead = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) }, { session });
+            if (!householdHead || !householdHead.is_household_head) {
+                throw new Error('Household head not found or the specified user is not a household head.');
+            }
+
+            if (memberData.email) {
+                const existingEmail = await residentsCollection.findOne({ email: memberData.email.toLowerCase() }, { session });
+                if (existingEmail) {
+                    throw new Error(`Conflict: The email address '${memberData.email}' is already in use.`);
+                }
+            }
+
+            const newMemberDoc = createResidentDocument(memberData, false, householdHead);
+            newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+            newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+            if (memberData.password) {
+                newMemberDoc.pending_password_hash = md5(memberData.password);
+            }
+            
+            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
+            newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
+            
+            if (memberData.is_voter) {
+                const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
+                if (!proofOfVoterResult.isValid) {
+                    throw new Error(proofOfVoterResult.message);
+                }
+            }
+            if (memberData.is_pwd) {
+                const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
+                if (!proofOfPWDResult.isValid) {
+                    throw new Error(proofOfPWDResult.message);
+                }
+            }
+            // Add validation for senior citizen if needed
+
+            newMemberDoc.status = 'Pending';
+            newMemberDoc.date_approved = null;
+            newMemberDoc.created_at = new Date();
+            newMemberDoc.updated_at = new Date();
+
+            const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
+            newMemberId = memberInsertResult.insertedId;
+            // Removed account_number assignment here.
+
+            await residentsCollection.updateOne(
+                { _id: new ObjectId(householdHeadId) },
+                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
+                { session }
+            );
+        });
+
+        const headDetails = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) });
+        // The audit log description below will need to be adjusted as 'account_number' is not directly available
+        await createAuditLog({
+          userId: householdHeadId,
+          userName: `${headDetails.first_name} ${headDetails.last_name}`,
+          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`, // Simplified description
+          action: "ADD_MEMBER",
+          entityType: "Resident",
+          entityId: newMemberId.toString(),
+        }, req);
+
+        res.status(201).json({ message: 'Household member added successfully.', memberId: newMemberId });
+
+    } catch (error) {
+        console.error("Error adding household member:", error);
+        if (error.message.startsWith('Conflict:')) {
+            return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        if (error.message.startsWith('Validation failed for member:')) {
+            return res.status(400).json({ error: 'Validation Error', message: error.message });
+        }
+        if (error.message === 'Household head not found or the specified user is not a household head.') {
+            return res.status(404).json({ error: 'Not Found', message: error.message });
+        }
+        res.status(500).json({ error: 'Server Error', message: error.message || 'Could not add household member.' });
     } finally {
         await session.endSession();
     }
@@ -1105,9 +1161,8 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         const dab = await db();
         const residentsCollection = dab.collection('residents');
         const documentRequestsCollection = dab.collection('document_requests');
-        
-        // ✨ --- ADDED: Get borrowed_assets collection --- ✨
         const borrowedAssetsCollection = dab.collection('borrowed_assets');
+        const complaintsCollection = dab.collection('complaints'); // ADDED: Declare complaints collection
 
         const resident = await residentsCollection.findOne({ _id: new ObjectId(id) });
         if (!resident) {
@@ -1131,39 +1186,62 @@ app.patch('/api/residents/:id/status', async (req, res) => {
             updateDocument.$set.date_approved = new Date();
         } 
         else if (status === 'Deactivated') {
-            const invalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${reason}`;
-            
-            // --- Existing logic for Document Requests (Unaffected) ---
-            await documentRequestsCollection.updateMany(
+            console.log(`Resident ${id} is being deactivated. Initiating cascading updates.`);
+            const defaultDeactivationReason = "Account deactivated by admin.";
+            const actualReason = reason && reason.trim() !== '' ? reason : defaultDeactivationReason; // Use provided reason or a default
+
+            // --- Existing logic for Document Requests ---
+            const docReqInvalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${actualReason}`;
+            const docReqUpdateResult = await documentRequestsCollection.updateMany(
                 { 
                     requestor_resident_id: new ObjectId(id),
-                    document_status: { $in: ['Pending', 'Processing', 'Approved', 'Ready for Pickup'] }
+                    document_status: { $in: ['Pending', 'Processing'] }
                 },
                 { 
                     $set: { 
                         document_status: 'Declined', 
-                        status_reason: invalidationReason,
+                        status_reason: docReqInvalidationReason,
                         updated_at: new Date()
                     } 
                 }
             );
+            console.log(`[Deactivation Cascading] Document Requests: ${docReqUpdateResult.modifiedCount} requests declined for resident ${id}.`);
             
-            // ✨ --- NEW: Logic to Reject Borrowed Asset Transactions --- ✨
-            const rejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${reason}"`;
-            await borrowedAssetsCollection.updateMany(
+            // --- Logic to Reject Borrowed Asset Transactions ---
+            const borrowedAssetsRejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${actualReason}"`;
+            const borrowedAssetsUpdateResult = await borrowedAssetsCollection.updateMany(
                 {
                     borrower_resident_id: new ObjectId(id),
-                    status: { $in: ['Pending', 'Processing', 'Approved'] } // Active statuses to be rejected
+                    status: { $in: ['Pending', 'Processing'] } // Active statuses to be rejected
                 },
                 {
                     $set: {
                         status: 'Rejected',
-                        notes: rejectionNote, // Set a clear rejection reason in the notes
+                        notes: borrowedAssetsRejectionNote, // Set a clear rejection reason in the notes
                         updated_at: new Date()
                     }
                 }
             );
-            // ✨ --- END OF NEW LOGIC --- ✨
+            console.log(`[Deactivation Cascading] Borrowed Assets: ${borrowedAssetsUpdateResult.modifiedCount} transactions rejected for resident ${id}.`);
+
+            // --- ADDED: Logic to Dismiss/Decline Pending Complaints ---
+            const complaintDismissReason = `Complaint automatically dismissed due to complainant's deactivated account. Reason: "${actualReason}"`;
+            const complaintsUpdateResult = await complaintsCollection.updateMany(
+                {
+                    complainant_resident_id: new ObjectId(id),
+                    // These are the "active" statuses for a complaint
+                    status: { $in: ['New'] } 
+                },
+                {
+                    $set: {
+                        status: 'Dismissed', // Set to 'Dismissed'
+                        status_reason: complaintDismissReason, // Set the specific reason
+                        updated_at: new Date()
+                    }
+                }
+            );
+            console.log(`[Deactivation Cascading] Complaints: ${complaintsUpdateResult.modifiedCount} complaints dismissed for resident ${id}.`);
+            // --- END ADDED LOGIC ---
         }
 
         const result = await residentsCollection.updateOne(
@@ -1189,7 +1267,6 @@ app.patch('/api/residents/:id/status', async (req, res) => {
         res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
     }
 });
-
 
 // GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
@@ -1250,7 +1327,7 @@ app.get('/api/residents', async (req, res) => {
     
     // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
     const projection = {
-        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
@@ -1351,7 +1428,7 @@ app.get('/api/residents/approved', async (req, res) => {
     }
     
     const projection = {
-        first_name: 1, middle_name: 1, last_name: 1, sex: 1,
+        first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
@@ -1419,6 +1496,7 @@ app.get('/api/residents/search', async (req, res) => {
         first_name: 1,
         last_name: 1,
         middle_name: 1,
+        suffix: 1,
         email: 1,
         sex: 1,
         contact_number: 1,
@@ -1864,15 +1942,19 @@ app.put('/api/residents/:id', async (req, res) => {
   
   // REVISION: Expanded field lists to match the new form
   const simpleFields = [
-    'first_name', 'middle_name', 'last_name', 'sex', 'civil_status',
+    'first_name', 'middle_name', 'last_name', 'suffix', // <-- ADDED SUFFIX HERE
+    'sex', 'civil_status',
     'occupation_status', 'citizenship', 'contact_number',
-    'address_house_number', 'address_street', 'address_subdivision_zone'
+    'address_house_number', 'address_street', 'address_subdivision_zone',
+    'relationship_to_head', 'other_relationship' // Added for non-head residents
   ];
   const booleanFields = ['is_voter', 'is_pwd', 'is_senior_citizen', 'is_household_head'];
   const numericFields = ['years_at_current_address'];
   
   // Process simple text fields
   simpleFields.forEach(field => {
+    // Check if the payload contains the field and if its value is different from the current one
+    // Also allows explicit setting to null/empty string if payload provides it
     if (updatePayload.hasOwnProperty(field)) {
       updateFields[field] = updatePayload[field];
     }
@@ -1888,19 +1970,23 @@ app.put('/api/residents/:id', async (req, res) => {
   // Process numbers
   numericFields.forEach(field => {
      if (updatePayload.hasOwnProperty(field)) {
-        updateFields[field] = updatePayload[field] ? parseInt(updatePayload[field], 10) : null;
+        // Coerce to number, or null if empty/invalid.
+        // Frontend sends null for empty fields, but empty string might come too.
+        updateFields[field] = updatePayload[field] !== null && updatePayload[field] !== '' ? parseInt(updatePayload[field], 10) : null;
     }
   });
 
   // Process Date of Birth and Age
   if (updatePayload.hasOwnProperty('date_of_birth')) {
     updateFields.date_of_birth = updatePayload.date_of_birth ? new Date(updatePayload.date_of_birth) : null;
+    // Re-calculate age on the backend for data integrity
     updateFields.age = calculateAge(updateFields.date_of_birth);
   }
 
   // Process Email with uniqueness check
   if (updatePayload.hasOwnProperty('email')) {
     const newEmail = String(updatePayload.email).trim().toLowerCase();
+    // Only check if email has actually changed
     if (currentResident.email !== newEmail) {
         const existingEmailUser = await residentsCollection.findOne({ email: newEmail, _id: { $ne: new ObjectId(id) } });
         if (existingEmailUser) {
@@ -1912,30 +1998,48 @@ app.put('/api/residents/:id', async (req, res) => {
 
   // REVISION: Process Voter, PWD, and Senior info with cleanup logic
   // Voter
-  if (updatePayload.is_voter === true) {
+  if (updatePayload.hasOwnProperty('is_voter')) { // Check if is_voter was sent
+      updateFields.is_voter = Boolean(updatePayload.is_voter);
+      if (updatePayload.is_voter === true) {
+          if (updatePayload.hasOwnProperty('voter_id_number')) updateFields.voter_id_number = updatePayload.voter_id_number;
+          if (updatePayload.hasOwnProperty('voter_registration_proof_base64')) updateFields.voter_registration_proof_base64 = updatePayload.voter_registration_proof_base64;
+      } else { // If is_voter is false, clear associated fields
+          updateFields.voter_id_number = null;
+          updateFields.voter_registration_proof_base64 = null;
+      }
+  } else { // If is_voter wasn't sent, but other voter fields were, still update them
       if (updatePayload.hasOwnProperty('voter_id_number')) updateFields.voter_id_number = updatePayload.voter_id_number;
       if (updatePayload.hasOwnProperty('voter_registration_proof_base64')) updateFields.voter_registration_proof_base64 = updatePayload.voter_registration_proof_base64;
-  } else if (updatePayload.is_voter === false) {
-      updateFields.voter_id_number = null;
-      updateFields.voter_registration_proof_base64 = null;
   }
 
   // PWD
-  if (updatePayload.is_pwd === true) {
+  if (updatePayload.hasOwnProperty('is_pwd')) { // Check if is_pwd was sent
+      updateFields.is_pwd = Boolean(updatePayload.is_pwd);
+      if (updatePayload.is_pwd === true) {
+          if (updatePayload.hasOwnProperty('pwd_id')) updateFields.pwd_id = updatePayload.pwd_id;
+          if (updatePayload.hasOwnProperty('pwd_card_base64')) updateFields.pwd_card_base64 = updatePayload.pwd_card_base64;
+      } else { // If is_pwd is false, clear associated fields
+          updateFields.pwd_id = null;
+          updateFields.pwd_card_base64 = null;
+      }
+  } else { // If is_pwd wasn't sent, but other PWD fields were, still update them
       if (updatePayload.hasOwnProperty('pwd_id')) updateFields.pwd_id = updatePayload.pwd_id;
       if (updatePayload.hasOwnProperty('pwd_card_base64')) updateFields.pwd_card_base64 = updatePayload.pwd_card_base64;
-  } else if (updatePayload.is_pwd === false) {
-      updateFields.pwd_id = null;
-      updateFields.pwd_card_base64 = null;
   }
 
   // Senior Citizen
-  if (updatePayload.is_senior_citizen === true) {
+  if (updatePayload.hasOwnProperty('is_senior_citizen')) { // Check if is_senior_citizen was sent
+      updateFields.is_senior_citizen = Boolean(updatePayload.is_senior_citizen);
+      if (updatePayload.is_senior_citizen === true) {
+          if (updatePayload.hasOwnProperty('senior_citizen_id')) updateFields.senior_citizen_id = updatePayload.senior_citizen_id;
+          if (updatePayload.hasOwnProperty('senior_citizen_card_base64')) updateFields.senior_citizen_card_base64 = updatePayload.senior_citizen_card_base64;
+      } else { // If is_senior_citizen is false, clear associated fields
+          updateFields.senior_citizen_id = null;
+          updateFields.senior_citizen_card_base64 = null;
+      }
+  } else { // If is_senior_citizen wasn't sent, but other senior fields were, still update them
       if (updatePayload.hasOwnProperty('senior_citizen_id')) updateFields.senior_citizen_id = updatePayload.senior_citizen_id;
       if (updatePayload.hasOwnProperty('senior_citizen_card_base64')) updateFields.senior_citizen_card_base64 = updatePayload.senior_citizen_card_base64;
-  } else if (updatePayload.is_senior_citizen === false) {
-      updateFields.senior_citizen_id = null;
-      updateFields.senior_citizen_card_base64 = null;
   }
   
   // REVISION: Process Proof of Residency file
@@ -1943,23 +2047,47 @@ app.put('/api/residents/:id', async (req, res) => {
     updateFields.proof_of_residency_base64 = updatePayload.proof_of_residency_base64;
   }
 
-  // Household Membership
+  // REVISION: Process Proof of Relationship file (for non-head residents)
+  if (!currentResident.is_household_head && updatePayload.hasOwnProperty('proof_of_relationship_base64')) {
+      updateFields.proof_of_relationship_base64 = updatePayload.proof_of_relationship_base64;
+  }
+
+  // Household Membership (mainly for heads)
   if (updatePayload.hasOwnProperty('is_household_head')) {
-    if (updatePayload.is_household_head === false) {
-      updateFields.household_member_ids = []; // Clear members if no longer a head
+    updateFields.is_household_head = Boolean(updatePayload.is_household_head);
+    if (updateFields.is_household_head === false) {
+      // If no longer a head, clear household_member_ids
+      updateFields.household_member_ids = []; 
+      // Also potentially clear household_head_id from this resident if it was a self-reference error
+      updateFields.household_head_id = null; 
     } else if (updatePayload.hasOwnProperty('household_member_ids')) {
+      // If still a head, update household_member_ids (expects an array of string IDs from frontend)
       updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
         ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
         : [];
     }
+  } else if (updatePayload.hasOwnProperty('household_member_ids') && currentResident.is_household_head) {
+      // If is_household_head wasn't changed but member IDs are sent (meaning it's an update to an existing head)
+      updateFields.household_member_ids = Array.isArray(updatePayload.household_member_ids)
+        ? updatePayload.household_member_ids.filter(memId => ObjectId.isValid(memId)).map(memId => new ObjectId(memId))
+        : [];
   }
+  // For non-heads, if household_head_id is in payload, update it.
+  if (!currentResident.is_household_head && updatePayload.hasOwnProperty('household_head_id')) {
+      if (ObjectId.isValid(updatePayload.household_head_id)) {
+          updateFields.household_head_id = new ObjectId(updatePayload.household_head_id);
+      } else {
+          updateFields.household_head_id = null;
+      }
+  }
+
 
   // Password Change
   if (updatePayload.newPassword) {
     if (String(updatePayload.newPassword).length < 6) {
         return res.status(400).json({ error: 'Validation failed', message: 'New password must be at least 6 characters.' });
     }
-    // WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT
+    // WARNING: MD5 IS INSECURE. REPLACE WITH BCRYPT (as mentioned in previous responses)
     updateFields.password_hash = md5(updatePayload.newPassword);
   }
 
@@ -1974,7 +2102,7 @@ app.put('/api/residents/:id', async (req, res) => {
     const updatedResident = await residentsCollection.findOne({ _id: new ObjectId(id) }, { projection: { password_hash: 0 }});
     // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
-      description: `Resident '${updatedResident.first_name} ${updatedResident.last_name}' information was updated.`,
+      description: `Resident '${updatedResident.first_name} ${updatedResident.last_name}${updatedResident.suffix ? ' ' + updatedResident.suffix : ''}' information was updated.`, // Added suffix to audit log
       action: "UPDATE",
       entityType: "Resident",
       entityId: id,
@@ -3572,8 +3700,9 @@ app.delete("/api/notifications/:id", async (req, res) => {
 // ====================== HELPER FUNCTION =========================== //
 
 /**
- * Checks if a resident's account is 'Active'.
- * Throws an error if the account is not found or is deactivated.
+ * Checks if a resident's account is 'Active' and 'Approved'.
+ * Throws an error if the account is not found, is pending approval, declined,
+ * deactivated (primary status), or on hold (secondary account_status).
  * This acts as a security gatekeeper for creating new requests.
  * @param {ObjectId} residentId - The ID of the resident to check.
  * @param {Db} dab - The database connection instance.
@@ -3587,10 +3716,27 @@ const checkResidentAccountStatus = async (residentId, dab) => {
     throw new Error('Invalid resident specified.'); 
   }
 
-  if (resident.account_status === 'Deactivated') {
-    // This is the specific error we want to catch
-    throw new Error(`This resident's account is On Hold/Deactivated. They cannot make new requests until their pending issues are resolved.`);
+  // --- Primary Status Check (Registration Lifecycle) ---
+  if (resident.status === 'Pending') {
+    throw new Error(`Resident account is pending approval. You cannot make new requests until your account is approved by an administrator.`);
   }
+  if (resident.status === 'Declined') {
+    throw new Error(`Resident account has been declined. You cannot make new requests.`);
+  }
+  // Note: If resident.status is 'Deactivated', the account_status below would likely also be 'Deactivated',
+  // but explicitly checking here ensures the message is specific to primary deactivation.
+  if (resident.status === 'Deactivated') {
+    throw new Error(`Resident account has been permanently deactivated. You cannot make new requests.`);
+  }
+
+  // --- Secondary Status Check (Post-Approval Holds, e.g., for borrowed assets) ---
+  if (resident.account_status === 'Deactivated') {
+    // This is for accounts that are 'Approved' but then put 'On Hold' due to other issues.
+    throw new Error(`This resident's account is currently On Hold/Deactivated due to unresolved issues. You cannot make new requests until these issues are resolved.`);
+  }
+
+  // If the code reaches here, the resident's primary status is 'Approved'
+  // and their secondary account_status is 'Active' or equivalent, allowing requests.
 };
 
 // Add this helper function near the top of your file with the others
@@ -3731,7 +3877,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
     // Check if the error is from our account status gatekeeper
     if (error.message.includes("On Hold/Deactivated")) {
       return res.status(403).json({ // 403 Forbidden is the correct HTTP status
-        error: 'Permission Denied',
+        error: 'Cannot borrow due to account status. On Hold/Deactivated.',
         message: error.message
       });
     }
@@ -4503,6 +4649,7 @@ app.get('/api/complaints', async (req, res) => {
 app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
   const { residentId } = req.params;
   const search = req.query.search || '';
+  const status = req.query.status || ''; // <-- ADDED: Read the status query parameter
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -4516,33 +4663,53 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('complaints');
 
-    const mainMatchStage = { complainant_resident_id: residentObjectId };
+    // Build the initial match query for the complainant's resident ID
+    let finalMatchQuery = { complainant_resident_id: residentObjectId };
 
-    let searchMatchSubStage = {};
-    if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      searchMatchSubStage = {
-        $or: [
-          { ref_no: { $regex: searchRegex } },
-          { person_complained_against_name: { $regex: searchRegex } },
-          { "person_complained_details.first_name": { $regex: searchRegex } }, // If looking up person complained
-          { "person_complained_details.last_name": { $regex: searchRegex } },
-          { status: { $regex: searchRegex } },
-          { notes_description: { $regex: searchRegex } },
-          // { $expr: { $regexMatch: { input: { $toString: "$_id" }, regex: searchRegex } } } // Search by Ref #
-        ],
-      };
+    // Add status filter if a status is provided (and it's not 'All' which results in undefined on frontend)
+    if (status) {
+        finalMatchQuery.status = status;
     }
 
-    const combinedMatchStage = search ? { $and: [mainMatchStage, searchMatchSubStage] } : mainMatchStage;
+    // Add search filter if a search term is provided
+    if (search) {
+        const searchRegex = new RegExp(search.trim(), 'i');
+        const searchCriteria = [
+            { ref_no: { $regex: searchRegex } },
+            { person_complained_against_name: { $regex: searchRegex } },
+            { "person_complained_details.first_name": { $regex: searchRegex } },
+            { "person_complained_details.last_name": { $regex: searchRegex } },
+            { status: { $regex: searchRegex } }, // Also search within status for flexibility
+            { notes_description: { $regex: searchRegex } },
+            { category: { $regex: searchRegex } }, // Added category to search
+        ];
+        
+        // If we already have filters (like status), combine with $and
+        if (finalMatchQuery.status) {
+            finalMatchQuery = {
+                $and: [
+                    { complainant_resident_id: residentObjectId },
+                    { status: finalMatchQuery.status },
+                    { $or: searchCriteria }
+                ]
+            };
+        } else {
+            // No specific status filter, just combine resident ID and search
+            finalMatchQuery = {
+                $and: [
+                    { complainant_resident_id: residentObjectId },
+                    { $or: searchCriteria }
+                ]
+            };
+        }
+    }
 
     const aggregationPipeline = [
-      { $match: combinedMatchStage },
-      // Lookup person complained against (details might be useful for the complainant)
+      { $match: finalMatchQuery }, // Use the correctly constructed finalMatchQuery
       {
         $lookup: {
           from: 'residents',
-          localField: 'person_complained_against_resident_id', // Assuming this field exists
+          localField: 'person_complained_against_resident_id',
           foreignField: '_id',
           as: 'person_complained_details_array'
         }
@@ -4552,9 +4719,8 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
         $project: {
           _id: 1,
           ref_no: 1, 
-          // complainant_name is known (it's the current user), but API can return it for consistency
-          complainant_display_name: 1, // The stored display name at time of complaint
-          person_complained_against_name: { // Show looked-up name if available, else stored name
+          complainant_display_name: 1,
+          person_complained_against_name: { 
             $ifNull: [
               { $concat: [
                   "$person_complained_details.first_name", " ",
@@ -4566,12 +4732,13 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
             ]
           },
           date_of_complaint: 1,
-          time_of_complaint: 1, // Added this field
+          time_of_complaint: 1,
           status: 1,
           notes_description: 1,
           created_at: 1,
           updated_at: 1,
-          // Include other relevant fields for the complainant to see
+          category: 1,
+          proofs_base64: 1,
         }
       },
       { $sort: { date_of_complaint: -1, created_at: -1 } },
@@ -4581,21 +4748,9 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
 
-    const countPipeline = [
-        { $match: combinedMatchStage },
-        // If search includes person_complained_details, lookup is needed for accurate count
-        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
-        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        { $match: search ? searchMatchSubStage : {} }, // Apply sub-search again after potential lookup
-        { $count: 'total' }
-    ];
-    // More precise count by applying full combined match directly
+    // The preciseCountPipeline also needs to use the same finalMatchQuery for consistency
     const preciseCountPipeline = [
-        { $match: mainMatchStage }, // Start with the resident
-        { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
-        { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        // If searchMatchSubStage references fields from person_complained_details, apply it after lookup
-        { $match: search ? searchMatchSubStage : {} },
+        { $match: finalMatchQuery }, // Use the same finalMatchQuery
         { $count: 'total' }
     ];
 
@@ -4614,6 +4769,7 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch complaints for this resident." });
   }
 });
+
 
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {
@@ -4661,6 +4817,7 @@ app.get('/api/complaints/:id', async (req, res) => {
           proofs_base64: 1, 
           complainant_details: 1,
           person_complained_details: 1,
+           status_reason: 1,
         }
       }
     ];
@@ -4852,11 +5009,16 @@ app.post('/api/complaints/:id/notes', async (req, res) => {
 // PATCH /api/complaints/:id/status
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status } = req.body;
+  const { status, reason } = req.body; // <-- MODIFIED: Destructure 'reason' from req.body
   const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
   
   if (!status || !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
+  }
+
+  // NEW: Require reason for 'Dismissed' status
+  if (status === 'Dismissed' && (!reason || reason.trim() === '')) {
+      return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this complaint.` });
   }
 
   const dab = await db();
@@ -4882,26 +5044,44 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
         return res.json({ message: `Complaint status is already '${status}'.`, statusChanged: false });
     }
 
+    const updateSet = { status: status, updated_at: new Date() };
+
+    // NEW: Conditionally add or unset `status_reason` based on the new status and reason
+    if (reason && status === 'Dismissed') { // Only save reason for 'Dismissed'
+        updateSet.status_reason = reason;
+    } else {
+        // If status is changed to one that doesn't require a reason, unset any old reason
+        await complaintsCollection.updateOne(
+            { _id: originalComplaint._id },
+            { $unset: { status_reason: "" } }
+        );
+    }
+
     await complaintsCollection.updateOne(
       { _id: originalComplaint._id },
-      { $set: { status: status, updated_at: new Date() } }
+      { $set: updateSet } // Use the dynamic updateSet
     );
 
     await createAuditLog({
-        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'.`,
+        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'. Reason: ${reason || 'N/A'}`, // Include reason in audit log
         action: "STATUS_CHANGE",
         entityType: "Complaint",
         entityId: originalComplaint._id.toString(),
     }, req);
 
     if (originalComplaint.complainant_resident_id) {
+      // NEW: Adjust notification content to include the reason if provided
+      const notificationContent = reason 
+        ? `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}. Reason: ${reason}`
+        : `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`;
+
       await createNotification(dab, {
         name: `Complaint Status Update (Ref: ${originalComplaint.ref_no})`,
-        content: `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`,
+        content: notificationContent, // Use the adjusted content
         by: "System Administration",
         type: "Notification",
-        target_audience: 'Specific Residents', // Ensure this matches your createNotification function
-        target_residents: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
+        target_audience: 'SpecificResidents', // Ensure this matches your createNotification function
+        recipient_ids: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
       });
     }
 
@@ -6169,18 +6349,22 @@ app.get('/api/budgets/categories', async (req, res) => {
   }
 });
 
-// 2. READ (List): GET /api/budgets
 app.get('/api/budgets', async (req, res) => {
     try {
         const dab = await db();
         const collection = dab.collection('budgets');
 
-        const { search, sortBy, sortOrder } = req.query;
+        const { search, sortBy, sortOrder, filterDay, filterMonth, filterYear } = req.query; // Destructure new filter parameters
         const page = parseInt(req.query.page) || 1;
-        const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-        const skip = (page - 1) * itemsPerPage;
+        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10; // Use 'let' to allow modification
+        // Ensure itemsPerPage is at least 1 if not -1
+        if (itemsPerPage !== -1 && itemsPerPage < 1) itemsPerPage = 10; 
+
+        console.log("Backend received /api/budgets query params:", req.query);
 
         let query = {};
+
+        // Search filter
         if (search) {
             const searchRegex = new RegExp(search.trim(), 'i');
             query = {
@@ -6190,17 +6374,58 @@ app.get('/api/budgets', async (req, res) => {
                 ]
             };
         }
+
+        // Date filters
+        if (filterDay) {
+            // filterDay comes as 'YYYY-MM-DD'
+            const startOfDay = new Date(filterDay);
+            startOfDay.setUTCHours(0, 0, 0, 0); // Start of the selected day in UTC
+            const endOfDay = new Date(filterDay);
+            endOfDay.setUTCHours(23, 59, 59, 999); // End of the selected day in UTC
+
+            query.date = {
+                $gte: startOfDay,
+                $lte: endOfDay,
+            };
+        } else if (filterMonth && filterYear) {
+            // filterMonth is 1-12, filterYear is YYYY
+            const startOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth) - 1, 1)); // Month is 0-indexed in JS Date
+            const endOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth), 0)); // Last day of the month
+
+            query.date = {
+                $gte: startOfMonth,
+                $lte: endOfMonth,
+            };
+        } else if (filterYear) {
+            // filterYear is YYYY
+            const startOfYear = new Date(Date.UTC(filterYear, 0, 1));
+            const endOfYear = new Date(Date.UTC(filterYear, 11, 31, 23, 59, 59, 999));
+
+            query.date = {
+                $gte: startOfYear,
+                $lte: endOfYear,
+            };
+        }
         
         let sortOptions = { date: -1 }; // Default sort
         if (sortBy) {
             sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
         }
 
-        const budgets = await collection.find(query)
-            .sort(sortOptions)
-            .skip(skip)
-            .limit(itemsPerPage)
-            .toArray();
+        console.log("Final MongoDB Query:", JSON.stringify(query));
+
+        let cursor = collection.find(query).sort(sortOptions);
+
+        // --- IMPORTANT FIX: Conditionally apply skip and limit ---
+        if (itemsPerPage !== -1) {
+            const skip = (page - 1) * itemsPerPage;
+            cursor = cursor.skip(skip).limit(itemsPerPage);
+        }
+        // --- END IMPORTANT FIX ---
+
+        const budgets = await cursor.toArray();
+        console.log("Number of budgets fetched:", budgets.length);
+
 
         const totalBudgets = await collection.countDocuments(query);
 
@@ -6309,7 +6534,271 @@ app.delete('/api/budgets/:id', async (req, res) => {
     }
 });
 
+async function getImageBase64(imagePath) {
+    try {
+        const fullPath = path.resolve(__dirname, '../assets/img', imagePath); // Adjust path relative to api/index.js
+        const buffer = await fs.readFile(fullPath);
+        // Basic MIME type detection: IMPORTANT for browsers to display Base64 correctly
+        const mimeType = path.extname(imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+        console.error(`Error reading image ${imagePath}:`, error);
+        return null; // Return null if image not found/readable
+    }
+}
 
+// NEW ENDPOINT: GET /api/logos
+app.get('/api/logos', async (req, res) => {
+    try {
+        const manilaLogoBase64 = await getImageBase64('manila-logo.png'); // Left logo
+        const bagongPilipinasLogoBase64 = await getImageBase64('bagong-pilipinas-logo.png'); // Right logo
+        const cityBudgetLogoBase64 = await getImageBase64('city-budget-logo.png'); // Central logo (City Budget Office)
+
+        res.json({
+            manilaLogo: manilaLogoBase64,
+            bagongPilipinasLogo: bagongPilipinasLogoBase64,
+            cityBudgetLogo: cityBudgetLogoBase64, // Correctly named and served
+        });
+    } catch (error) {
+        console.error("Error fetching logos for print:", error);
+        res.status(500).json({ error: "Failed to fetch logos." });
+    }
+});
+
+
+
+
+// =================== ACCOUNT ACTIVATION FLOW =================== //
+
+// 1. REQUEST OTP FOR ACCOUNT ACTIVATION (UPDATED for _id suffix matching and pending_password_hash $or condition)
+app.post('/api/residents/activate-account/request-otp', async (req, res) => {
+    const { account_number, email, contact_number, password } = req.body; // account_number is now the 4-digit suffix
+
+    if (!account_number || !password) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number and Password are required.' });
+    }
+    if (String(account_number).trim().length !== 4) { // Validate 4-digit input
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number must be 4 characters long.' });
+    }
+    if (!email && !contact_number) { // Require at least one contact method
+        return res.status(400).json({ error: 'Validation failed', message: 'Either Email or Contact Number is required.' });
+    }
+    if (password.length < 6) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Password must be at least 6 characters long.' });
+    }
+
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+        const hashedPassword = md5(password); // Hash the provided password
+
+        // --- Aggregation Pipeline to find resident by _id suffix ---
+        const residentResult = await residentsCollection.aggregate([
+            {
+                $match: {
+                    status: 'Pending', // Only allow activation for pending accounts
+                    password_hash: null, // Ensure no password has been set yet
+                    // FIX: Use $or for pending_password_hash: null OR $exists: false
+                    $or: [
+                        { pending_password_hash: null },
+                        { pending_password_hash: { $exists: false } }
+                    ]
+                }
+            },
+            {
+                $addFields: {
+                    // Derive the 4-character account number from the _id string
+                    derivedAccountNumber: { $substrCP: [{ $toString: "$_id" }, { $subtract: [{ $strLenCP: { $toString: "$_id" } }, 4] }, 4] }
+                }
+            },
+            {
+                $match: {
+                    // Ensure the input account_number is compared in lowercase
+                    derivedAccountNumber: String(account_number).trim().toLowerCase()
+                }
+            },
+            { $limit: 1 } // We only expect one match
+        ]).toArray();
+
+        const resident = residentResult.length > 0 ? residentResult[0] : null;
+
+        if (!resident) {
+            return res.status(404).json({
+                error: 'Account not found or already active.',
+                message: 'No pending account found matching the provided details. It might be already active or require admin approval.'
+            });
+        }
+
+        // --- Step 1: Update Resident's Contact Info and Store Pending Password ---
+        const updateFields = {
+            email: email ? String(email).trim().toLowerCase() : null,
+            contact_number: contact_number ? String(contact_number).trim() : null,
+            pending_password_hash: hashedPassword, // Store new password temporarily
+            updated_at: new Date()
+        };
+
+        // Generate and store activation OTP
+        const otp = generateOTP();
+        const otpExpiry = new Date(Date.now() + OTP_EXPIRY_MINUTES * 60 * 1000);
+        updateFields.activation_otp = otp;
+        updateFields.activation_otp_expiry = otpExpiry;
+
+        await residentsCollection.updateOne(
+            { _id: resident._id }, // Update using the actual _id
+            { $set: updateFields }
+        );
+
+        // --- Step 2: Send OTP to the (newly updated) contact method ---
+        let sendSuccess = false;
+        let recipientIdentifier = '';
+
+        // Prioritize email if provided
+        if (email) {
+            recipientIdentifier = email;
+            const mailOptions = {
+                from: `"B-BUD System" <${SMTP_USER}>`,
+                to: recipientIdentifier,
+                subject: 'Your B-BUD Account Activation Code',
+                html: `
+                    <p>Hello ${resident.first_name || 'User'},</p>
+                    <p>To activate your account, please use the following One-Time Password (OTP):</p>
+                    <h2 style="text-align:center; color:#0F00D7; letter-spacing: 2px;">${otp}</h2>
+                    <p>This OTP is valid for ${OTP_EXPIRY_MINUTES} minutes.</p>
+                    <p>If you did not request this, please ignore this email.</p>
+                    <br><p>Thanks,<br>The B-BUD Team</p>`,
+            };
+            try {
+                await transporter.sendMail(mailOptions);
+                console.log(`Activation OTP email sent to ${recipientIdentifier} (OTP: ${otp})`);
+                sendSuccess = true;
+            } catch (emailError) {
+                console.error("Error sending activation OTP email:", emailError);
+            }
+        }
+
+        // If email wasn't sent or failed, try SMS if contact number is provided
+        if (!sendSuccess && contact_number) {
+            recipientIdentifier = contact_number;
+            try {
+                await sendMessage(recipientIdentifier, `Your B-BUD account activation OTP is ${otp}. It is valid for ${OTP_EXPIRY_MINUTES} minutes.`);
+                console.log(`Activation OTP SMS sent to ${recipientIdentifier} (OTP: ${otp})`);
+                sendSuccess = true;
+            } catch (smsError) {
+                console.error("Error sending activation OTP SMS:", smsError);
+            }
+        }
+
+        if (sendSuccess) {
+            res.status(200).json({
+                message: `An OTP has been sent to ${recipientIdentifier} to activate your account.`,
+                otpRequired: true,
+            });
+        } else {
+            // If neither email nor SMS could be sent, clear the temporary data
+            await residentsCollection.updateOne(
+                { _id: resident._id },
+                { $unset: { activation_otp: "", activation_otp_expiry: "", pending_password_hash: "" } }
+            );
+            return res.status(500).json({
+                error: 'DeliveryFailed',
+                message: 'Could not send the activation OTP to your provided contact details. Please ensure they are valid.'
+            });
+        }
+
+    } catch (error) {
+        console.error("Error processing account activation request:", error);
+        res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred.' });
+    }
+});
+
+// 2. VERIFY OTP AND FINALIZE ACCOUNT ACTIVATION (UPDATED for _id suffix matching and pending_password_hash)
+app.post('/api/residents/activate-account/verify-otp', async (req, res) => {
+    const { account_number, otp } = req.body; // account_number is the 4-digit suffix
+
+    if (!account_number || !otp) {
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number and OTP are required.' });
+    }
+    if (String(account_number).trim().length !== 4) { // Validate 4-digit input
+        return res.status(400).json({ error: 'Validation failed', message: 'Account Number must be 4 characters long.' });
+    }
+    if (typeof otp !== 'string' || otp.length !== 6 || !/^\d{6}$/.test(otp)) {
+        return res.status(400).json({ error: 'Validation failed', message: 'OTP must be a 6-digit number.' });
+    }
+
+    try {
+        const dab = await db();
+        const residentsCollection = dab.collection('residents');
+
+        // --- Aggregation Pipeline to find resident by _id suffix and OTP details ---
+        const residentResult = await residentsCollection.aggregate([
+            {
+                $match: {
+                    activation_otp: otp,
+                    activation_otp_expiry: { $gt: new Date() }, // OTP must not be expired
+                    status: 'Pending', // Should still be pending
+                    pending_password_hash: { $exists: true, $ne: null } // Ensure a pending password exists
+                }
+            },
+            {
+                $addFields: {
+                    // Derive the 4-character account number from the _id string
+                    derivedAccountNumber: { $substrCP: [{ $toString: "$_id" }, { $subtract: [{ $strLenCP: { $toString: "$_id" } }, 4] }, 4] }
+                }
+            },
+            {
+                $match: {
+                    // Ensure the input account_number is compared in lowercase
+                    derivedAccountNumber: String(account_number).trim().toLowerCase()
+                }
+            },
+            { $limit: 1 } // We only expect one match
+        ]).toArray();
+
+        const resident = residentResult.length > 0 ? residentResult[0] : null;
+
+        if (!resident) {
+            return res.status(400).json({ error: 'InvalidOTP', message: 'Invalid or expired OTP, or account details do not match. Please request a new OTP.' });
+        }
+
+        // OTP is valid, proceed to activate the account
+        // Move pending_password_hash to password_hash and set status to Approved
+        await residentsCollection.updateOne(
+            { _id: resident._id }, // Update using the actual _id
+            {
+                $set: {
+                    password_hash: resident.pending_password_hash, // Finalize the new password
+                    status: 'Approved', // Mark account as approved/active
+                    date_approved: new Date(), // Set approval date
+                    updated_at: new Date()
+                },
+                $unset: { // Clear temporary activation fields
+                    activation_otp: "",
+                    activation_otp_expiry: "",
+                    pending_password_hash: "" // Clear the temporary password hash
+                }
+            }
+        );
+
+        // --- ADD AUDIT LOG HERE ---
+        await createAuditLog({
+            userId: resident._id,
+            userName: `${resident.first_name} ${resident.last_name}`,
+            description: `Resident account for '${resident.first_name} ${resident.last_name}' (Account No suffix: ${account_number}) activated successfully via OTP.`,
+            action: "ACTIVATE_ACCOUNT",
+            entityType: "Resident",
+            entityId: resident._id.toString(),
+        }, req);
+        // --- END AUDIT LOG ---
+
+        res.status(200).json({ message: 'Account activated successfully! You can now log in with your new password.' });
+
+    } catch (error) {
+        console.error("Error during account activation OTP verification:", error);
+        res.status(500).json({ error: 'ServerError', message: 'An unexpected server error occurred during activation.' });
+    }
+});
+
+// =================== END ACCOUNT ACTIVATION FLOW =================== //
 
 /**
  * Sends an SMS message using the Semaphore API.

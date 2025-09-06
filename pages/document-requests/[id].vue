@@ -464,12 +464,16 @@ async function confirmDecline() {
 async function generateAndSetToPickup() {
   isActing.value = true;
   try {
-    if (request.value.document_status !== 'Ready for Pickup') {
+    // ONLY update status to 'Ready for Pickup' if it's currently 'Approved'.
+    // If it's already 'Ready for Pickup' or 'Released', just proceed to download
+    // without changing the status.
+    if (request.value.document_status === 'Approved') { // <-- MODIFIED THIS LINE
       const response = await _updateStatusOnBackend('Ready for Pickup');
       $toast.fire({ title: 'Status set to "Ready for Pickup"!', icon: 'success' });
-      await fetchRequest(false);
+      await fetchRequest(false); // Refresh data to update UI with new status
     }
 
+    // Always attempt to open the document for viewing/downloading
     const refNo = request.value.ref_no;
     const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
     const downloadUrl = `${baseUrl}/api/document-requests/${refNo}/generate`;
@@ -478,9 +482,13 @@ async function generateAndSetToPickup() {
     if (!newTab) {
       $toast.fire({ title: 'Please allow popups to download the document.', icon: 'warning' });
     }
-  } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
-  } finally { isActing.value = false; }
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    isActing.value = false;
+  }
 }
+
 
 async function releaseRequest() {
   if (!proofOfReleaseBase64.value) {

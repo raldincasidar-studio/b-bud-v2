@@ -19,11 +19,39 @@
           <p class="text-grey-darken-1">Reference #: {{ form.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
-          <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving">Save Changes</v-btn>
-          <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2">Cancel</v-btn>
+          <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving" :disabled="isComplainantDeactivated">Save Changes</v-btn>
+          <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2" :disabled="isComplainantDeactivated">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
         </v-col>
       </v-row>
+
+      <!-- UPDATED ALERT LOGIC: Prioritize displaying reason if complainant deactivated and reason exists -->
+      <v-alert
+          v-if="isComplainantDeactivated && form.status_reason"
+          type="error"
+          variant="tonal"
+          border="start"
+          icon="mdi-information-outline"
+          density="compact"
+          class="mb-6"
+      >
+          <template v-slot:title><strong class="text-error">Complainant Account Deactivated</strong></template>
+            {{ form.status_reason }}
+          <span>Contact the admin to review and update your status.</span>
+      </v-alert>
+      <v-alert
+          v-else-if="isComplainantDeactivated && !form.status_reason"
+          type="warning"
+          prominent
+          border="start"
+          icon="mdi-account-cancel"
+          class="mb-6"
+      >
+          <template v-slot:title>Complainant Account Deactivated</template>
+          The complainant's account is currently deactivated. This complaint cannot be modified or progressed until the account is reactivated.
+          The status has been automatically changed to 'Dismissed' / 'Declined'.
+      </v-alert>
+
 
       <v-card class="mt-4" flat border>
         <v-card-text class="py-6">
@@ -38,6 +66,7 @@
                   label="Search Complainant..." variant="outlined" :items="complainantSearchResults" item-title="name" item-value="_id"
                   :loading="isLoadingComplainants" :error-messages="v$.complainant_resident_id.$errors.map(e => e.$message)"
                   @blur="v$.complainant_resident_id.$touch" @update:model-value="onComplainantSelect" no-filter
+                  :disabled="isComplainantDeactivated"
                 >
                     <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
                 </v-autocomplete>
@@ -45,21 +74,21 @@
               </v-col>
               <v-col cols="12" md="6">
                 <label class="v-label mb-1">Complainant Address <span v-if="editMode" class="text-red">*</span></label>
-                <v-text-field v-model="form.complainant_address" :readonly="!editMode" variant="outlined" :error-messages="v$.complainant_address.$errors.map(e => e.$message)" @blur="v$.complainant_address.$touch"></v-text-field>
+                <v-text-field v-model="form.complainant_address" :readonly="!editMode || isComplainantDeactivated" variant="outlined" :error-messages="v$.complainant_address.$errors.map(e => e.$message)" @blur="v$.complainant_address.$touch"></v-text-field>
               </v-col>
             </v-row>
             <v-row>
               <v-col cols="12" md="4">
                 <label class="v-label mb-1">Contact Number <span v-if="editMode" class="text-red">*</span></label>
-                <v-text-field v-model="form.contact_number" type="tel" :readonly="!editMode" variant="outlined" :error-messages="v$.contact_number.$errors.map(e => e.$message)" @blur="v$.contact_number.$touch"></v-text-field>
+                <v-text-field v-model="form.contact_number" type="tel" :readonly="!editMode || isComplainantDeactivated" variant="outlined" :error-messages="v$.contact_number.$errors.map(e => e.$message)" @blur="v$.contact_number.$touch"></v-text-field>
               </v-col>
               <v-col cols="12" md="4">
                 <label class="v-label mb-1">Date of Complaint <span v-if="editMode" class="text-red">*</span></label>
-                <v-text-field v-model="form.date_of_complaint" type="date" :readonly="!editMode" variant="outlined" :error-messages="v$.date_of_complaint.$errors.map(e => e.$message)" @blur="v$.date_of_complaint.$touch"></v-text-field>
+                <v-text-field v-model="form.date_of_complaint" type="date" :readonly="!editMode || isComplainantDeactivated" variant="outlined" :error-messages="v$.date_of_complaint.$errors.map(e => e.$message)" @blur="v$.date_of_complaint.$touch"></v-text-field>
               </v-col>
               <v-col cols="12" md="4">
                 <label class="v-label mb-1">Time of Complaint <span v-if="editMode" class="text-red">*</span></label>
-                <v-text-field v-model="form.time_of_complaint" type="time" :readonly="!editMode" variant="outlined" :error-messages="v$.time_of_complaint.$errors.map(e => e.$message)" @blur="v$.time_of_complaint.$touch"></v-text-field>
+                <v-text-field v-model="form.time_of_complaint" type="time" :readonly="!editMode || isComplainantDeactivated" variant="outlined" :error-messages="v$.time_of_complaint.$errors.map(e => e.$message)" @blur="v$.time_of_complaint.$touch"></v-text-field>
               </v-col>
             </v-row>
             <v-divider class="my-4"></v-divider>
@@ -74,6 +103,7 @@
                   variant="outlined" :items="personComplainedSearchResults" item-title="name" item-value="_id"
                   :loading="isLoadingPersonComplained" :error-messages="v$.person_complained_against_name.$errors.map(e => e.$message)"
                   @blur="v$.person_complained_against_name.$touch" @update:model-value="onPersonComplainedSelect" no-filter
+                  :disabled="isComplainantDeactivated"
                 >
                     <template v-slot:item="{ props, item }"><v-list-item v-bind="props" :title="item.raw.name" :subtitle="item.raw.email"></v-list-item></template>
                     <template v-slot:no-data><v-list-item><v-list-item-title>No resident found. Name will be saved as entered.</v-list-item-title></v-list-item></template>
@@ -91,11 +121,11 @@
             <v-row>
               <v-col cols="12">
                 <label class="v-label mb-1">Category <span v-if="editMode" class="text-red">*</span></label>
-                <v-select :readonly="!editMode" v-model="form.category" :items="complaintCategories" variant="outlined" :error-messages="v$.category.$errors.map(e => e.$message)" @blur="v$.category.$touch"></v-select>
+                <v-select :readonly="!editMode || isComplainantDeactivated" v-model="form.category" :items="complaintCategories" variant="outlined" :error-messages="v$.category.$errors.map(e => e.$message)" @blur="v$.category.$touch"></v-select>
               </v-col>
               <v-col cols="12">
                 <label class="v-label mb-1">Description of Complaint <span v-if="editMode" class="text-red">*</span></label>
-                <v-textarea v-model="form.notes_description" :readonly="!editMode" variant="outlined" rows="5" auto-grow :error-messages="v$.notes_description.$errors.map(e => e.$message)" @blur="v$.notes_description.$touch"></v-textarea>
+                <v-textarea v-model="form.notes_description" :readonly="!editMode || isComplainantDeactivated" variant="outlined" rows="5" auto-grow :error-messages="v$.notes_description.$errors.map(e => e.$message)" @blur="v$.notes_description.$touch"></v-textarea>
               </v-col>
             </v-row>
         </v-card-text>
@@ -176,12 +206,13 @@
             rows="3"
             auto-grow
             clearable
+            :disabled="isComplainantDeactivated"
           ></v-textarea>
           <div class="d-flex justify-end mt-2">
             <v-btn
               color="primary"
               @click="addNote"
-              :disabled="!newNoteContent || !newNoteContent.trim()"
+              :disabled="!newNoteContent || !newNoteContent.trim() || isComplainantDeactivated"
               :loading="addingNote"
               prepend-icon="mdi-plus-circle-outline"
             >
@@ -201,13 +232,16 @@
               <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold">{{ form.status }}</v-chip>
             </div>
              <p class="text-caption text-grey-darken-1 mb-3">Select an action to change the complaint's status.</p>
-             <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify">Start Investigation</v-btn>
-             <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle">Mark as Resolved</v-btn>
-             <v-btn v-if="form.status === 'Under Investigation'" color="error" size="large" class="ma-2" @click="updateComplaintStatus('Dismissed')" prepend-icon="mdi-cancel">Dismiss Complaint</v-btn>
-             <v-btn v-if="form.status === 'Resolved' || form.status === 'New' || form.status === 'Dismissed'" color="grey-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline">Close Complaint</v-btn>
+             <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify" :disabled="isComplainantDeactivated">Start Investigation</v-btn>
+             <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle" :disabled="isComplainantDeactivated">Mark as Resolved</v-btn>
+             <v-btn v-if="form.status === 'Under Investigation'" color="error" size="large" class="ma-2" @click="declineComplaintDialog = true" prepend-icon="mdi-cancel" :disabled="isComplainantDeactivated">Dismiss Complaint</v-btn>
+             <v-btn v-if="form.status === 'Resolved' || form.status === 'New' || form.status === 'Dismissed'" color="grey-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline" :disabled="isComplainantDeactivated">Close Complaint</v-btn>
              
              <v-alert v-if="form.status === 'Closed'" type="info" variant="tonal" class="mt-4">
                This complaint is closed and no further actions can be taken.
+             </v-alert>
+             <v-alert v-if="isComplainantDeactivated && form.status !== 'Dismissed'" type="info" variant="tonal" class="mt-4">
+               Actions are disabled because the complainant's account is deactivated.
              </v-alert>
         </v-card-text>
       </v-card>
@@ -222,6 +256,31 @@
           <v-spacer></v-spacer>
           <v-btn color="blue-darken-1" variant="text" @click="confirmDeleteDialog = false">Cancel</v-btn>
           <v-btn color="red-darken-1" variant="text" @click="deleteComplaint" :loading="deleting">Delete</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- NEW: DIALOG FOR DISMISS COMPLAINT WITH REASON -->
+    <v-dialog v-model="declineComplaintDialog" persistent max-width="500px">
+      <v-card>
+        <v-card-title class="text-h5">Dismiss Complaint</v-card-title>
+        <v-card-text>
+          <p class="mb-4">Please provide a reason for dismissing this complaint. This reason will be recorded.</p>
+          <v-textarea
+            v-model="dismissReason"
+            label="Reason for Dismissal"
+            variant="outlined"
+            rows="3"
+            counter
+            maxlength="250"
+            :rules="[v => !!v || 'Reason is required.']"
+            autofocus
+          ></v-textarea>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="grey" text @click="declineComplaintDialog = false">Cancel</v-btn>
+          <v-btn color="error" :disabled="!dismissReason" :loading="isActing" @click="confirmDismiss">Confirm Dismiss</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
@@ -260,7 +319,7 @@
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, watch, computed } from 'vue'; // <-- Added computed
+import { reactive, ref, onMounted, watch, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
@@ -286,7 +345,9 @@ const form = reactive({
   status: 'New',
   notes_description: '',
   category: '',
-  proofs_base64: [], 
+  proofs_base64: [],
+  complainant_details: null,
+  status_reason: '', // This should hold the complaint's specific reason
 });
 
 const complaintCategories = ref([
@@ -306,7 +367,11 @@ const confirmDeleteDialog = ref(false);
 const showProofDialog = ref(false);
 const selectedProofUrl = ref('');
 
-// --- NEW: State for Zoom Viewer ---
+// NEW: State for Dismiss complaint dialog
+const declineComplaintDialog = ref(false);
+const dismissReason = ref('');
+const isActing = ref(false); // Used for loading states on actions
+
 const zoomLevel = ref(1);
 
 const complainantSearchQuery = ref('');
@@ -341,13 +406,45 @@ const imageStyle = computed(() => ({
   transition: 'transform 0.2s ease-out'
 }));
 
+const isComplainantDeactivated = computed(() => {
+    // Check if complainant_details exists and if their status or account_status is 'Deactivated'
+    return form.complainant_details && (form.complainant_details.status === 'Deactivated' || form.complainant_details.account_status === 'Deactivated');
+});
+
+
 // --- FUNCTIONS ---
-async function updateComplaintStatus(status){
-  const {data, error} = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body: { status } });
-  if (error.value) $toast.fire({ title: error.value.data?.error || 'Failed to update status', icon: 'error' });
-  if (data.value) $toast.fire({ title: data.value.message, icon: 'success' });
-  await fetchComplaint();
+// UPDATED: updateComplaintStatus to accept an optional reason
+async function updateComplaintStatus(status, reason = '') {
+  isActing.value = true; // Set loading state for actions
+  const body = { status };
+  if (reason) {
+    body.reason = reason;
+  }
+
+  try {
+    const { data, error } = await useMyFetch(`/api/complaints/${complaintId}/status`, { method: 'PATCH', body });
+    if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
+    
+    $toast.fire({ title: data.value.message || 'Status updated successfully!', icon: 'success' });
+    await fetchComplaint(); // Re-fetch to get the latest status_reason if it was updated
+  } catch (e) {
+    $toast.fire({ title: e.message, icon: 'error' });
+  } finally {
+    isActing.value = false; // Clear loading state
+  }
 }
+
+// NEW: Function to handle confirming dismissal with a reason
+async function confirmDismiss() {
+    if (!dismissReason.value.trim()) {
+        $toast.fire({ title: 'A reason is required to dismiss the complaint.', icon: 'warning' });
+        return;
+    }
+    await updateComplaintStatus('Dismissed', dismissReason.value.trim());
+    declineComplaintDialog.value = false;
+    dismissReason.value = ''; // Clear reason after submitting
+}
+
 
 onMounted(async () => {
   await fetchComplaint();
@@ -359,11 +456,18 @@ async function fetchComplaint(){
         const { data, error } = await useMyFetch(`/api/complaints/${complaintId}`);
         if (error.value || !data.value?.complaint) throw new Error('Complaint not found.');
         const complaint = data.value.complaint;
-        Object.assign(form, { ...complaint, date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date') });
+        
+        Object.assign(form, {
+            ...complaint,
+            date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date'),
+            complainant_details: complaint.complainant_details || null,
+            status_reason: complaint.status_reason || '' // Ensure this grabs the reason from the complaint object
+        });
+
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
-        if (form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed') {
+        if (['Under Investigation', 'Resolved', 'Dismissed'].includes(form.status)) {
           await fetchNotes();
         } else {
           investigationNotes.value = [];
@@ -376,11 +480,10 @@ const cancelEdit = () => { Object.assign(form, originalFormState.value); v$.valu
 
 const openProofDialog = (url) => {
   selectedProofUrl.value = url;
-  zoomLevel.value = 1; // Reset zoom when opening
+  zoomLevel.value = 1;
   showProofDialog.value = true;
 };
 
-// --- NEW: Zoom control functions ---
 const zoomIn = () => { zoomLevel.value += 0.2; };
 const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
 const resetZoom = () => { zoomLevel.value = 1; };
@@ -423,7 +526,7 @@ const onComplainantSelect = (selectedId) => {
     const resident = complainantSearchResults.value.find(r => r._id === selectedId);
     if (!resident) return;
     form.complainant_resident_id = resident._id; form.complainant_display_name = resident.name;
-    form.complainant_address = resident.address; form.contact_number = resident.contact.number;
+    form.complainant_address = resident.address; form.contact_number = resident.contact_number; 
     complainantSearchQuery.value = resident.name; complainantSearchResults.value = [];
 };
 
@@ -443,6 +546,8 @@ async function saveChanges() {
   try {
     const payload = { ...form, date_of_complaint: new Date(form.date_of_complaint).toISOString() };
     delete payload.status;
+    delete payload.complainant_details;
+    delete payload.status_reason; // Ensure this is not sent back to server during a PUT
     const { error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update complaint.');
     $toast.fire({ title: 'Complaint updated successfully!', icon: 'success' });
