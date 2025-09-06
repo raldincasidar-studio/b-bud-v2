@@ -6349,7 +6349,6 @@ app.get('/api/budgets/categories', async (req, res) => {
   }
 });
 
-// 2. READ (List): GET /api/budgets
 app.get('/api/budgets', async (req, res) => {
     try {
         const dab = await db();
@@ -6357,8 +6356,11 @@ app.get('/api/budgets', async (req, res) => {
 
         const { search, sortBy, sortOrder, filterDay, filterMonth, filterYear } = req.query; // Destructure new filter parameters
         const page = parseInt(req.query.page) || 1;
-        const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-        const skip = (page - 1) * itemsPerPage;
+        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10; // Use 'let' to allow modification
+        // Ensure itemsPerPage is at least 1 if not -1
+        if (itemsPerPage !== -1 && itemsPerPage < 1) itemsPerPage = 10; 
+
+        console.log("Backend received /api/budgets query params:", req.query);
 
         let query = {};
 
@@ -6410,11 +6412,20 @@ app.get('/api/budgets', async (req, res) => {
             sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
         }
 
-        const budgets = await collection.find(query)
-            .sort(sortOptions)
-            .skip(skip)
-            .limit(itemsPerPage)
-            .toArray();
+        console.log("Final MongoDB Query:", JSON.stringify(query));
+
+        let cursor = collection.find(query).sort(sortOptions);
+
+        // --- IMPORTANT FIX: Conditionally apply skip and limit ---
+        if (itemsPerPage !== -1) {
+            const skip = (page - 1) * itemsPerPage;
+            cursor = cursor.skip(skip).limit(itemsPerPage);
+        }
+        // --- END IMPORTANT FIX ---
+
+        const budgets = await cursor.toArray();
+        console.log("Number of budgets fetched:", budgets.length);
+
 
         const totalBudgets = await collection.countDocuments(query);
 
@@ -6520,6 +6531,37 @@ app.delete('/api/budgets/:id', async (req, res) => {
     } catch (error) {
         console.error("Error deleting budget entry:", error);
         res.status(500).json({ error: 'Failed to delete budget entry.' });
+    }
+});
+
+async function getImageBase64(imagePath) {
+    try {
+        const fullPath = path.resolve(__dirname, '../assets/img', imagePath); // Adjust path relative to api/index.js
+        const buffer = await fs.readFile(fullPath);
+        // Basic MIME type detection: IMPORTANT for browsers to display Base64 correctly
+        const mimeType = path.extname(imagePath).toLowerCase() === '.png' ? 'image/png' : 'image/jpeg';
+        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+        console.error(`Error reading image ${imagePath}:`, error);
+        return null; // Return null if image not found/readable
+    }
+}
+
+// NEW ENDPOINT: GET /api/logos
+app.get('/api/logos', async (req, res) => {
+    try {
+        const manilaLogoBase64 = await getImageBase64('manila-logo.png'); // Left logo
+        const bagongPilipinasLogoBase64 = await getImageBase64('bagong-pilipinas-logo.png'); // Right logo
+        const cityBudgetLogoBase64 = await getImageBase64('city-budget-logo.png'); // Central logo (City Budget Office)
+
+        res.json({
+            manilaLogo: manilaLogoBase64,
+            bagongPilipinasLogo: bagongPilipinasLogoBase64,
+            cityBudgetLogo: cityBudgetLogoBase64, // Correctly named and served
+        });
+    } catch (error) {
+        console.error("Error fetching logos for print:", error);
+        res.status(500).json({ error: "Failed to fetch logos." });
     }
 });
 
