@@ -32,17 +32,35 @@
               @blur="v$.requestor_resident.$touch"
               no-filter
             >
-              <!-- UPDATED: Template now shows full name and full address -->
+              <!-- UPDATED: Template now checks both 'status' and 'account_status' -->
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
                   :title="item.raw.name"
                   :subtitle="item.raw.address"
-                  :disabled="item.raw.account_status !== 'Active'"
+                  :disabled="item.raw.status !== 'Approved' || item.raw.account_status !== 'Active'"
                 >
                   <template v-slot:append>
                     <v-chip
-                      v-if="item.raw.account_status !== 'Active'"
+                      v-if="item.raw.status === 'Pending'"
+                      color="orange-darken-1" variant="tonal" size="small" label
+                    >
+                      Pending
+                    </v-chip>
+                    <v-chip
+                      v-else-if="item.raw.status === 'Declined'"
+                      color="red-darken-2" variant="tonal" size="small" label
+                    >
+                      Declined
+                    </v-chip>
+                    <v-chip
+                      v-else-if="item.raw.status === 'Deactivated'"
+                      color="grey-darken-1" variant="tonal" size="small" label
+                    >
+                      Deactivated
+                    </v-chip>
+                    <v-chip
+                      v-else-if="item.raw.account_status !== 'Active'"
                       color="warning" variant="tonal" size="small" label
                     >
                       On Hold
@@ -202,9 +220,20 @@ const isLoadingRequestors = ref(false);
 const rules = {
     requestor_resident: {
         required: helpers.withMessage('A requestor must be selected.', required),
-        isActive: helpers.withMessage(
-            "This resident's account is On Hold and cannot make new requests.",
-            (value) => !value || value.account_status === 'Active'
+        // UPDATED: Check both 'status' and 'account_status'
+        isEligible: helpers.withMessage(
+            (value) => {
+                if (!value) return "Requestor not selected."; // Should be caught by 'required'
+                if (value.status === 'Pending') return "Resident account is pending approval and cannot make requests.";
+                if (value.status === 'Declined') return "Resident account has been declined and cannot make requests.";
+                if (value.status === 'Deactivated') return "Resident account has been permanently deactivated and cannot make requests.";
+                if (value.account_status !== 'Active') return "This resident's account is On Hold and cannot make new requests.";
+                return true; // Should not be reached if it's active
+            },
+            (value) => {
+                if (!value) return true; // Let 'required' handle empty selections
+                return value.status === 'Approved' && value.account_status === 'Active';
+            }
         )
     },
     processed_by_personnel: { required: helpers.withMessage('Processed by personnel is required.', required) },
@@ -235,20 +264,20 @@ const searchResidentsAPI = debounce(async (query) => {
         const { data, error } = await useMyFetch('/api/residents/search', { query: { q: query } });
         if(error.value) throw new Error('Error searching residents.');
         
-        // --- UPDATED: Mapping now includes the full address ---
         requestorSearchResults.value = data.value?.residents.map(r => {
             const addressParts = [
                 r.address_house_number,
                 r.address_street,
                 r.address_subdivision_zone
-            ].filter(Boolean); // Removes any null/undefined/empty parts
+            ].filter(Boolean);
             const fullAddress = addressParts.join(', ').trim();
 
             return {
                 _id: r._id,
                 name: `${r.first_name || ''} ${r.last_name || ''}`.trim(),
-                address: fullAddress || 'No address available', // Fallback text
+                address: fullAddress || 'No address available',
                 email: r.email,
+                status: r.status, // ADDED: Project 'status' here
                 account_status: r.account_status
             };
         }) || [];
