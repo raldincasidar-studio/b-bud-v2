@@ -69,6 +69,7 @@ export default defineNuxtConfig({
         config.plugins.push(vuetify({ autoImport: true }));
       });
     },
+    'nuxt-booster'
     //...
   ],
   // nitro: {

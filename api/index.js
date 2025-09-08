@@ -6478,7 +6478,10 @@ async function validateProofOfResidency(userJSON, fileInBase64) {
 
     // 3. Construct the prompt for the Gemini model
     const prompt = `
-    I will provide you with a json of data and an image. I want you to validate this proof of residency document image that they submitted if accurate to the document they submitted. A proof of residency document might include some water bills, electricity bills, or any other receipts or documents that proves that it is a legit resident inputted in the json. Here is the json. Just return two json keys: true (for valid) and false for invalid and message. Make the message not too long, short but complete description.
+    I will provide you with a json of data and an image. I want you to validate this proof of residency document image that they submitted 
+    if accurate to the document they submitted. A proof of residency document might include some water bills, electricity bills, or any other 
+    receipts or documents that proves that it is a legit resident inputted in the json. Here is the json. Just return two json keys: true 
+    (for valid) and false for invalid and message. Make the message not too long, short but complete description.
     `;
     
     // 4. Select the Gemini model and configure it to return JSON
@@ -6548,7 +6551,8 @@ async function validateProofOfVoter(userJSON, fileInBase64) {
 
     Return a JSON object with two keys: "isValid" (boolean) and "message" (a short but complete explanation of the result).
     - If everything is correct, set "isValid" to true and the message to 'Voter\\'s ID successfully validated.'
-    - If the details do not match or if the document is not a valid Voter's ID, set "isValid" to false and briefly explain the reason (e.g., 'Name on ID does not match the provided data.' or 'The provided image is not a valid Philippine Voter\\'s ID.').
+    - If the details do not match or if the document is not a valid Voter's ID, set "isValid" to false and briefly explain the reason 
+    (e.g., 'Name on ID does not match the provided data.' or 'The provided image is not a valid Philippine Voter\\'s ID.').
     `;
     
     // 4. Select the Gemini model and configure it to return JSON
