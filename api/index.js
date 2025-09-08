@@ -1755,14 +1755,20 @@ app.get('/api/residents/:id/notifications', async (req, res) => {
     const notifications = await notificationsCollection.find({
       $or: [
         { target_audience: 'All' },
-        { target_audience: 'SpecificResidents', recipient_ids: { $in: [id, residentObjectId] } }
+        {
+          target_audience: 'SpecificResidents',
+          'recipients.resident_id': residentObjectId
+        }
       ]
     }).sort({ date: -1 }).toArray();
 
     const unreadCount = await notificationsCollection.countDocuments({
       $or: [
         { target_audience: 'All' },
-        { target_audience: 'SpecificResidents', recipient_ids: { $in: [id, residentObjectId] } }
+        {
+          target_audience: 'SpecificResidents',
+          'recipients.resident_id': residentObjectId
+        }
       ],
       read_by: { $not: { $elemMatch: { resident_id: residentObjectId } } }
     });
@@ -3391,16 +3397,14 @@ async function createNotification(dbInstance, notificationData) {
     if (finalRecipientObjects && finalRecipientObjects.length > 0) {
         const recipientIds = finalRecipientObjects.map(r => r.resident_id);
         const recipients = await residentsCollection.find({ _id: { $in: recipientIds } }).toArray();
-        for (const recipient of recipients) {
-            if (recipient.contact_number) {
-                try {
-                    await sendMessage(recipient.contact_number, `B-BUD Notification: ${name}`);
-                } catch (error) {
-                    console.error(`Failed to send SMS notification to ${recipient.contact_number}:`, error);
-                }
-            }
+        try {
+        await sendMessage(recipients?.map(r => r.contact_number), `B-BUD Notification: ${name}`);
+        } catch (error) {
+            console.error(`Failed to send SMS notification to ${recipient.contact_number}:`, error);
         }
     }
+
+    
 
     return { _id: result.insertedId, ...newNotificationDoc };
   } catch (error) {

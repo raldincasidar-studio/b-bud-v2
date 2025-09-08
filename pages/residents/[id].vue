@@ -391,9 +391,9 @@ const rules = {
   first_name: { required }, last_name: { required }, suffix: {}, // ADDED SUFFIX RULE (optional)
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
-  email: { required, email }, contact_number: { required },
+  email: { email }, contact_number: {  },
   address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
-  years_at_current_address: { required, numeric },
+  years_at_current_address: { numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
   voter_id_number: { 
