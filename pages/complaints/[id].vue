@@ -460,9 +460,13 @@ async function fetchComplaint(){
         Object.assign(form, {
             ...complaint,
             date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date'),
+            time_of_complaint: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(complaint.created_at)),
             complainant_details: complaint.complainant_details || null,
             status_reason: complaint.status_reason || '' // Ensure this grabs the reason from the complaint object
         });
+
+
+        console.log('Time of complaint: ', complaint.created_at);
 
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
