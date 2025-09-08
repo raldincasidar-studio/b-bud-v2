@@ -12,7 +12,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const { GoogleGenAI, createUserContent, createPartFromUri, Type } = require('@google/genai');
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
-const GEMINI_API_KEY = 'AIzaSyAfdQbfiDCfRzks39OipdxtwRZ1GbnghqE'
+const GEMINI_API_KEY = 'AIzaSyAWwKgLzqbgFFR58s1DqwP6Ryk2sj6-V5U'
 // --- SMTP Configuration ---
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
@@ -657,7 +657,7 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         citizenship: data.citizenship,
         occupation_status: data.occupation_status,
         email: email,
-        password_hash: null, // Password will be set/hashed during activation for pending accounts
+        password_hash: md5(data.password) || null, // Password will be set/hashed during activation for pending accounts
         contact_number: contact_number,
         relationship_to_head: isHead ? null : (data.relationship_to_head === 'Other' ? data.other_relationship : data.relationship_to_head),
 
