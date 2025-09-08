@@ -34,6 +34,7 @@
           <v-chip filter value="All">All</v-chip>
           <v-chip filter value="Pending">Pending</v-chip>
           <v-chip filter value="Approved">Approved</v-chip>
+          <v-chip filter value="On-hold">On-hold</v-chip>
           <v-chip filter value="Deactivated">Deactivated</v-chip>
           <v-chip filter value="Declined">Declined</v-chip>
         </v-chip-group>
@@ -46,6 +47,7 @@
         :items="residents"
         :items-length="totalItems"
         :loading="loading"
+        :items-per-page-options="[10, 25, 50, 100]"
         @update:options="loadResidents"
         item-value="_id"
       >
@@ -61,25 +63,42 @@
           {{ item.address_house_number }}
         </template>
 
+        <!-- UPDATED SLOT to use getDisplayStatus -->
         <template v-slot:item.status="{ item }">
-          <v-chip :color="getStatusColor(item.status)" label size="small">
-            {{ item.status }}
+          <v-chip :color="getStatusColor(getDisplayStatus(item))" label size="small">
+            {{ getDisplayStatus(item) }}
           </v-chip>
         </template>
 
-        <!-- UPDATED SLOT to call formatDateTime -->
         <template v-slot:item.date_added="{ item }">
             {{ formatDateTime(item.date_added) }}
         </template>
 
-        <!-- UPDATED SLOT to call formatDateTime -->
         <template v-slot:item.date_approved="{ item }">
             {{ formatDateTime(item.date_approved) }}
         </template>
 
+        <!-- UPDATED SLOT to include action menu -->
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <!-- Your menu actions can go here -->
+            <v-menu>
+              <template v-slot:activator="{ props }">
+                <v-btn icon="mdi-dots-vertical" v-bind="props" variant="tonal" size="small"></v-btn>
+              </template>
+              <v-list dense v-if="!getDisplayStatus(item) != 'On-hold'">
+                <v-list-item
+                  v-for="action in getAvailableActions(item)"
+                  :key="action.status"
+                  @click="handleActionClick(item, action.status)"
+                  :disabled="updatingStatusFor === item._id"
+                >
+                  <template v-slot:prepend>
+                    <v-icon :icon="action.icon" :color="action.color"></v-icon>
+                  </template>
+                  <v-list-item-title>{{ action.title }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
         </template>
 
         <template v-slot:no-data>
@@ -137,14 +156,17 @@ const residentToAction = ref(null);
 const actionReason = ref('');
 const actionType = ref('');
 
+// UPDATED computed properties for dialog content
 const dialogTitle = computed(() => {
     if (actionType.value === 'Pending') return 'Reactivate';
+    if (actionType.value === 'Active') return 'Remove Hold';
     return actionType.value;
 });
 
 const dialogActionText = computed(() => {
     if (actionType.value === 'Pending') return 'reactivating';
     if (actionType.value === 'Deactivated') return 'deactivating';
+    if (actionType.value === 'Active') return 'removing the hold on';
     return 'declining';
 });
 
@@ -152,12 +174,12 @@ const dialogButtonColor = computed(() => {
   const colors = {
     Declined: 'error',
     Deactivated: 'warning',
-    Pending: 'success'
+    Pending: 'success',
+    Active: 'info'
   };
   return colors[actionType.value] || 'primary';
 });
 
-// UPDATED headers with new titles
 const headers = ref([
   { title: 'Account Number', key: '_id', sortable: false },
   { title: 'Household Name', key: 'full_name', sortable: false },
@@ -168,16 +190,30 @@ const headers = ref([
   { title: 'Actions', key: 'actions', sortable: false, align: 'center', width: '150px' },
 ]);
 
-const getAvailableActions = (currentStatus) => {
+// NEW helper function to determine the displayed status
+const getDisplayStatus = (resident) => {
+  if (resident.status === 'Approved' && resident.account_status === 'Deactivated') {
+    return 'On-hold';
+  }
+  return resident.status;
+};
+
+// UPDATED function to be context-aware of On-Hold status
+const getAvailableActions = (resident) => {
+    const displayStatus = getDisplayStatus(resident);
+
     const actions = {
         'Approve': { status: 'Approved', title: 'Approve Account', icon: 'mdi-check-circle-outline', color: 'success' },
         'Decline': { status: 'Declined', title: 'Decline Account', icon: 'mdi-close-circle-outline', color: 'error' },
         'Deactivate': { status: 'Deactivated', title: 'Deactivate Account', icon: 'mdi-account-off-outline', color: 'warning' },
         'Reactivate': { status: 'Pending', title: 'Reactivate (Set to Pending)', icon: 'mdi-account-reactivate-outline', color: 'orange' },
+        'RemoveHold': { status: 'Active', title: 'Remove Hold (Set to Active)', icon: 'mdi-lock-open-variant-outline', color: 'info' }
     };
-    if (currentStatus === 'Pending') return [actions.Approve, actions.Decline];
-    if (currentStatus === 'Approved') return [actions.Deactivate];
-    if (currentStatus === 'Declined' || currentStatus === 'Deactivated') return [actions.Reactivate];
+
+    if (displayStatus === 'Pending') return [actions.Approve, actions.Decline];
+    if (displayStatus === 'Approved') return [actions.Deactivate];
+    if (displayStatus === 'On-hold') return [actions.RemoveHold];
+    if (displayStatus === 'Declined' || displayStatus === 'Deactivated') return [actions.Reactivate];
     return [];
 };
 
@@ -205,14 +241,24 @@ const confirmActionWithReason = async () => {
     actionReasonDialog.value = false;
 };
 
+// UPDATED function to handle updating primary or secondary status
 async function updateResidentStatus(resident, newStatus, reason = null) {
   updatingStatusFor.value = resident._id;
   try {
-    const payload = { status: newStatus };
+    let payload = {};
+    // If the action is to remove the hold, update the `account_status` field.
+    if (newStatus === 'Active') {
+      payload = { account_status: 'Active' };
+    } else {
+      // Otherwise, update the primary `status` field.
+      payload = { status: newStatus };
+    }
+    
     if (reason) { 
       payload.reason = reason; 
     }
 
+    // This endpoint must be able to handle updates to both `status` and `account_status`.
     const { error } = await useMyFetch(`/api/residents/${resident._id}/status`, {
       method: 'PATCH',
       body: payload,
@@ -223,6 +269,8 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
     let successMessage = 'Status updated successfully!';
     if (newStatus === 'Deactivated') {
         successMessage = 'Account deactivated. Associated requests are being invalidated.';
+    } else if (newStatus === 'Active') {
+        successMessage = 'Account hold has been removed successfully.';
     }
     $toast.fire({ title: successMessage, icon: 'success' });
     
@@ -286,10 +334,10 @@ const getStatusColor = (s) => ({
   'Approved': 'success',
   'Pending': 'warning',
   'Declined': 'error',
-  'Deactivated': 'grey-darken-1'
+  'Deactivated': 'grey-darken-1',
+  'On-hold': 'orange'
 }[s] || 'default');
 
-// UPDATED function to format both date and time
 const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
     const options = { 

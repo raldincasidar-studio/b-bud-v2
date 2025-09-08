@@ -43,7 +43,7 @@
                 <v-text-field v-model.number="form.quantity_borrowed" :readonly="!editMode" type="number" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-counter"></v-text-field>
 
                 <label class="v-label">Date Borrowed</label>
-                <v-text-field v-model="form.borrow_datetime" :readonly="!editMode" type="datetime-local" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-calendar-arrow-right"></v-text-field>
+                <v-text-field v-model="form.borrow_datetime" :readonly="true" type="datetime-local" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-calendar-arrow-right"></v-text-field>
 
                 <label class="v-label">Expected Return Date</label>
                 <v-text-field v-model="form.expected_return_date" :readonly="!editMode" type="date" variant="outlined"  class="mb-2" prepend-inner-icon="mdi-calendar-arrow-left"></v-text-field>
@@ -100,11 +100,10 @@
                         <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined"  prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
                         <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3"></v-textarea>
                     </v-card-text>
-                    <v-card-actions class="pa-4">
-                        <v-spacer></v-spacer>
+                    <v-card-actions class="pa-4 flex-wrap">
                         <v-btn color="success" variant="flat" v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
-                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-alert-octagon-outline" size="large">Mark as Damaged</v-btn>
-                        <v-btn v-if="transactionData.status === 'Returned'" color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
+                        <v-btn v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-alert-octagon-outline" size="large">Mark as Damaged</v-btn>
+                        <v-btn v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
                     </v-card-actions>
                 </div>
 
@@ -187,6 +186,7 @@ import { reactive, ref, onMounted, computed } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
+import Swal from 'sweetalert2';
 
 const STATUS_CONFIG = {
   Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
@@ -318,7 +318,7 @@ async function updateStatus(newStatus, promptForReason = false) {
     let apiPayload = { status: newStatus };
 
     if (promptForReason) {
-        const { value: reason, isConfirmed } = await $toast.fire({
+        const { value: reason, isConfirmed } = await Swal.fire({
             title: `Confirm: ${newStatus}`,
             text: `Please provide a reason for this status change. This will be recorded.`,
             input: 'text',

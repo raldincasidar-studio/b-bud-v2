@@ -1141,132 +1141,132 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 
 // PATCH /api/residents/:id/status - APPROVE/DECLINE/DEACTIVATE A RESIDENT
 // This route is CRUCIAL for the date_approved logic to work.
-app.patch('/api/residents/:id/status', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { status, reason } = req.body;
+// app.patch('/api/residents/:id/status', async (req, res) => {
+//     try {
+//         const { id } = req.params;
+//         const { status, reason } = req.body;
 
-        // --- VALIDATION ---
-        if (!ObjectId.isValid(id)) {
-            return res.status(400).json({ message: 'Invalid ID format.' });
-        }
-        if (!status) {
-            return res.status(400).json({ message: 'Status is required.' });
-        }
-        const requiresReason = ['Deactivated', 'Declined', 'Pending'];
-        if (requiresReason.includes(status) && (!reason || reason.trim() === '')) {
-            return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this account.` });
-        }
+//         // --- VALIDATION ---
+//         if (!ObjectId.isValid(id)) {
+//             return res.status(400).json({ message: 'Invalid ID format.' });
+//         }
+//         if (!status) {
+//             return res.status(400).json({ message: 'Status is required.' });
+//         }
+//         const requiresReason = ['Deactivated', 'Declined', 'Pending'];
+//         if (requiresReason.includes(status) && (!reason || reason.trim() === '')) {
+//             return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this account.` });
+//         }
 
-        const dab = await db();
-        const residentsCollection = dab.collection('residents');
-        const documentRequestsCollection = dab.collection('document_requests');
-        const borrowedAssetsCollection = dab.collection('borrowed_assets');
-        const complaintsCollection = dab.collection('complaints'); // ADDED: Declare complaints collection
+//         const dab = await db();
+//         const residentsCollection = dab.collection('residents');
+//         const documentRequestsCollection = dab.collection('document_requests');
+//         const borrowedAssetsCollection = dab.collection('borrowed_assets');
+//         const complaintsCollection = dab.collection('complaints'); // ADDED: Declare complaints collection
 
-        const resident = await residentsCollection.findOne({ _id: new ObjectId(id) });
-        if (!resident) {
-            return res.status(404).json({ message: 'Resident not found.' });
-        }
+//         const resident = await residentsCollection.findOne({ _id: new ObjectId(id) });
+//         if (!resident) {
+//             return res.status(404).json({ message: 'Resident not found.' });
+//         }
 
-        const updateDocument = {
-            $set: {
-                status: status,
-                updated_at: new Date()
-            }
-        };
+//         const updateDocument = {
+//             $set: {
+//                 status: status,
+//                 updated_at: new Date()
+//             }
+//         };
         
-        if (reason) {
-            updateDocument.$set.status_reason = reason;
-        } else {
-            updateDocument.$unset = { status_reason: "" };
-        }
+//         if (reason) {
+//             updateDocument.$set.status_reason = reason;
+//         } else {
+//             updateDocument.$unset = { status_reason: "" };
+//         }
 
-        if (status === 'Approved') {
-            updateDocument.$set.date_approved = new Date();
-        } 
-        else if (status === 'Deactivated') {
-            console.log(`Resident ${id} is being deactivated. Initiating cascading updates.`);
-            const defaultDeactivationReason = "Account deactivated by admin.";
-            const actualReason = reason && reason.trim() !== '' ? reason : defaultDeactivationReason; // Use provided reason or a default
+//         if (status === 'Approved') {
+//             updateDocument.$set.date_approved = new Date();
+//         } 
+//         else if (status === 'Deactivated') {
+//             console.log(`Resident ${id} is being deactivated. Initiating cascading updates.`);
+//             const defaultDeactivationReason = "Account deactivated by admin.";
+//             const actualReason = reason && reason.trim() !== '' ? reason : defaultDeactivationReason; // Use provided reason or a default
 
-            // --- Existing logic for Document Requests ---
-            const docReqInvalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${actualReason}`;
-            const docReqUpdateResult = await documentRequestsCollection.updateMany(
-                { 
-                    requestor_resident_id: new ObjectId(id),
-                    document_status: { $in: ['Pending', 'Processing'] }
-                },
-                { 
-                    $set: { 
-                        document_status: 'Declined', 
-                        status_reason: docReqInvalidationReason,
-                        updated_at: new Date()
-                    } 
-                }
-            );
-            console.log(`[Deactivation Cascading] Document Requests: ${docReqUpdateResult.modifiedCount} requests declined for resident ${id}.`);
+//             // --- Existing logic for Document Requests ---
+//             const docReqInvalidationReason = `Request invalidated because the user's account was deactivated. Reason: ${actualReason}`;
+//             const docReqUpdateResult = await documentRequestsCollection.updateMany(
+//                 { 
+//                     requestor_resident_id: new ObjectId(id),
+//                     document_status: { $in: ['Pending', 'Processing'] }
+//                 },
+//                 { 
+//                     $set: { 
+//                         document_status: 'Declined', 
+//                         status_reason: docReqInvalidationReason,
+//                         updated_at: new Date()
+//                     } 
+//                 }
+//             );
+//             console.log(`[Deactivation Cascading] Document Requests: ${docReqUpdateResult.modifiedCount} requests declined for resident ${id}.`);
             
-            // --- Logic to Reject Borrowed Asset Transactions ---
-            const borrowedAssetsRejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${actualReason}"`;
-            const borrowedAssetsUpdateResult = await borrowedAssetsCollection.updateMany(
-                {
-                    borrower_resident_id: new ObjectId(id),
-                    status: { $in: ['Pending', 'Processing'] } // Active statuses to be rejected
-                },
-                {
-                    $set: {
-                        status: 'Rejected',
-                        notes: borrowedAssetsRejectionNote, // Set a clear rejection reason in the notes
-                        updated_at: new Date()
-                    }
-                }
-            );
-            console.log(`[Deactivation Cascading] Borrowed Assets: ${borrowedAssetsUpdateResult.modifiedCount} transactions rejected for resident ${id}.`);
+//             // --- Logic to Reject Borrowed Asset Transactions ---
+//             const borrowedAssetsRejectionNote = `Transaction automatically rejected. Reason: User account was deactivated. Admin note: "${actualReason}"`;
+//             const borrowedAssetsUpdateResult = await borrowedAssetsCollection.updateMany(
+//                 {
+//                     borrower_resident_id: new ObjectId(id),
+//                     status: { $in: ['Pending', 'Processing'] } // Active statuses to be rejected
+//                 },
+//                 {
+//                     $set: {
+//                         status: 'Rejected',
+//                         notes: borrowedAssetsRejectionNote, // Set a clear rejection reason in the notes
+//                         updated_at: new Date()
+//                     }
+//                 }
+//             );
+//             console.log(`[Deactivation Cascading] Borrowed Assets: ${borrowedAssetsUpdateResult.modifiedCount} transactions rejected for resident ${id}.`);
 
-            // --- ADDED: Logic to Dismiss/Decline Pending Complaints ---
-            const complaintDismissReason = `Complaint automatically dismissed due to complainant's deactivated account. Reason: "${actualReason}"`;
-            const complaintsUpdateResult = await complaintsCollection.updateMany(
-                {
-                    complainant_resident_id: new ObjectId(id),
-                    // These are the "active" statuses for a complaint
-                    status: { $in: ['New'] } 
-                },
-                {
-                    $set: {
-                        status: 'Dismissed', // Set to 'Dismissed'
-                        status_reason: complaintDismissReason, // Set the specific reason
-                        updated_at: new Date()
-                    }
-                }
-            );
-            console.log(`[Deactivation Cascading] Complaints: ${complaintsUpdateResult.modifiedCount} complaints dismissed for resident ${id}.`);
-            // --- END ADDED LOGIC ---
-        }
+//             // --- ADDED: Logic to Dismiss/Decline Pending Complaints ---
+//             const complaintDismissReason = `Complaint automatically dismissed due to complainant's deactivated account. Reason: "${actualReason}"`;
+//             const complaintsUpdateResult = await complaintsCollection.updateMany(
+//                 {
+//                     complainant_resident_id: new ObjectId(id),
+//                     // These are the "active" statuses for a complaint
+//                     status: { $in: ['New'] } 
+//                 },
+//                 {
+//                     $set: {
+//                         status: 'Dismissed', // Set to 'Dismissed'
+//                         status_reason: complaintDismissReason, // Set the specific reason
+//                         updated_at: new Date()
+//                     }
+//                 }
+//             );
+//             console.log(`[Deactivation Cascading] Complaints: ${complaintsUpdateResult.modifiedCount} complaints dismissed for resident ${id}.`);
+//             // --- END ADDED LOGIC ---
+//         }
 
-        const result = await residentsCollection.updateOne(
-            { _id: new ObjectId(id) },
-            updateDocument
-        );
+//         const result = await residentsCollection.updateOne(
+//             { _id: new ObjectId(id) },
+//             updateDocument
+//         );
 
-        if (result.matchedCount === 0) {
-            return res.status(404).json({ message: 'Resident not found during update.' });
-        }
+//         if (result.matchedCount === 0) {
+//             return res.status(404).json({ message: 'Resident not found during update.' });
+//         }
 
-        await createAuditLog({
-            description: `Resident account for '${resident.first_name} ${resident.last_name}' status changed to '${status}'. Reason: ${reason || 'N/A'}`,
-            action: 'STATUS_CHANGE',
-            entityType: 'Resident',
-            entityId: id
-        }, req);
+//         await createAuditLog({
+//             description: `Resident account for '${resident.first_name} ${resident.last_name}' status changed to '${status}'. Reason: ${reason || 'N/A'}`,
+//             action: 'STATUS_CHANGE',
+//             entityType: 'Resident',
+//             entityId: id
+//         }, req);
 
-        res.status(200).json({ message: `Resident status updated to ${status}.` });
+//         res.status(200).json({ message: `Resident status updated to ${status}.` });
 
-    } catch (error) {
-        console.error("Error updating resident status:", error);
-        res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
-    }
-});
+//     } catch (error) {
+//         console.error("Error updating resident status:", error);
+//         res.status(500).json({ error: 'Server Error', message: 'Could not update resident status.' });
+//     }
+// });
 
 // GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
 app.get('/api/residents', async (req, res) => {
@@ -1284,7 +1284,16 @@ app.get('/api/residents', async (req, res) => {
     const residentsCollection = dab.collection('residents');
     const filters = [];
 
-    if (status) filters.push({ status: status });
+    // --- UPDATE: Handle 'On-hold' status filter ---
+    if (status) {
+      if (status === 'On-hold') {
+        // 'On-hold' means the primary status is 'Approved' but the secondary account status is 'Deactivated'
+        filters.push({ status: 'Approved', account_status: 'Deactivated' });
+      } else {
+        filters.push({ status: status });
+      }
+    }
+
     if (is_voter === 'true') filters.push({ is_registered_voter: true });
     if (is_pwd === 'true') filters.push({ is_pwd: true });
     if (is_senior === 'true') filters.push({ is_senior_citizen: true });
@@ -1317,21 +1326,20 @@ app.get('/api/residents', async (req, res) => {
 
     const finalQuery = filters.length > 0 ? { $and: filters } : {};
 
-    // --- UPDATE: Use 'created_at' for 'date_added' sorting ---
     let sortOptions = { created_at: -1 }; 
     if (sortBy) {
-        // Map frontend key 'date_added' to backend field 'created_at'
         const sortKey = sortBy === 'date_added' ? 'created_at' : sortBy;
         sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- UPDATE: Renamed 'created_at' to 'date_added' and included 'date_approved' ---
+    // --- UPDATE: Add `account_status` to the projection ---
     const projection = {
         first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
-        date_added: "$created_at", // Rename field in output
+        account_status: 1, // Added for frontend logic
+        date_added: "$created_at",
         date_approved: 1
     };
     
@@ -1356,6 +1364,100 @@ app.get('/api/residents', async (req, res) => {
   } catch (error) {
     console.error("Error fetching residents:", error);
     res.status(500).json({ error: "Failed to fetch residents", message: error.message });
+  }
+});
+
+app.patch('/api/residents/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Body can contain either 'status' OR 'account_status'
+    const { status, account_status, reason } = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid resident ID format.' });
+    }
+
+    if (!status && !account_status) {
+      return res.status(400).json({ message: 'A new status or account_status must be provided.' });
+    }
+
+    if (!!account_status && !reason) {
+        return res.status(400).json({ message: 'A reason for the status change is required.' });
+    }
+
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const residentId = new ObjectId(id);
+
+    const currentResident = await residentsCollection.findOne({ _id: residentId });
+    if (!currentResident) {
+      return res.status(404).json({ message: 'Resident not found.' });
+    }
+
+    const updatePayload = { $set: {} };
+    let historyLogAction = '';
+
+    // --- Logic to handle the update ---
+    if (status) {
+      // Handle updates to the primary status (Approved, Declined, Deactivated, Pending)
+      const allowedPrimaryStatus = ['Approved', 'Declined', 'Deactivated', 'Pending'];
+      if (!allowedPrimaryStatus.includes(status)) {
+        return res.status(400).json({ message: `Invalid primary status: ${status}` });
+      }
+      
+      updatePayload.$set.status = status;
+      historyLogAction = `Status changed to ${status}`;
+
+      // If moving to 'Approved' for the first time, set the approval date and ensure account is active
+      if (status === 'Approved' && currentResident.status !== 'Approved') {
+        updatePayload.$set.date_approved = new Date();
+        updatePayload.$set.account_status = 'Active'; // Default to active on approval
+      }
+
+    } else if (account_status) {
+      // Handle updates to the secondary account_status (Active, Deactivated for hold)
+      const allowedSecondaryStatus = ['Active', 'Deactivated'];
+       if (!allowedSecondaryStatus.includes(account_status)) {
+        return res.status(400).json({ message: `Invalid account status: ${account_status}` });
+      }
+      
+      // You should only be able to set a hold if the account is already approved
+      if (currentResident.status !== 'Approved') {
+         return res.status(409).json({ message: 'Cannot change account hold status on a non-approved account.' });
+      }
+
+      updatePayload.$set.account_status = account_status;
+      historyLogAction = account_status === 'Active' ? 'Account hold removed (Set to Active)' : 'Account placed on hold (Set to Deactivated)';
+    }
+
+    // --- Create a history log for the change ---
+    const historyEntry = {
+      action: historyLogAction,
+      reason: reason,
+      // Assuming you have middleware that adds the admin/user to the request object
+      changed_by: req.user ? new ObjectId(req.user.id) : 'SYSTEM', 
+      timestamp: new Date(),
+    };
+
+    updatePayload.$push = { status_history: historyEntry };
+
+    const result = await residentsCollection.updateOne(
+      { _id: residentId },
+      updatePayload
+    );
+
+    if (result.matchedCount === 0) {
+      return res.status(404).json({ message: "Update failed. Resident not found." });
+    }
+    if (result.modifiedCount === 0) {
+      return res.status(304).json({ message: "No change in status was made." });
+    }
+
+    res.status(200).json({ message: "Resident status updated successfully.", residentId: id });
+
+  } catch (error) {
+    console.error("Error updating resident status:", error);
+    res.status(500).json({ message: "Failed to update resident status", error: error.message });
   }
 });
 
@@ -2115,117 +2217,120 @@ app.put('/api/residents/:id', async (req, res) => {
   }
 });
 
-// NEW Endpoint: PATCH /api/residents/:id/status (Quick Status Update)
+// UPDATED Endpoint: PATCH /api/residents/:id/status
 app.patch('/api/residents/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status, voter_registration_proof_data } = req.body;
+  // Destructure all possible inputs from the body
+  const { status, account_status, reason } = req.body;
 
   if (!ObjectId.isValid(id)) {
     return res.status(400).json({ error: 'Invalid ID format' });
   }
-  if (!status) {
-    return res.status(400).json({ error: 'Validation failed', message: 'Status is required.' });
+
+  // A request must be to update either the primary status or the account (hold) status
+  if (!status && !account_status) {
+    return res.status(400).json({ error: 'Validation failed', message: 'A `status` or `account_status` must be provided.' });
   }
-
-  const allowedStatusValues = ['Approved', 'Declined', 'Deactivated', 'Pending'];
-  if (!allowedStatusValues.includes(status)) {
-    return res.status(400).json({ error: 'Validation failed', message: `Invalid status value. Allowed: ${allowedStatusValues.join(', ')}` });
-  }
-
-  // Add validation for reason if declining
-  if (status === 'Declined' && (!reason || reason.trim() === '')) {
-      return res.status(400).json({ error: 'A reason is required to decline an account.' });
-  }
-
-  const dab = await db();
-  const residentsCollection = dab.collection('residents');
-
   
-
+  // A reason is required for any action other than setting the status to 'Approved'.
+  if (status !== 'Approved' && (!reason || reason.trim() === '')) {
+      return res.status(400).json({ error: 'A reason is required for this action.' });
+  }
 
   try {
-    const updateFields = { status: status, updated_at: new Date() };
-    if (status === 'Declined' && reason) {
-        // You might want to store this in a specific field, e.g., 'status_reason'
-        updateFields.status_reason = reason;
+    const dab = await db();
+    const residentsCollection = dab.collection('residents');
+    const residentId = new ObjectId(id);
+
+    const currentResident = await residentsCollection.findOne({ _id: residentId });
+    if (!currentResident) {
+      return res.status(404).json({ error: 'Resident not found.' });
     }
 
-    
-  
+    const updateFields = { updated_at: new Date() };
+    let auditDescription = '';
+    let notificationContent = '';
+    let notificationName = '';
 
-  if (status === 'Approved') {
-      // get currentResident
-      const currentResident = await residentsCollection.findOne({ _id: new ObjectId(id) });
-      if (!currentResident) {
-          return res.status(404).json({ error: 'Resident not found.' });
+    // --- LOGIC BRANCH 1: Updating the primary registration status ---
+    if (status) {
+      const allowedStatusValues = ['Approved', 'Declined', 'Deactivated', 'Pending'];
+      if (!allowedStatusValues.includes(status)) {
+        return res.status(400).json({ error: 'Validation failed', message: `Invalid status value.` });
       }
-
-      // If approving, loop through and approve household members as well
-      if (updateFields.status === 'Approved') {
-          const householdMembers = await residentsCollection.find({ _id: { $in: currentResident.household_member_ids } }).toArray();
-          await Promise.all(householdMembers.map(member => residentsCollection.updateOne({ _id: member._id }, { $set: { status: 'Approved', updated_at: new Date() } })));
+      
+      if (currentResident.status === status) {
+        return res.json({ message: `Resident status is already ${status}.`, statusChanged: false });
       }
-  }
+      
+      updateFields.status = status;
+      updateFields.status_reason = reason; // Store the reason
+      auditDescription = `Status for resident ${id} was changed to '${status}'.`;
+      notificationName = `Account Status Updated: ${status}`;
+      notificationContent = `Your account status has been updated to ${status}.`;
 
-    const result = await residentsCollection.updateOne({ _id: new ObjectId(id) }, { $set: updateFields });
-    if (result.matchedCount === 0) return res.status(404).json({ error: 'Resident not found.' });
-
-     await createAuditLog({
-        // TODO: Get acting admin's name from auth middleware
-        description: `Status for resident with ID ${id} was changed to '${status}'.`,
-        action: 'STATUS_CHANGE',
-        entityType: 'Resident',
-        entityId: id
-      }, req);
-    // --- END AUDIT LOG ---
-
-    // Create notification if status changed to 'Approved'
-    if (status === 'Approved') {
-        const notificationData = {
-            name: 'Account Approved',
-            content: `Your account has been approved. You can now log in and access community features.`,
-            by: 'System',
-            type: 'Notification',
-            target_audience: 'SpecificResidents',
-            recipient_ids: [id],
-            date: new Date()
-        };
-        await createNotification(dab, notificationData);
-    }
-    
-    if (result.modifiedCount === 0 && result.upsertedCount === 0) { // Check if actual modification happened
-        // Fetch current status to confirm it's indeed the same
-        const currentResident = await residentsCollection.findOne({_id: new ObjectId(id)}, {projection: {status: 1}});
-        if(currentResident && currentResident.status === status) {
-            return res.json({ message: `Resident status is already ${status}.`, statusChanged: false });
+      // If approving for the first time, set the approval date and ensure account is active
+      if (status === 'Approved' && !currentResident.date_approved) {
+        updateFields.date_approved = new Date();
+        updateFields.account_status = 'Active'; // Default to active on first approval
+        notificationContent = 'Your account has been approved. You can now log in and access all community features.';
+        
+        // Also approve all associated household members
+        if (currentResident.household_member_ids && currentResident.household_member_ids.length > 0) {
+            const memberIds = currentResident.household_member_ids.map(mid => new ObjectId(mid));
+            await residentsCollection.updateMany(
+                { _id: { $in: memberIds } },
+                { $set: { status: 'Approved', account_status: 'Active', updated_at: new Date() } }
+            );
         }
-    }
-
-
-    const name = `Resident status updated to ${status}`; // Notification name
-    const content = `Resident status updated to ${status}.`; // Notification content
-    const by = 'System Administrator'; // Notification creator (Admin/System)
-    const type = 'Notification'; // Notification type
-    const target_audience = 'SpecificResidents'; // Notification target audience
-    const recipient_ids = [id]; // Notification recipient IDs
-    const date = new Date();
-
-    try {
-      const dab = await db();
-      const createdNotification = await createNotification(dab, {
-          name, content, by, type, target_audience, recipient_ids, date // Pass all to helper
-      });
-
-      if (!createdNotification) {
-          // createNotification returns null on internal failure or if no recipients for specific targeting
-          return res.status(400).json({ error: 'Notification creation failed', message: 'Could not create notification. Check targeting or server logs.' });
       }
-    } catch (error) {
-        console.error('Error creating notification:', error);
-        return res.status(500).json({ error: 'Server error', message: 'Could not create notification.' });
+    
+    // --- LOGIC BRANCH 2: Updating the secondary account status (Removing a Hold) ---
+    } else if (account_status) {
+      if (account_status !== 'Active') {
+        return res.status(400).json({ error: 'Validation failed', message: 'Can only set `account_status` to "Active" via this action.' });
+      }
+      if (currentResident.status !== 'Approved') {
+        return res.status(409).json({ error: 'Conflict', message: 'Cannot remove a hold on an account that is not approved.' });
+      }
+       if (currentResident.account_status === 'Active') {
+        return res.json({ message: 'Account is already Active.', statusChanged: false });
+      }
+
+      updateFields.account_status = 'Active';
+      updateFields.status_reason = reason; // Log the reason for removing the hold
+      auditDescription = `Account hold removed for resident ${id}. Status set to 'Active'.`;
+      notificationName = 'Account Hold Removed';
+      notificationContent = 'The hold on your account has been lifted. Full access has been restored.';
     }
 
-    res.json({ message: `Resident status updated to ${status} successfully.`, statusChanged: true });
+    // --- Perform the database update ---
+    const result = await residentsCollection.updateOne({ _id: residentId }, { $set: updateFields });
+
+    if (result.matchedCount === 0) {
+        return res.status(404).json({ error: 'Update failed, resident not found.' });
+    }
+
+    // --- Post-update actions ---
+    await createAuditLog({
+      description: auditDescription,
+      action: 'STATUS_CHANGE',
+      entityType: 'Resident',
+      entityId: id
+    }, req);
+
+    await createNotification(dab, {
+      name: notificationName,
+      content: notificationContent,
+      by: 'System Administrator',
+      type: 'Notification',
+      target_audience: 'SpecificResidents',
+      recipient_ids: [id.toString()], // Ensure recipient ID is a string if your helper requires it
+      date: new Date()
+    });
+
+    res.json({ message: 'Resident status updated successfully.', statusChanged: true });
+
   } catch (error) {
     console.error("Error updating resident status:", error);
     res.status(500).json({ error: 'Server error', message: 'Could not update resident status.' });

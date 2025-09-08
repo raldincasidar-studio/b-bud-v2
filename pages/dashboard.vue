@@ -1,34 +1,39 @@
 <template>
-  <v-container class="my-12">
-    <div class="d-flex flex-column justify-center align-center mb-10">
-      <h1 class="text-h1  mx-2">
-        <!-- MODIFIED: Use the reactive computed property for the time -->
+  <v-container class="my-12" role="main">
+    <div class="d-flex flex-column justify-center align-center mb-10" role="timer" aria-live="polite">
+      <!-- ACCESSIBILITY FIX: Changed h1 to a p tag to ensure only one h1 exists on the page. Screen readers can still identify it by its explicit label. -->
+      <p class="text-h1 mx-2" aria-label="Current time">
         {{ formattedTime }}
-      </h1>
-      <h2 class="text-subtitle-1 mx-2">
-        <!-- MODIFIED: Use the reactive computed property for the date -->
+      </p>
+      <!-- ACCESSIBILITY FIX: Changed h2 to a p tag to maintain a logical heading order. -->
+      <p class="text-subtitle-1 mx-2" aria-label="Current date">
         {{ formattedDate }}
-      </h2>
+      </p>
     </div>
 
 
     <v-row justify="space-between" align="center" class="mb-8">
       <v-col cols="auto">
+        <!-- ACCESSIBILITY FIX: This is now the main heading of the page. -->
         <h1 class="text-h3 font-weight-bold mb-2">Dashboard Overview</h1>
-        <h3 class="text-subtitle-1 text-grey-darken-1">
+        <!-- ACCESSIBILITY FIX: Changed h3 to h2 for proper heading hierarchy. -->
+        <h2 class="text-subtitle-1 text-grey-darken-1">
           Welcome {{ userData?.name || 'Admin' }}! Current community and transaction status.
-        </h3>
+        </h2>
       </v-col>
       <v-col cols="auto">
-        <v-img src="@/assets/img/logo.png" width="100" contain></v-img>
+        <!-- ACCESSIBILITY FIX: Added a descriptive alt attribute for the image. -->
+        <v-img src="@/assets/img/logo.png" width="100" contain alt="Community Logo"></v-img>
       </v-col>
     </v-row>
 
-    <div v-if="loading" class="text-center pa-10">
-      <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
+    <!-- ACCESSIBILITY FIX: Added role="status" to announce loading state to screen readers. -->
+    <div v-if="loading" class="text-center pa-10" role="status">
+      <v-progress-circular indeterminate color="primary" size="64" aria-label="Loading dashboard metrics"></v-progress-circular>
       <p class="mt-4">Loading dashboard metrics...</p>
     </div>
-    <div v-else-if="error" class="text-center pa-10">
+    <!-- ACCESSIBILITY FIX: Added role="alert" for better error announcement. -->
+    <div v-else-if="error" class="text-center pa-10" role="alert">
       <v-alert type="error" prominent border="start" icon="mdi-alert-circle-outline">
         Failed to load dashboard metrics. Please try again later.
       </v-alert>
@@ -38,7 +43,8 @@
       <!-- Main Metric Cards - REVISED -->
       <v-row>
         <v-col cols="12">
-          <v-btn block size="large" color="primary" prepend-icon="mdi-printer" href="/printable/dashboard" target="_blank">PRINT STATISTICS</v-btn>
+           <!-- ACCESSIBILITY FIX: Added aria-label for a more descriptive button. -->
+          <v-btn block size="large" color="primary" prepend-icon="mdi-printer" href="/printable/dashboard" target="_blank" aria-label="Print dashboard statistics">PRINT STATISTICS</v-btn>
         </v-col>
         <v-col v-for="metric in mainMetrics" :key="metric.title" cols="12" sm="6" md="4">
           <v-card
@@ -47,13 +53,16 @@
             class="fill-height metric-card"
             :to="metric.linkTo"  
             hover
+            :aria-label="`${metric.title}: ${metric.value}. Click to view more details.`"
           >
             <v-card-text class="d-flex flex-column justify-space-between" style="min-height: 150px;">
               <div>
-                <v-icon size="36" class="mb-2">{{ metric.icon }}</v-icon>
+                <!-- ACCESSIBILITY FIX: Hide decorative icon from screen readers. -->
+                <v-icon size="36" class="mb-2" aria-hidden="true">{{ metric.icon }}</v-icon>
                 <div class="text-overline font-weight-bold metric-title">{{ metric.title }}</div>
               </div>
-              <div class="text-h3 font-weight-bold align-self-end">{{ metric.value }}</div>
+              <!-- ACCESSIBILITY FIX: Hide value from screen readers as it's already in the card's aria-label. -->
+              <div class="text-h3 font-weight-bold align-self-end" aria-hidden="true">{{ metric.value }}</div>
             </v-card-text>
           </v-card>
         </v-col>
@@ -64,13 +73,16 @@
         <v-col cols="12">
             <v-card>
               <v-card-item>
-                <v-card-title>Age Distribution</v-card-title>
+                <v-card-title>
+                  <!-- ACCESSIBILITY FIX: Added a proper h2 heading inside the card title. -->
+                  <h2 class="text-h5">Age Distribution</h2>
+                </v-card-title>
                 <v-card-subtitle>Population count by age bracket</v-card-subtitle>
               </v-card-item>
 
               <v-card-text>
-                <div v-if="loading" class="text-center pa-10">
-                  <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                <div v-if="loading" class="text-center pa-10" role="status">
+                  <v-progress-circular indeterminate color="primary" aria-label="Loading chart data"></v-progress-circular>
                   <p class="mt-2 text-grey-darken-1">Loading Chart Data...</p>
                 </div>
 
@@ -80,10 +92,11 @@
                   variant="tonal"
                   icon="mdi-alert-outline"
                   text="Could not load the age distribution data."
+                  role="alert"
                 ></v-alert>
 
-                <div v-else>
-                  <!-- The ApexChart component -->
+                <!-- ACCESSIBILITY FIX: Added role="figure" and an aria-label to describe the chart. -->
+                <div v-else role="figure" aria-label="Bar chart showing population count by age bracket.">
                   <apexchart
                     type="bar"
                     height="350"
@@ -102,12 +115,14 @@
           <h2 class="text-h5 font-weight-medium mb-4">Transaction Alerts</h2>
         </v-col>
         <v-col v-for="alertItem in transactionAlerts" :key="alertItem.title" cols="12" md="4">
-          <v-card class="fill-height alert-card" :to="alertItem.linkTo" hover>
+           <!-- ACCESSIBILITY FIX: Added a comprehensive aria-label to describe the link card's purpose and status. -->
+          <v-card class="fill-height alert-card" :to="alertItem.linkTo" hover :aria-label="`${alertItem.title}: ${alertItem.count} items. ${alertItem.subtext}`">
             <v-list-item :prepend-icon="alertItem.icon" :base-color="alertItem.color">
               <v-list-item-title class="text-h6 font-weight-medium">{{ alertItem.title }}</v-list-item-title>
               <v-list-item-subtitle>{{ alertItem.subtext }}</v-list-item-subtitle>
                <template v-slot:append>
-                <v-chip :color="alertItem.color" label size="large" class="font-weight-bold">
+                <!-- ACCESSIBILITY FIX: Hide chip from screen readers to avoid redundancy with the card's aria-label. -->
+                <v-chip :color="alertItem.color" label size="large" class="font-weight-bold" aria-hidden="true">
                   {{ alertItem.count }}
                 </v-chip>
               </template>
@@ -116,18 +131,17 @@
             <v-list lines="one"  v-if="alertItem.recentItems && alertItem.recentItems.length > 0">
               <v-list-item v-for="item in alertItem.recentItems.slice(0, 3)" :key="item._id" :to="`${alertItem.itemLinkPrefix}/${item._id}`">
   
-                <!-- CORRECTED TITLE: Now includes quantity for borrowed assets -->
                 <v-list-item-title class="text-truncate">
                   {{ item.category || item.request_type || (item.item_borrowed && item.quantity_borrowed ? `${item.item_borrowed} - ${item.quantity_borrowed}` : item.item_borrowed) || item.name || 'Untitled Item' }}
                 </v-list-item-title>
 
-                <!-- CORRECTED SUBTITLE: Now correctly finds the name for all cards -->
                 <v-list-item-subtitle class="text-truncate">
                   {{ item.complainant_display_name || item.requestor_name || item.borrower_name || item.requestor || item.borrower || ( (item.created_at || item.date_of_request || item.dateAdded || item.borrow_datetime) ? new Intl.DateTimeFormat('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' }).format(new Date(item.created_at || item.date_of_request || item.dateAdded || item.borrow_datetime)) : '' ) }}
                 </v-list-item-subtitle>
 
                 <template v-slot:append>
-                  <v-icon size="small">mdi-chevron-right</v-icon>
+                  <!-- ACCESSIBILITY FIX: Hide decorative icon from screen readers. -->
+                  <v-icon size="small" aria-hidden="true">mdi-chevron-right</v-icon>
                 </template>
               </v-list-item>
             </v-list>
@@ -143,6 +157,7 @@
 </template>
 
 <script setup>
+// The script setup remains the same as no accessibility issues were identified in the logic.
 import { ref, onMounted, computed, onUnmounted } from 'vue'; 
 import { useCookie } from '#app';
 import { useMyFetch } from '../composables/useMyFetch';

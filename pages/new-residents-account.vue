@@ -380,6 +380,20 @@ const calculateAge = (dob) => {
 const headCalculatedAge = computed(() => calculateAge(form.date_of_birth));
 const isHeadSenior = computed(() => headCalculatedAge.value !== null && headCalculatedAge.value >= 60);
 
+const dateOfBirthValidation = {
+  required,
+  minValue: helpers.withMessage('Date of birth cannot be more than 100 years ago.', (value) => {
+    if (!value) return true;
+    const hundredYearsAgo = new Date();
+    hundredYearsAgo.setFullYear(hundredYearsAgo.getFullYear() - 100);
+    return new Date(value) >= hundredYearsAgo;
+  }),
+  maxValue: helpers.withMessage('Date of birth cannot be in the future.', (value) => {
+    if (!value) return true;
+    return new Date(value) <= new Date();
+  })
+};
+
 const headRules = {
   first_name: { 
   required, 
@@ -393,7 +407,7 @@ last_name: {
   alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
 },
 suffix: {}, // Suffix is optional, so no validation rule needed by default
-  sex: { required }, date_of_birth: { required },
+  sex: { required }, date_of_birth: dateOfBirthValidation,
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
   password: { required, minLength: minLength(6) },
@@ -442,7 +456,7 @@ const memberRules = {
   suffix: {}, // Suffix is optional for members too
   relationship_to_head: { required },
   other_relationship: { requiredIf: helpers.withMessage('Please specify the relationship.', requiredIf(() => memberForm.relationship_to_head === 'Other')) },
-  sex: { required }, date_of_birth: { required }, civil_status: { required },
+  sex: { required }, date_of_birth: dateOfBirthValidation, civil_status: { required },
   citizenship: { required }, occupation_status: { required },
   email: { requiredIf: requiredIf(() => !!memberForm.password), email },
   password: { requiredIf: requiredIf(() => !!memberForm.email), minLength: minLength(6) },

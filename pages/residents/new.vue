@@ -367,7 +367,14 @@ last_name: {
   required, 
   alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
 },
-  sex: { required }, date_of_birth: { required },
+  sex: { required }, date_of_birth: { 
+    required, 
+    maxValue: helpers.withMessage('Date of birth should not be more than 100 years ago.', (value) => {
+      const maxDate = new Date();
+      maxDate.setFullYear(maxDate.getFullYear() - 100);
+      return new Date(value) <= maxDate;
+    })
+  },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
   password: { required, minLength: minLength(6) },
