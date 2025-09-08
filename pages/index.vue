@@ -6,7 +6,7 @@
                     <v-card-text>
 
                         <div class="mb-12 text-center d-block">
-                            <v-img src="@/assets/img/logo.png" width="100" class="mx-auto"></v-img>
+                            <v-img src="@/assets/img/logo.png" width="100" alt="B-Bud Logo" class="mx-auto"></v-img>
                             <h2 class="text-bold my-2 text-primary">B-Bud v2</h2>
                             <p>Administrator Login Portal</p>
                         </div>
@@ -17,7 +17,6 @@
                         <v-btn @click="login()" :loading="isLoading" :disabled="isLoading" block class="mt-2" color="primary" size="large">Login</v-btn>
                         <p class="my-5 d-flex justify-space-between">
                             <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!">Can't Log in? Contact Technical Admin</a>
-                            <a class="text-grey text-decoration-none pa-1 d-inline-block" v-ripple href="#!"></a>
                         </p>
                     </v-card-text>
                 </v-card>
