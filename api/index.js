@@ -2393,39 +2393,87 @@ app.post('/api/residents/:id/members', async (req, res) => {
 // ======================= DOCUMENT REQUEST ======================= //
 
 // ADD NEW DOCUMENT (POST)
-app.post('/api/documents', async (req, res) => {
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
+app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
+  const {
+    requestor_resident_id,
+    processed_by_personnel,
+    request_type,
+    purpose,
+    details,
+  } = req.body;
 
-  const requiredFields = ['residentId', 'Address', 'type', 'YearsInBarangay', 'status', 'description', 'PurposeOfDocument', 'ContactNumber'];
-  if (requiredFields.some(field => !req.body[field])) {
-    res.json({ error: 'Missing required fields' });
-    return;
+  // --- 2. UPDATE VALIDATION ---
+  if (!requestor_resident_id || !request_type ) {
+    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
+  }
+  if (!ObjectId.isValid(requestor_resident_id)) {
+    return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
   }
 
-  const documentsCollection = dab.collection('documents');
-  const documentToInsert = {
-    residentId: req.body.residentId,
-    Address: req.body.Address,
-    type: req.body.type,
-    YearsInBarangay: parseInt(req.body.YearsInBarangay),
-    status: req.body.status,
-    description: req.body.description,
-    PurposeOfDocument: req.body.PurposeOfDocument,
-    ContactNumber: req.body.ContactNumber,
-    date_added: new Date(),
-  };
+  try {
+    const residentsCollection = dab.collection('residents');
+    const requestsCollection = dab.collection('document_requests');
 
-  await documentsCollection.insertOne(documentToInsert);
+    // --- ADDED: Account Status Check ---
+    await checkResidentAccountStatus(requestor_resident_id, dab);
+    // --- END ADDED ---
 
-  // --- ADD AUDIT LOG HERE ---
-  await createAuditLog({
-    description: `New document request created: ${req.body.type} for resident ID ${req.body.residentId}.`,
-    action: "CREATE",
-    entityType: "Document",
-    entityId: result.insertedId.toString(),
-  }, req)
-  // --- END AUDIT LOG ---
-  res.json({ message: 'Document added successfully' });
+    // Fetch the requestor's name for a more descriptive log
+    const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
+    const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
+
+    // Generate a unique, user-friendly reference number
+    const customRefNo = await generateUniqueReference(requestsCollection);
+
+    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
+    const newRequest = {
+      ref_no: customRefNo,
+      requestor_resident_id: new ObjectId(requestor_resident_id),
+      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
+      request_type: String(request_type).trim(),
+      purpose: String(purpose).trim(),
+      details: details || {},
+      document_status: "Pending",
+      created_at: new Date(),
+      updated_at: new Date(),
+    };
+
+    const result = await requestsCollection.insertOne(newRequest);
+
+    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
+    await createAuditLog({
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was processed by ${processed_by_personnel}.`,
+        action: "CREATE",
+        entityType: "DocumentRequest",
+        entityId: result.insertedId.toString(),
+        userId: requestor ? requestor._id : null,
+        userName: requestorName,
+    }, req);
+
+    // Update the response to the frontend
+    res.status(201).json({
+      message: 'Document request added successfully',
+      requestId: result.insertedId,
+      refNo: customRefNo
+    });
+
+  } catch (error) {
+    console.error('Error adding document request:', error);
+    // --- ADDED: Specific error handling for account status restrictions ---
+    if (error.message.includes("account is pending approval") ||
+        error.message.includes("account has been declined") ||
+        error.message.includes("account has been permanently deactivated") ||
+        error.message.includes("account is currently On Hold/Deactivated")) {
+      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
+        error: 'Action Restricted. Account status On Hold / Deactivated.',
+        message: error.message
+      });
+    }
+    // --- END ADDED ---
+    res.status(500).json({ error: 'Error adding document request.' });
+  }
 });
 
 // GET ALL DOCUMENTS (GET)
@@ -4515,6 +4563,11 @@ app.post('/api/complaints', async (req, res) => {
     const collection = dab.collection('complaints');
     const complaintDate = new Date(date_of_complaint);
 
+    // --- ADDED: Account Status Check ---
+    // This will throw an error if the resident's account is restricted
+    await checkResidentAccountStatus(complainant_resident_id, dab);
+    // --- END ADDED ---
+
     const customRefNo = await generateUniqueReference(collection);
 
     // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
@@ -4557,6 +4610,17 @@ app.post('/api/complaints', async (req, res) => {
     
   } catch (error) {
     console.error('Error adding complaint request:', error);
+    // --- ADDED: Specific error handling for account status restrictions ---
+    if (error.message.includes("account is pending approval") ||
+        error.message.includes("account has been declined") ||
+        error.message.includes("account has been permanently deactivated") ||
+        error.message.includes("account is currently On Hold/Deactivated")) {
+      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
+        error: 'Action Restricted. Account status On Hold / Deactivated.',
+        message: error.message
+      });
+    }
+    // --- END ADDED ---
     res.status(500).json({ error: 'Error adding complaint: ' + error.message });
   }
 });
@@ -5194,7 +5258,7 @@ app.post('/api/document-requests', async (req, res) => {
       created_at: new Date(),
       updated_at: new Date(),
     };
-    
+
     const result = await requestsCollection.insertOne(newRequest);
 
     // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
