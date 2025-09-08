@@ -55,6 +55,31 @@ export default defineNuxtConfig({
     },
   },
 
+  // START: Added Security Headers
+  // These rules are applied by Nuxt's server to add security headers to every response.
+  routeRules: {
+    '/**': { // Apply to all routes
+      headers: {
+        // Content-Security-Policy: Helps prevent XSS attacks. This is a strict policy, 
+        // you may need to adjust it if you load resources from external domains.
+        'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none';",
+        
+        // X-Content-Type-Options: Prevents the browser from MIME-sniffing a response away from the declared content-type.
+        'X-Content-Type-Options': 'nosniff',
+        
+        // X-Frame-Options: Protects against clickjacking attacks.
+        'X-Frame-Options': 'SAMEORIGIN',
+        
+        // Referrer-Policy: Controls how much referrer information is included with requests.
+        'Referrer-Policy': 'strict-origin-when-cross-origin',
+        
+        // Permissions-Policy: Controls which browser features and APIs can be used on the site.
+        'Permissions-Policy': "geolocation=(), microphone=(), camera=()",
+      },
+    },
+  },
+  // END: Added Security Headers
+
   ssr: false,
   compatibilityDate: "2024-11-01",
   devtools: { enabled: true },
