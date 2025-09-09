@@ -12,7 +12,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const { GoogleGenAI, createUserContent, createPartFromUri, Type } = require('@google/genai');
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
-const GEMINI_API_KEY = 'AIzaSyAWwKgLzqbgFFR58s1DqwP6Ryk2sj6-V5U'
+const GEMINI_API_KEY = 'AIzaSyC7tL3QLRTzbvpXjC7htOCIOnTttOqhyVE'
 // --- SMTP Configuration ---
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
