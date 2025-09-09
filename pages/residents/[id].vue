@@ -396,24 +396,26 @@ const rules = {
   years_at_current_address: { numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
-  voter_id_number: { 
+  // START: FIXED VALIDATION LOGIC
+  voter_id_number: {
     requiredIf: helpers.withMessage(
-      "Voter's ID Number or uploaded ID is required.", 
-      requiredIf(() => form.is_voter && !form.voter_id_file && !form.voter_registration_proof_base64)
-    ) 
+      "Voter's ID Number or uploaded ID is required.",
+      requiredIf(() => form.is_voter && !(form.voter_id_file && form.voter_id_file.length) && !form.voter_registration_proof_base64)
+    )
   },
-  pwd_id: { 
+  pwd_id: {
     requiredIf: helpers.withMessage(
-      'PWD ID Number or uploaded card is required.', 
-      requiredIf(() => form.is_pwd && !form.pwd_card_file && !form.pwd_card_base64)
-    ) 
+      'PWD ID Number or uploaded card is required.',
+      requiredIf(() => form.is_pwd && !(form.pwd_card_file && form.pwd_card_file.length) && !form.pwd_card_base64)
+    )
   },
-  senior_citizen_id: { 
+  senior_citizen_id: {
     requiredIf: helpers.withMessage(
-      'Senior Citizen ID Number or uploaded card is required.', 
-      requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file && !form.senior_citizen_card_base64)
-    ) 
+      'Senior Citizen ID Number or uploaded card is required.',
+      requiredIf(() => form.is_senior_citizen && !(form.senior_citizen_card_file && form.senior_citizen_card_file.length) && !form.senior_citizen_card_base64)
+    )
   },
+  // END: FIXED VALIDATION LOGIC
 };
 const v$ = useVuelidate(rules, form);
 
@@ -441,7 +443,7 @@ function handleActionClick(newStatus) {
   if (['Declined', 'Deactivated', 'Pending'].includes(newStatus)) {
     actionReason.value = '';
     actionReasonDialog.value = true;
-  } 
+  }
   else if (newStatus === 'Approved') {
     updateResidentStatus(newStatus);
   }
@@ -500,7 +502,7 @@ const convertFileToBase64 = (file) => {
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result);
     reader.onerror = reject;
-    reader.readAsDataURL(file[0]);
+    reader.readAsDataURL(file);
   });
 };
 
@@ -525,7 +527,7 @@ async function saveChanges() {
     $toast.fire({ title: 'Resident updated successfully!', icon: 'success' });
     await fetchResident();
     editMode.value = false;
-  } catch(e) { /* Error handled by useMyFetch */ }
+  } catch(e) { console.error(e) }
   finally { saving.value = false; }
 }
 
