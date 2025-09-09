@@ -4233,16 +4233,11 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
 
     const updateFields = { status: newStatus, updated_at: new Date() };
 
-    // ✨ --- START OF CORRECTION --- ✨
-    // If the new status is 'Rejected', we explicitly set the notes to the provided reason.
-    // For all other statuses, we append the notes.
     if (newStatus === STATUS.REJECTED) {
       updateFields.notes = notes || 'No reason provided for rejection.';
     } else if (notes) {
-      // Keep the append logic for other status updates
       updateFields.notes = `${transaction.notes || ''}\n\n--- STATUS UPDATE ---\n[${new Date().toLocaleString()}] ${notes}`;
     }
-    // ✨ --- END OF CORRECTION --- ✨
 
     if (newStatus === STATUS.RESOLVED) { updateFields.date_resolved = new Date(); }
     
@@ -4257,6 +4252,17 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
     await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
     await createAuditLog({ description: `Status for item '${transaction.item_borrowed}' changed from '${oldStatus}' to '${newStatus}'.`, action: "STATUS_CHANGE", entityType: "BorrowTransaction", entityId: transaction._id.toString() }, req);
     
+    // --- INSERT NOTIFICATION LOGIC HERE ---
+    await createNotification(dab, {
+      name: `Borrowed Asset Update (Ref: ${transaction.ref_no})`,
+      content: `The status for your borrowed item '${transaction.item_borrowed}' has changed from '${oldStatus}' to '${newStatus}'.`,
+      by: 'System Administration',
+      type: 'Alert',
+      target_audience: 'SpecificResidents',
+      recipient_ids: [transaction.borrower_resident_id.toString()],
+    });
+    // --- END NOTIFICATION LOGIC ---
+
     const updatedTransaction = await borrowedAssetsCollection.findOne(findQuery);
     res.json({ message: `Transaction status updated to '${newStatus}' successfully.`, transaction: updatedTransaction });
   } catch (error) {
@@ -4281,12 +4287,21 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
         const updateFields = { status: STATUS.RETURNED, date_returned: new Date(), return_proof_image_url: return_proof_image_base64 || null, return_condition_notes: return_condition_notes || "Item returned.", updated_at: new Date() };
         await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
         
-        // --- NEW: Check and reactivate account if this was the last issue ---
         await checkAndReactivateAccount(dab, transaction.borrower_resident_id, transaction._id);
-        // --- END OF NEW LOGIC ---
 
         await createAuditLog({ description: `Item returned for transaction: ${transaction.quantity_borrowed}x '${transaction.item_borrowed}'...`, action: "STATUS_CHANGE", entityType: "BorrowTransaction", entityId: transaction._id.toString() }, req);
         
+        // --- INSERT NOTIFICATION LOGIC HERE ---
+        await createNotification(dab, {
+          name: `Item Returned (Ref: ${transaction.ref_no})`,
+          content: `Thank you for returning the item: '${transaction.item_borrowed}'. Your transaction is now marked as Returned.`,
+          by: 'System Administration',
+          type: 'Alert',
+          target_audience: 'SpecificResidents',
+          recipient_ids: [transaction.borrower_resident_id.toString()],
+        });
+        // --- END NOTIFICATION LOGIC ---
+
         const updatedTransaction = await borrowedAssetsCollection.findOne(findQuery);
         res.json({ message: 'Item marked as returned successfully.', transaction: updatedTransaction });
     } catch (error) {
@@ -5182,21 +5197,19 @@ app.post('/api/complaints/:id/notes', async (req, res) => {
 // PATCH /api/complaints/:id/status
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
-  const { status, reason } = req.body; // <-- MODIFIED: Destructure 'reason' from req.body
+  const { status, reason } = req.body;
   const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
   
   if (!status || !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
   }
 
-  // NEW: Require reason for 'Dismissed' status
   if (status === 'Dismissed' && (!reason || reason.trim() === '')) {
       return res.status(400).json({ message: `A reason is required to ${status.toLowerCase()} this complaint.` });
   }
 
   const dab = await db();
 
-  // --- MODIFIED: Dynamic query and pre-fetch ---
   let query = {};
   if (ObjectId.isValid(id)) {
     query = { _id: new ObjectId(id) };
@@ -5219,11 +5232,9 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
 
     const updateSet = { status: status, updated_at: new Date() };
 
-    // NEW: Conditionally add or unset `status_reason` based on the new status and reason
-    if (reason && status === 'Dismissed') { // Only save reason for 'Dismissed'
+    if (reason && status === 'Dismissed') {
         updateSet.status_reason = reason;
     } else {
-        // If status is changed to one that doesn't require a reason, unset any old reason
         await complaintsCollection.updateOne(
             { _id: originalComplaint._id },
             { $unset: { status_reason: "" } }
@@ -5232,30 +5243,32 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
 
     await complaintsCollection.updateOne(
       { _id: originalComplaint._id },
-      { $set: updateSet } // Use the dynamic updateSet
+      { $set: updateSet }
     );
 
     await createAuditLog({
-        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'. Reason: ${reason || 'N/A'}`, // Include reason in audit log
+        description: `Status for complaint (Ref: ${originalComplaint.ref_no}) changed from '${oldStatus}' to '${status}'. Reason: ${reason || 'N/A'}`,
         action: "STATUS_CHANGE",
         entityType: "Complaint",
         entityId: originalComplaint._id.toString(),
     }, req);
 
     if (originalComplaint.complainant_resident_id) {
-      // NEW: Adjust notification content to include the reason if provided
       const notificationContent = reason 
         ? `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}. Reason: ${reason}`
         : `The status of your complaint against "${originalComplaint.person_complained_against_name}" has been updated to: ${status}.`;
 
+      // --- THIS IS THE CORRECTED PART ---
       await createNotification(dab, {
         name: `Complaint Status Update (Ref: ${originalComplaint.ref_no})`,
-        content: notificationContent, // Use the adjusted content
+        content: notificationContent,
         by: "System Administration",
-        type: "Notification",
-        target_audience: 'SpecificResidents', // Ensure this matches your createNotification function
-        recipient_ids: [originalComplaint.complainant_resident_id], // Ensure this is the expected field name
+        type: "Alert", // Changed to 'Alert' for consistency
+        target_audience: 'SpecificResidents',
+        // The resident ID must be converted to a string
+        recipient_ids: [originalComplaint.complainant_resident_id.toString()], 
       });
+      // --- END OF CORRECTION ---
     }
 
     res.json({ message: `Complaint status updated to '${status}' successfully.`, statusChanged: true });
@@ -5265,7 +5278,6 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
     res.status(500).json({ error: 'Could not update complaint status.' });
   }
 });
-
 
 // --- DELETE COMPLAINT ---
 // DELETE /api/complaints/:id
@@ -5628,8 +5640,20 @@ app.patch('/api/document-requests/:id/status', async (req, res) => {
       entityId: originalRequest._id.toString(),
     }, req);
 
-    // You can also expand your notification logic here to include the reason
-    // createNotification(...);
+    // --- INSERT NOTIFICATION LOGIC HERE ---
+    const notificationContent = reason
+      ? `The status of your document request for '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) has been updated to: ${newStatus}. Reason: ${reason}`
+      : `The status of your document request for '${originalRequest.request_type}' (Ref: ${originalRequest.ref_no}) has been updated to: ${newStatus}.`;
+
+    await createNotification(dab, {
+      name: `Document Request Update (Ref: ${originalRequest.ref_no})`,
+      content: notificationContent,
+      by: 'System Administration',
+      type: 'Alert',
+      target_audience: 'SpecificResidents',
+      recipient_ids: [originalRequest.requestor_resident_id.toString()],
+    });
+    // --- END NOTIFICATION LOGIC ---
 
     res.json({ message: `Status updated to '${newStatus}' successfully.` });
 
@@ -5663,35 +5687,27 @@ app.patch('/api/document-requests/:id/process', async (req, res) => {
     );
 
     if (!result.value) {
-      // This means the document was not found OR it was not in 'Pending' state.
-      // We can fetch the current document to return it without erroring.
       const currentRequest = await collection.findOne({ _id: new ObjectId(id) });
       return res.status(200).json({ message: 'Request was not in Pending state.', request: currentRequest });
     }
 
-    // --- ADD AUDIT LOG HERE ---
     await createAuditLog({
         description: `Document request '${result.value.request_type}' (#${id.slice(-6)}) moved to 'Processing'.`,
         action: "STATUS_CHANGE",
         entityType: "DocumentRequest",
         entityId: id,
-        // userName: req.user.name // In a real app with auth context
     }, req);
-    // --- END AUDIT LOG ---
 
-
-    // Send notification to the user
-    const notificationData = {
-        name: `Your document request for a ${result.value.request_type} has been approved.`,
-        content: `Your document request for a ${result.value.request_type} has been approved. You can view the request details in the Resident Portal.`,
-        by: "System",
-        type: "Notification",
-        target_audience: "Specific Residents",
-        target_residents: [result.value.requestor_resident_id],
-    };
-    await createNotification(dab, notificationData);
+    // --- CORRECTED NOTIFICATION LOGIC ---
+    await createNotification(dab, {
+        name: `Your document request is now being processed`,
+        content: `Your request for a ${result.value.request_type} (Ref: ${result.value.ref_no}) has been received and is now being processed.`,
+        by: "System Administration",
+        type: "Alert",
+        target_audience: "SpecificResidents",
+        recipient_ids: [result.value.requestor_resident_id.toString()], // Corrected field
+    });
     
-
     res.json({ message: 'Request moved to Processing.', request: result.value });
   } catch (error) {
     console.error("Error processing request:", error);
@@ -5719,20 +5735,16 @@ app.patch('/api/document-requests/:id/approve', async (req, res) => {
     if (!result) {
       return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
     }
-    
 
-    // TODO: Send notification to user
-
+    // --- CORRECTED NOTIFICATION LOGIC ---
     const getDocu = await collection.findOne({ _id: new ObjectId(id) });
-    const result_type = getDocu.request_type;
-
     await createNotification(dab, {
-        name: `Your document request for a ${result_type} is ready for pickup.`,
-        content: `Your document request for a ${result_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
-        by: "System",
-        type: "Notification",
+        name: `Your document request has been approved`,
+        content: `Your request for a ${getDocu.request_type} (Ref: ${getDocu.ref_no}) has been approved and is being prepared.`,
+        by: "System Administration",
+        type: "Alert",
         target_audience: "SpecificResidents",
-        target_residents: [getDocu.requestor_resident_id],
+        recipient_ids: [getDocu.requestor_resident_id.toString()], // Corrected field
     });
 
 
@@ -5764,21 +5776,16 @@ app.patch('/api/document-requests/:id/generate', async (req, res) => {
       return res.status(404).json({ error: 'Request not found or is not in Approved state.' });
     }
 
-
+    // --- CORRECTED NOTIFICATION LOGIC ---
     const getDocu = await collection.findOne({ _id: new ObjectId(id) });
-    const result_type = getDocu.request_type;
-
-    // Send notification to the user
-    const notificationData = {
-        name: `Your document request for a ${result_type} is ready for pickup.`,
-        content: `Your document request for a ${result_type} has been approved. The document is ready for pickup at the Resident Portal office.`,
-        by: "System",
-        type: "Notification",
+    await createNotification(dab, {
+        name: `Your document is ready for pickup`,
+        content: `Your document request for a ${getDocu.request_type} (Ref: ${getDocu.ref_no}) is now ready for pickup at the barangay hall.`,
+        by: "System Administration",
+        type: "Alert",
         target_audience: "SpecificResidents",
-        target_residents: [getDocu.requestor_resident_id],
-    };
-    await createNotification(dab, notificationData);
-    
+        recipient_ids: [getDocu.requestor_resident_id.toString()], // Corrected field
+    });
     
     res.json({ message: 'Document is now Ready for Pickup.', request: result });
   } catch (error) {
@@ -5793,7 +5800,7 @@ app.patch('/api/document-requests/:id/generate', async (req, res) => {
  */
 app.patch('/api/document-requests/:id/decline', async (req, res) => {
     const { id } = req.params;
-    const { reason } = req.body; // You can pass a reason for declining
+    const { reason } = req.body;
     if (!ObjectId.isValid(id)) return res.status(400).json({ error: 'Invalid ID format.' });
 
     try {
@@ -5808,21 +5815,17 @@ app.patch('/api/document-requests/:id/decline', async (req, res) => {
         if (!result) {
             return res.status(404).json({ error: 'Request not found or is not in Processing state.' });
         }
-
-
+        
+        // --- CORRECTED NOTIFICATION LOGIC ---
         const getDocu = await collection.findOne({ _id: new ObjectId(id) });
-    const result_type = getDocu.request_type;
-        // Send notification to the user
-        const notificationData = {
-            name: `Your document request for a ${result_type} was declined.`,
-            content: `Your document request for a ${result_type} was declined. The reason provided is: '${result.value.decline_reason}'.`,
-            by: "System",
+        await createNotification(dab, {
+            name: `Your document request was declined`,
+            content: `Your document request for a ${getDocu.request_type} (Ref: ${getDocu.ref_no}) was declined. Reason: '${reason || 'No reason provided.'}'`,
+            by: "System Administration",
             type: "Alert",
             target_audience: "SpecificResidents",
-            target_residents: [getDocu.requestor_resident_id],
-        };
-        await createNotification(dab, notificationData);
-        
+            recipient_ids: [getDocu.requestor_resident_id.toString()], // Corrected field
+        });
         
         res.json({ message: 'Request has been declined.', request: result });
     } catch (error) {
