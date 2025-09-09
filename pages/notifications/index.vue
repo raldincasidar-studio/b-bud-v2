@@ -42,14 +42,14 @@
           v-for="item in NOTIFICATION_TYPE_FILTER_OPTIONS"
           :key="item.title"
           :value="item.value"
-          :prepend-icon="item.icon" 
+          :prepend-icon="item.icon"
           class="text-capitalize"
         >
           {{ item.title }}
         </v-tab>
       </v-tabs>
       <v-divider></v-divider>
-      
+
       <v-card-text>
         <v-data-table-server
           v-model:items-per-page="itemsPerPage"
@@ -111,11 +111,11 @@
 <script setup>
 import { ref, watch } from 'vue';
 import { useMyFetch } from '../composables/useMyFetch'; // Adjust path if needed
-import { useNuxtApp } from '#app'; 
+import { useNuxtApp } from '#app';
 
 const { $toast } = useNuxtApp();
 
-const typeFilter = ref(null); // `null` value corresponds to the "All" tab
+const typeFilter = ref('News'); // Default to 'News'
 const searchKey = ref('');
 const totalItems = ref(0);
 const notifications = ref([]);
@@ -123,9 +123,8 @@ const loading = ref(true);
 const itemsPerPage = ref(10);
 let currentSortBy = ref([{ key: 'date', order: 'desc' }]);
 
-// UPDATED: Filter options now match the new notification types
+// UPDATED: Filter options now only include News, Events, and Alert
 const NOTIFICATION_TYPE_FILTER_OPTIONS = [
-    { title: 'All', value: null, icon: 'mdi-filter-variant' }, 
     { title: 'News', value: 'News', icon: 'mdi-newspaper-variant-outline' },
     { title: 'Events', value: 'Events', icon: 'mdi-calendar-star' },
     { title: 'Alert', value: 'Alert', icon: 'mdi-alert-circle-outline' },
@@ -146,7 +145,7 @@ watch([searchKey, typeFilter], () => {
   clearTimeout(searchDebounceTimer);
   searchDebounceTimer = setTimeout(() => {
     loadNotifications({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: currentSortBy.value });
-  }, 500); 
+  }, 500);
 });
 
 async function loadNotifications(options) {
@@ -162,12 +161,9 @@ async function loadNotifications(options) {
         search: searchKey.value,
         page: page,
         itemsPerPage: rpp,
+        type: typeFilter.value, // typeFilter is now always present
     };
-    // If typeFilter is not null, add it to the query
-    if (typeFilter.value) { 
-        queryParams.type = typeFilter.value;
-    }
-    
+
     if (currentSortBy.value && currentSortBy.value.length > 0) {
       queryParams.sortBy = currentSortBy.value[0].key;
       queryParams.sortOrder = currentSortBy.value[0].order;
@@ -208,7 +204,7 @@ const getTypeColor = (type) => ({
     'Events': 'deep-purple-accent-2',
     'Alert': 'error',
   }[type] || 'grey');
-  
+
 
 // UPDATED: Added human-readable names for the new target audiences
 const formatAudience = (target, recipientsArray) => {
