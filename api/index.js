@@ -828,7 +828,7 @@ app.post('/api/residents', async (req, res) => {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         console.error('Mobile Registration error: ', error);
-        res.status(500).json({ error: error, message: 'Could not complete registration.' });
+        res.status(500).json({ error: error, message: error || 'Could not complete registration.' });
     } finally {
         await session.endSession();
     }
