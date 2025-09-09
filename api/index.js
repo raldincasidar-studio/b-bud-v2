@@ -3448,7 +3448,7 @@ async function createNotification(dbInstance, notificationData) {
         try {
         await sendMessage(recipients?.map(r => r.contact_number), `B-BUD Notification: ${name}`);
         } catch (error) {
-            console.error(`Failed to send SMS notification to ${recipient.contact_number}:`, error);
+            console.error(`Failed to send SMS notification to recipients`, error);
         }
     }
 
