@@ -136,26 +136,54 @@
         <v-card-title>Proof of Complaint</v-card-title>
         <v-divider></v-divider>
         <v-card-text>
-          <div v-if="form.proofs_base64 && form.proofs_base64.length > 0">
+          <div v-if="form.proofs_display && form.proofs_display.length > 0">
             <v-row>
               <v-col
-                v-for="(proof, index) in form.proofs_base64"
+                v-for="(proofItem, index) in form.proofs_display"
                 :key="index"
                 cols="6" sm="4" md="3"
               >
-                <v-img
-                  :src="proof"
-                  aspect-ratio="1"
-                  class="grey lighten-2 cursor-pointer"
-                  cover
-                  @click="openProofDialog(proof)"
-                >
-                  <template v-slot:placeholder>
-                    <v-row class="fill-height ma-0" align="center" justify="center">
-                      <v-progress-circular indeterminate color="grey lighten-5"></v-progress-circular>
-                    </v-row>
-                  </template>
-                </v-img>
+                <v-card flat outlined class="d-flex flex-column justify-center align-center">
+                    <div class="image-video-preview-wrapper cursor-pointer" @click="openProofDialog(proofItem)">
+                        <template v-if="proofItem.type.startsWith('image/')">
+                            <v-img
+                                :src="proofItem.url"
+                                aspect-ratio="1"
+                                cover
+                            >
+                                <template v-slot:placeholder>
+                                    <v-row class="fill-height ma-0" align="center" justify="center">
+                                        <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                                    </v-row>
+                                </template>
+                                <template v-slot:error>
+                                    <v-row class="fill-height ma-0" align="center" justify="center">
+                                        <v-icon size="64" color="error">mdi-image-broken-variant</v-icon>
+                                    </v-row>
+                                </template>
+                            </v-img>
+                        </template>
+                        <template v-else-if="proofItem.type.startsWith('video/')">
+                            <video
+                                :src="proofItem.url"
+                                preload="metadata"
+                                muted
+                                playsinline
+                                @error="handleMediaDisplayError(proofItem.url, 'video')"
+                                style="width: 100%; height: 100%; object-fit: contain; background-color: black;"
+                            >
+                                Your browser does not support the video tag.
+                            </video>
+                            <v-icon size="48" color="white" class="video-play-icon">mdi-play-circle-outline</v-icon>
+                        </template>
+                        <template v-else>
+                            <div class="pa-4 text-center">
+                                <v-icon size="64">mdi-file</v-icon>
+                                <p class="text-caption mt-2">Unsupported file type</p>
+                            </div>
+                        </template>
+                    </div>
+                </v-card>
               </v-col>
             </v-row>
           </div>
@@ -285,7 +313,7 @@
       </v-card>
     </v-dialog>
 
-    <!-- UPDATED: Proof Image Viewer Dialog with Zoom -->
+    <!-- UPDATED: Proof Viewer Dialog (handles both images and videos) -->
     <v-dialog v-model="showProofDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
       <v-card>
         <v-toolbar dark color="primary">
@@ -297,20 +325,42 @@
         </v-toolbar>
         <v-card-text
           class="d-flex justify-center align-center"
-          style="background-color: rgba(0,0,0,0.8); position: relative; overflow: auto;"
+          style="background-color: rgba(0,0,0,0.8); position: relative; width: 100vw; height: calc(100vh - 64px); /* Toolbar height */"
         >
-          <v-img
-            :src="selectedProofUrl"
-            contain
-            max-height="90vh"
-            max-width="90vw"
-            :style="imageStyle"
-          ></v-img>
-          <div class="zoom-controls">
-            <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
-            <v-btn icon="mdi-fit-to-screen-outline" @click="resetZoom" class="mx-1" title="Reset Zoom"></v-btn>
-            <v-btn icon="mdi-magnify-plus-outline" @click="zoomIn" class="mx-1" title="Zoom In"></v-btn>
-          </div>
+          <template v-if="selectedProofItem.type.startsWith('image/')">
+            <v-img
+              :src="selectedProofItem.url"
+              contain
+              :style="imageStyle"
+              max-height="90%"
+              max-width="90%"
+            ></v-img>
+            <div class="zoom-controls">
+              <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
+              <v-btn icon="mdi-fit-to-screen-outline" @click="resetZoom" class="mx-1" title="Reset Zoom"></v-btn>
+              <v-btn icon="mdi-magnify-plus-outline" @click="zoomIn" class="mx-1" title="Zoom In"></v-btn>
+            </div>
+          </template>
+          <template v-else-if="selectedProofItem.type.startsWith('video/')">
+            <video
+              :src="selectedProofItem.url"
+              controls
+              autoplay
+              playsinline
+              preload="auto"
+              @error="handleMediaDisplayError(selectedProofItem.url, 'video-dialog')"
+              style="max-height: 90%; max-width: 90%; width: auto; height: auto; object-fit: contain; background-color: black;"
+            >
+              Your browser does not support the video tag.
+            </video>
+          </template>
+          <template v-else>
+            <div class="pa-4 text-center text-white">
+              <v-icon size="96" color="white">mdi-file-question-outline</v-icon>
+              <p class="text-h6 mt-4">Cannot display preview for this file type.</p>
+              <p class="text-caption">File type: {{ selectedProofItem.type || 'Unknown' }}</p>
+            </div>
+          </template>
         </v-card-text>
       </v-card>
     </v-dialog>
@@ -345,9 +395,10 @@ const form = reactive({
   status: 'New',
   notes_description: '',
   category: '',
-  proofs_base64: [],
+  proofs_base64: [], // This will still hold the raw base64 strings from backend
+  proofs_display: [], // NEW: This will hold objects {url: base64, type: mimetype} for display
   complainant_details: null,
-  status_reason: '', // This should hold the complaint's specific reason
+  status_reason: '',
 });
 
 const complaintCategories = ref([
@@ -364,8 +415,9 @@ const editMode = ref(false);
 const saving = ref(false);
 const deleting = ref(false);
 const confirmDeleteDialog = ref(false);
+
 const showProofDialog = ref(false);
-const selectedProofUrl = ref('');
+const selectedProofItem = ref({ url: '', type: '' }); // NEW: To store both URL and type for the dialog
 
 // NEW: State for Dismiss complaint dialog
 const declineComplaintDialog = ref(false);
@@ -407,15 +459,13 @@ const imageStyle = computed(() => ({
 }));
 
 const isComplainantDeactivated = computed(() => {
-    // Check if complainant_details exists and if their status or account_status is 'Deactivated'
     return form.complainant_details && (form.complainant_details.status === 'Deactivated' || form.complainant_details.account_status === 'Deactivated');
 });
 
 
 // --- FUNCTIONS ---
-// UPDATED: updateComplaintStatus to accept an optional reason
 async function updateComplaintStatus(status, reason = '') {
-  isActing.value = true; // Set loading state for actions
+  isActing.value = true;
   const body = { status };
   if (reason) {
     body.reason = reason;
@@ -426,15 +476,14 @@ async function updateComplaintStatus(status, reason = '') {
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
     
     $toast.fire({ title: data.value.message || 'Status updated successfully!', icon: 'success' });
-    await fetchComplaint(); // Re-fetch to get the latest status_reason if it was updated
+    await fetchComplaint();
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
   } finally {
-    isActing.value = false; // Clear loading state
+    isActing.value = false;
   }
 }
 
-// NEW: Function to handle confirming dismissal with a reason
 async function confirmDismiss() {
     if (!dismissReason.value.trim()) {
         $toast.fire({ title: 'A reason is required to dismiss the complaint.', icon: 'warning' });
@@ -442,7 +491,7 @@ async function confirmDismiss() {
     }
     await updateComplaintStatus('Dismissed', dismissReason.value.trim());
     declineComplaintDialog.value = false;
-    dismissReason.value = ''; // Clear reason after submitting
+    dismissReason.value = '';
 }
 
 
@@ -462,12 +511,25 @@ async function fetchComplaint(){
             date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date'),
             time_of_complaint: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(complaint.created_at)),
             complainant_details: complaint.complainant_details || null,
-            status_reason: complaint.status_reason || '' // Ensure this grabs the reason from the complaint object
+            status_reason: complaint.status_reason || ''
         });
 
+        // NEW: Process proofs_base64 for display
+        if (complaint.proofs_base64 && complaint.proofs_base64.length > 0) {
+            form.proofs_display = complaint.proofs_base64.map(base64String => {
+                if (base64String.startsWith('data:')) {
+                    const mimeMatch = base64String.match(/^data:(.*?);base64,/);
+                    const type = mimeMatch ? mimeMatch[1] : 'application/octet-stream';
+                    return { url: base64String, type: type };
+                }
+                console.warn("Proof string is not a data URL:", base64String);
+                return { url: base64String, type: 'application/octet-stream' }; // Fallback
+            });
+        } else {
+            form.proofs_display = [];
+        }
 
         console.log('Time of complaint: ', complaint.created_at);
-
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
@@ -482,11 +544,19 @@ async function fetchComplaint(){
 
 const cancelEdit = () => { Object.assign(form, originalFormState.value); v$.value.$reset(); editMode.value = false; };
 
-const openProofDialog = (url) => {
-  selectedProofUrl.value = url;
+// UPDATED: openProofDialog now takes the full proofItem object
+const openProofDialog = (proofItem) => {
+  selectedProofItem.value = { ...proofItem }; // Create a copy
   zoomLevel.value = 1;
   showProofDialog.value = true;
 };
+
+// NEW: Error handler for media elements
+const handleMediaDisplayError = (url, type) => {
+  console.error(`[Media Display Error] Failed to load ${type} from URL: ${url}. Check console for CSP errors or file corruption.`);
+  $toast.fire({ title: `Could not display ${type}. It might be corrupted or blocked by security policy.`, icon: 'error' });
+};
+
 
 const zoomIn = () => { zoomLevel.value += 0.2; };
 const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
@@ -548,10 +618,16 @@ async function saveChanges() {
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
   saving.value = true;
   try {
-    const payload = { ...form, date_of_complaint: new Date(form.date_of_complaint).toISOString() };
+    // Backend expects array of base64 strings, not the processed objects
+    const payload = { 
+      ...form, 
+      date_of_complaint: new Date(form.date_of_complaint).toISOString(),
+      proofs_base64: form.proofs_base64 // Send back the original raw base64 strings
+    };
     delete payload.status;
     delete payload.complainant_details;
-    delete payload.status_reason; // Ensure this is not sent back to server during a PUT
+    delete payload.status_reason;
+    delete payload.proofs_display; // Don't send the display helper array
     const { error } = await useMyFetch(`/api/complaints/${complaintId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update complaint.');
     $toast.fire({ title: 'Complaint updated successfully!', icon: 'success' });
@@ -639,5 +715,41 @@ const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'war
   z-index: 10;
   display: flex;
   gap: 8px;
+}
+
+/* Reused from new.vue for consistent preview styling */
+.image-video-preview-wrapper {
+  width: 100%;
+  padding-top: 100%; /* 1:1 Aspect Ratio */
+  position: relative;
+  overflow: hidden;
+  background-color: #f0f0f0; /* Light background to make empty space visible */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.image-video-preview-wrapper .v-img,
+.image-video-preview-wrapper video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* Ensure full content is visible */
+}
+
+/* Added for a subtle play icon on video previews */
+.video-play-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none; /* Allows click to pass through to the wrapper */
+  opacity: 0.7;
+  transition: opacity 0.2s;
+}
+.image-video-preview-wrapper:hover .video-play-icon {
+  opacity: 1;
 }
 </style>

@@ -1,4 +1,4 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
+// nuxt.config.ts
 import vuetify, { transformAssetUrls } from "vite-plugin-vuetify";
 export default defineNuxtConfig({
   app: {
@@ -62,7 +62,8 @@ export default defineNuxtConfig({
       headers: {
         // Content-Security-Policy: Helps prevent XSS attacks. This is a strict policy, 
         // you may need to adjust it if you load resources from external domains.
-        'Content-Security-Policy': "default-src 'self' http://localhost:3001; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none';",
+        // **UPDATED CSP LINE BELOW**
+        'Content-Security-Policy': "default-src 'self' http://localhost:3001; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; object-src 'none'; frame-ancestors 'none';",
         
         // X-Content-Type-Options: Prevents the browser from MIME-sniffing a response away from the declared content-type.
         'X-Content-Type-Options': 'nosniff',

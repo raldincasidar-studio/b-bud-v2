@@ -154,7 +154,7 @@
         <v-row>
             <v-col cols="12" sm="6">
               <label class="v-label">Password *</label>
-              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
+              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 8 characters, with uppercase and special character." persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
             </v-col>
             <v-col cols="12" sm="6">
               <label class="v-label">Confirm Password *</label>
@@ -410,7 +410,14 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
   sex: { required }, date_of_birth: dateOfBirthValidation,
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
-  password: { required, minLength: minLength(6) },
+  // START - MODIFIED PASSWORD VALIDATION
+  password: { 
+    required, 
+    minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
+    hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
+    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
+  },
+  // END - MODIFIED PASSWORD VALIDATION
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
   address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
   years_at_current_address: { required, numeric }, proof_of_residency_file: { required: helpers.withMessage('Proof of Residency is required.', required) },

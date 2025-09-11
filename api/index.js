@@ -4431,7 +4431,7 @@ app.post('/api/assets', async (req, res) => {
     }
 });
 
-// 2. READ (List): GET /api/assets - REVISED WITH SERVER-SIDE CALCULATIONS
+// 2. READ (List): GET /api/assets - REVISED WITH SERVER-SIDE CALCULATIONS (INCLUDING PENDING and PROCESSING)
 app.get('/api/assets', async (req, res) => {
     const search = req.query.search || '';
     const categoryFilter = req.query.category || '';
@@ -4462,7 +4462,8 @@ app.get('/api/assets', async (req, res) => {
             // Stage 1: Initial filtering of assets
             { $match: matchConditions },
 
-            // Stage 2: Lookup borrowed items
+            // Stage 2: Lookup for CURRENTLY BORROWED / OUT-OF-INVENTORY items
+            // This now includes 'Processing', 'Approved', 'Overdue', 'Lost', 'Damaged'
             {
                 $lookup: {
                     from: "borrowed_assets",
@@ -4470,8 +4471,7 @@ app.get('/api/assets', async (req, res) => {
                     pipeline: [
                         { $match: { 
                             $expr: { $eq: ["$item_borrowed", "$$assetName"] },
-                            // IMPORTANT: Count items that are actually out of inventory
-                            status: { $in: ['Pending', 'Approved', 'Overdue', 'Lost', 'Damaged'] } 
+                            status: { $in: ['Processing', 'Approved', 'Overdue', 'Lost', 'Damaged'] } 
                         }},
                         { $group: { _id: null, total: { $sum: "$quantity_borrowed" } } }
                     ],
@@ -4479,29 +4479,50 @@ app.get('/api/assets', async (req, res) => {
                 }
             },
 
-            // Stage 3: Add calculated fields
+            // Stage 3: Lookup for PENDING borrowed items (status 'Pending')
+            // This specifically counts items awaiting approval
             {
-                $addFields: {
-                    borrowed: { $ifNull: [{ $arrayElemAt: ["$borrowed_info.total", 0] }, 0] }
+                $lookup: {
+                    from: "borrowed_assets",
+                    let: { assetName: "$name" },
+                    pipeline: [
+                        { $match: { 
+                            $expr: { $eq: ["$item_borrowed", "$$assetName"] },
+                            status: 'Pending' // Only 'Pending' items
+                        }},
+                        { $group: { _id: null, total: { $sum: "$quantity_borrowed" } } }
+                    ],
+                    as: "pending_info"
                 }
             },
+
+            // Stage 4: Add calculated fields for 'borrowed' and 'pending'
             {
                 $addFields: {
-                    available: { $subtract: ["$total_quantity", "$borrowed"] }
+                    borrowed: { $ifNull: [{ $arrayElemAt: ["$borrowed_info.total", 0] }, 0] },
+                    pending: { $ifNull: [{ $arrayElemAt: ["$pending_info.total", 0] }, 0] }
                 }
             },
             
-            // Stage 4: Sort before pagination
+            // Stage 5: Calculate 'available' based on total_quantity, borrowed, and pending
+            // 'Available' means items not borrowed AND not currently pending approval
+            {
+                $addFields: {
+                    available: { $subtract: ["$total_quantity", { $add: ["$borrowed", "$pending"] }] }
+                }
+            },
+            
+            // Stage 6: Sort before pagination
             { $sort: { name: 1 } },
 
-            // Stage 5: Use $facet for pagination and total count in one go
+            // Stage 7: Use $facet for pagination and total count in one go
             {
                 $facet: {
                     paginatedResults: [ 
                         { $skip: skip }, 
                         { $limit: itemsPerPage },
-                        // Select only the fields needed by the frontend
-                        { $project: { name: 1, category: 1, total_quantity: 1, available: 1, borrowed: 1 } }
+                        // Select all the fields needed by the frontend, including 'pending'
+                        { $project: { name: 1, category: 1, total_quantity: 1, available: 1, borrowed: 1, pending: 1 } }
                     ],
                     totalCount: [ { $count: 'total' } ]
                 }
@@ -5898,7 +5919,7 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 // const isDebug = !false; /* For production */
-const isDebug = !false; /* For development */
+const isDebug = false; /* For development */
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF

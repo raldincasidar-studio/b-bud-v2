@@ -89,7 +89,7 @@
               label="Password"
               type="password"
               variant="outlined"
-              hint="Must be at least 6 characters long."
+              hint="Minimum 8 characters, with uppercase and special character."
               persistent-hint
               :error-messages="v$.password.$errors.map(e => e.$message)"
               @blur="v$.password.$touch"
@@ -163,7 +163,14 @@ const rules = {
         helpers.regex(/^09\d{9}$/) // This matches 09 followed by 9 more digits
     )
   },
-  password: { required, minLength: minLength(6) },
+  // START - MODIFIED PASSWORD VALIDATION
+  password: { 
+    required, 
+    minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
+    hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
+    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
+  },
+  // END - MODIFIED PASSWORD VALIDATION
   repeat_password: { 
     required, 
     sameAs: sameAs(passwordRef)

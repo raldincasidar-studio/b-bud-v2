@@ -73,6 +73,11 @@
             <div class="text-caption text-grey-darken-1">{{ item.category }}</div>
           </div>
         </template>
+
+        <!-- New Slot for Pending -->
+        <template v-slot:item.pending="{ item }">
+          <div class="text-center">{{ item.pending || 0 }}</div>
+        </template>
         
         <template v-slot:item.action="{ item }">
           <v-btn
@@ -113,8 +118,9 @@ const loadingCategories = ref(true);
 // ---
 
 const headers = ref([
-  { title: 'Item Name / Description', key: 'name', sortable: true, width: '45%' },
+  { title: 'Item Name / Description', key: 'name', sortable: true, width: '35%' }, // Adjusted width
   { title: 'Available', key: 'available', sortable: false, align: 'center' },
+  { title: 'Pending', key: 'pending', sortable: false, align: 'center' }, // New Header
   { title: 'Borrowed', key: 'borrowed', sortable: false, align: 'center' },
   { title: 'Total Quantity', key: 'total_quantity', sortable: false, align: 'center' },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },

@@ -100,7 +100,7 @@
                 type="datetime-local"
                 :rules="[rules.required]"
                 variant="outlined"
-                
+                readonly
                 required
               ></v-text-field>
             </v-col>
