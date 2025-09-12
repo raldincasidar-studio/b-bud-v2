@@ -5960,6 +5960,9 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
       'Certificate of Solo Parent': 'solo_parent.html',
       'Certificate of Residency': 'residency.html',
       'Barangay Permit (for installations)': 'permit.html',
+      'Barangay Business Permit': 'business-permit.html',
+      'Barangay BADAC Certificate': 'badac-certificate.html',
+      'Certificate of Oneness': 'oneness_certificate.html'
     };
     templatePath = path.join(__dirname, 'templates', templateMap[request.request_type]);
     if (!templatePath) return res.status(400).json({ error: 'No template available for this document type.' });
@@ -6005,6 +6008,10 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         // --- Barangay Business Clearance ---
         '[BUSINESS NAME]': request.details.business_name || '',
         '[NATURE OF BUSINESS]': request.details.nature_of_business || '',
+
+        // --- Barangay Business Permit ---
+        '[BUSINESS NAME]': request.details.business_name || '',
+        '[BUSINESS ADDRESS]': request.details.business_address || '',
         
         // --- First Time Jobseeker ---
         '[AGE]': requestor.age || '',
@@ -6017,6 +6024,9 @@ app.get('/api/document-requests/:id/generate', async (req, res) => {
         '[civil status]': requestor.civil_status || '',
         '[Full Address]': fullAddress,
         '[medical/educational/financial]': request.details.medical_educational_financial || '',
+
+        // Badac Certificate
+        '[BADAC PURPOSE]': request.details.badac_certificate|| '',
 
         // -- permit --
         '[installation/construction/repair]': request.details.installation_construction_repair || '',
