@@ -1568,15 +1568,34 @@ app.get('/api/residents/search', async (req, res) => {
   const searchQuery = req.query.q || ''; // 'q' is a common query parameter for search
   const limitResults = parseInt(req.query.limit) || 15; // Allow a limit, default to 15
 
-  if (!searchQuery || searchQuery.trim() === '') {
-    return res.json({ residents: [] }); // Return empty if no search query
+  console.log(`[BACKEND SEARCH - START] Received search request. Query parameter 'q': "${searchQuery}"`);
+  console.log(`[BACKEND SEARCH - START] Limit results: ${limitResults}`);
+  console.log(`[BACKEND SEARCH - START] Request origin: ${req.headers.origin || 'Unknown'}`); // Log the origin of the request
+  console.log(`[BACKEND SEARCH - START] Request user-agent: ${req.headers['user-agent'] || 'Unknown'}`); // Log the user-agent
+  console.log(`[BACKEND SEARCH - INFO] Request received. Query parameter 'q': "${searchQuery}"`); // Added
+  console.log(`[BACKEND SEARCH - INFO] Limit results: ${limitResults}`); // Added
+  if (!searchQuery || searchQuery.trim().length < 2) {
+    console.log('[BACKEND SEARCH - EARLY EXIT] Search query is empty or too short. Returning empty results.');
+    return res.json({ residents: [] }); // Return empty if no search query or too short
   }
 
   const dab = await db();
+  if (!dab) {
+      console.error('[BACKEND SEARCH - ERROR] Database connection not established. Cannot proceed.');
+      return res.status(500).json({ error: "Server error: Database connection failed." });
+  }
   const residentsCollection = dab.collection('residents');
+  if (!residentsCollection) {
+      console.error('[BACKEND SEARCH - ERROR] Residents collection not found in DB instance. Cannot proceed.');
+      return res.status(500).json({ error: "Server error: Residents collection inaccessible." });
+  }
 
   try {
-    const searchRegex = new RegExp(searchQuery.trim(), 'i'); // 'i' for case-insensitive
+    const trimmedQuery = searchQuery.trim();
+    // Ensure regex pattern is correctly escaped if necessary, though RegExp constructor handles most cases
+    const searchRegex = new RegExp(trimmedQuery, 'i'); 
+
+    console.log(`[BACKEND SEARCH - INFO] Using search regex pattern: ${searchRegex.source}`); // Log the actual regex pattern
 
     const query = {
       $or: [
@@ -1585,46 +1604,58 @@ app.get('/api/residents/search', async (req, res) => {
         { middle_name: { $regex: searchRegex } },
         { email: { $regex: searchRegex } },
         { contact_number: { $regex: searchRegex } },
+        { address_house_number: { $regex: searchRegex } },
         { address_street: { $regex: searchRegex } },
         { address_subdivision_zone: { $regex: searchRegex } },
         { address_city_municipality: { $regex: searchRegex } },
       ],
     };
 
-    const residents = await residentsCollection
-      .find(query)
-      .project({ // Select all fields for the search results
-        _id: 1,
-        first_name: 1,
-        last_name: 1,
-        middle_name: 1,
-        suffix: 1,
-        email: 1,
-        sex: 1,
-        contact_number: 1,
-        address_house_number: 1,
-        address_street: 1,
-        address_subdivision_zone: 1,
-        address_city_municipality: 1,
-        is_household_head: 1,
-        created_at: 1,
-        status: 1,
-        date_of_birth: 1,
+    console.log('[BACKEND SEARCH - INFO] Constructed MongoDB query object:', JSON.stringify(query));
 
-        // --- THIS IS THE CRITICAL FIX ---
-        // You MUST include account_status so the frontend knows if an account is On Hold.
-        account_status: 1,
-        // --- END OF FIX ---
-
-      })
-      .limit(limitResults)
-      .sort({ last_name: 1, first_name: 1 })
-      .toArray();
-
+    let residents = [];
+    let totalFound = 0;
+    try {
+        residents = await residentsCollection
+          .find(query)
+          .project({
+            _id: 1,
+            first_name: 1,
+            last_name: 1,
+            middle_name: 1,
+            suffix: 1,
+            email: 1,
+            sex: 1,
+            contact_number: 1,
+            address_house_number: 1,
+            address_street: 1,
+            address_subdivision_zone: 1,
+            address_city_municipality: 1,
+            is_household_head: 1,
+            created_at: 1,
+            status: 1,
+            birthdate: '$date_of_birth', // Alias 'date_of_birth' to 'birthdate'
+            account_status: 1,
+          })
+          .limit(limitResults)
+          .sort({ last_name: 1, first_name: 1 })
+          .toArray();
+        totalFound = residents.length;
+        console.log(`[BACKEND SEARCH - SUCCESS] MongoDB find operation completed. Found ${totalFound} residents.`);
+        // Uncomment the line below for a sample of the data returned by MongoDB if needed
+        // console.log('[BACKEND SEARCH - SUCCESS] Sample resident results (first 3):', residents.slice(0, Math.min(3, residents.length))); 
+    } catch (mongoErr) {
+        // This catch specifically handles errors during the MongoDB query execution
+        console.error('[BACKEND SEARCH - MONGODB ERROR] Error during MongoDB find operation:', mongoErr);
+        return res.status(500).json({ error: "Database query failed.", message: mongoErr.message });
+    }
+    
+    console.log(`[BACKEND SEARCH - END] Responding with ${totalFound} residents for query "${trimmedQuery}".`);
     res.json({ residents: residents });
 
   } catch (error) {
-    console.error("Error searching residents:", error);
+    // This outer catch block handles any other unexpected errors in the endpoint logic
+    console.error("[BACKEND SEARCH - UNEXPECTED ERROR] An unexpected error occurred during residents search (outer catch block):", error);
     res.status(500).json({ error: "Failed to search residents", message: error.message });
   }
 });
