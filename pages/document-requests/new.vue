@@ -186,42 +186,68 @@
 
           <div v-if="form.request_type === 'Barangay Clearance'">
             <v-row>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.type_of_work" label="Type of Work (e.g., sidewalk repair)" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.other_work" label="Other Work (e.g., drainage tapping)" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.number_of_storeys" label="Number of Storeys" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.purpose_of_clearance" label="Purpose of this Clearance" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.type_of_work" label="Type of Work (e.g., sidewalk repair)" variant="outlined"
+                  :error-messages="v$.details.type_of_work.$errors.map(e => e.$message)"
+                  @blur="v$.details.type_of_work.$touch"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.other_work" label="Other Work (e.g., drainage tapping)" variant="outlined"
+                  :error-messages="v$.details.other_work.$errors.map(e => e.$message)"
+                  @blur="v$.details.other_work.$touch"></v-text-field></v-col>
+              <v-col cols="12" md="6">
+                <label class="v-label mb-1">Number of Storeys <span class="text-red">*</span></label>
+                <v-text-field v-model="form.details.number_of_storeys" label="Number of Storeys" type="number" variant="outlined"
+                  :error-messages="v$.details.number_of_storeys.$errors.map(e => e.$message)"
+                  @blur="v$.details.number_of_storeys.$touch"></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.purpose_of_clearance" label="Purpose of this Clearance" variant="outlined"
+                  :error-messages="v$.details.purpose_of_clearance.$errors.map(e => e.$message)"
+                  @blur="v$.details.purpose_of_clearance.$touch"></v-text-field></v-col>
             </v-row>
           </div>
 
           <div v-if="form.request_type === 'Barangay Business Clearance'">
              <v-row>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.nature_of_business" label="Nature of Business" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"
+                  :error-messages="v$.details.business_name.$errors.map(e => e.$message)"
+                  @blur="v$.details.business_name.$touch"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.nature_of_business" label="Nature of Business" variant="outlined"
+                  :error-messages="v$.details.nature_of_business.$errors.map(e => e.$message)"
+                  @blur="v$.details.nature_of_business.$touch"></v-text-field></v-col>
             </v-row>
           </div>
 
           <div v-if="form.request_type === 'Barangay Business Permit'">
              <v-row>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_address" label="Business Address" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_name" label="Business Trade Name" variant="outlined"
+                  :error-messages="v$.details.business_name.$errors.map(e => e.$message)"
+                  @blur="v$.details.business_name.$touch"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.business_address" label="Business Address" variant="outlined"
+                  :error-messages="v$.details.business_address.$errors.map(e => e.$message)"
+                  @blur="v$.details.business_address.$touch"></v-text-field></v-col>
             </v-row>
           </div>
 
           <div v-if="form.request_type === 'Barangay Certification (First Time Jobseeker)'">
             <v-row>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.years_lived" label="Number of Years at Address" type="number" variant="outlined"></v-text-field></v-col>
-              <v-col cols="12" md="6"><v-text-field v-model="form.details.months_lived" label="Number of Months at Address" type="number" variant="outlined"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.years_lived" label="Number of Years at Address" type="number" variant="outlined"
+                  :error-messages="v$.details.years_lived.$errors.map(e => e.$message)"
+                  @blur="v$.details.years_lived.$touch"></v-text-field></v-col>
+              <v-col cols="12" md="6"><v-text-field v-model="form.details.months_lived" label="Number of Months at Address" type="number" variant="outlined"
+                  :error-messages="v$.details.months_lived.$errors.map(e => e.$message)"
+                  @blur="v$.details.months_lived.$touch"></v-text-field></v-col>
             </v-row>
           </div>
 
           <div v-if="form.request_type === 'Certificate of Indigency'">
             <v-row>
               <v-col cols="12" md="6">
+                <label class="v-label mb-1">Medical/Educational/Financial <span class="text-red">*</span></label>
                 <v-select
                   v-model="form.details.medical_educational_financial"
                   :items="['Medical', 'Educational', 'Financial']"
                   label="Medical/Educational/Financial"
                   variant="outlined"
+                  :error-messages="v$.details.medical_educational_financial.$errors.map(e => e.$message)"
+                  @blur="v$.details.medical_educational_financial.$touch"
                 ></v-select>
               </v-col>
             </v-row>
@@ -230,11 +256,14 @@
           <div v-if="form.request_type === 'Barangay BADAC Certificate'">
             <v-row>
               <v-col cols="12" md="6">
+                <label class="v-label mb-1">BADAC PURPOSE <span class="text-red">*</span></label>
                 <v-select
                   v-model="form.details.badac_certificate"
                   :items="['PNP Application', 'School Requirement', 'Job Application', 'Board Exam', 'Others']"
                   label="BADAC PURPOSE"
                   variant="outlined"
+                  :error-messages="v$.details.badac_certificate.$errors.map(e => e.$message)"
+                  @blur="v$.details.badac_certificate.$touch"
                 ></v-select>
               </v-col>
             </v-row>
@@ -243,17 +272,23 @@
           <div v-if="form.request_type === 'Barangay Permit (for installations)'">
             <v-row>
               <v-col cols="12" md="6">
+                <label class="v-label mb-1">Installation/Construction/Repair <span class="text-red">*</span></label>
                 <v-text-field
                   v-model="form.details.installation_construction_repair"
                   label="Installation/Construction/Repair"
                   variant="outlined"
+                  :error-messages="v$.details.installation_construction_repair.$errors.map(e => e.$message)"
+                  @blur="v$.details.installation_construction_repair.$touch"
                 ></v-text-field>
               </v-col>
               <v-col cols="12" md="6">
+                <label class="v-label mb-1">Project Site <span class="text-red">*</span></label>
                 <v-text-field
                   v-model="form.details.project_site"
                   label="Project Site"
                   variant="outlined"
+                  :error-messages="v$.details.project_site.$errors.map(e => e.$message)"
+                  @blur="v$.details.project_site.$touch"
                 ></v-text-field>
               </v-col>
             </v-row>
@@ -266,10 +301,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, watch, onMounted, computed } from 'vue'; // Import 'computed'
+import { reactive, ref, watch, onMounted, computed } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, helpers } from '@vuelidate/validators';
+import { required, helpers, minValue } from '@vuelidate/validators'; // Import minValue
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp, useCookie } from '#app';
 
@@ -277,10 +312,11 @@ const { $toast } = useNuxtApp();
 const router = useRouter();
 
 const documentTypes = [
-  'Certificate of Cohabitation', 'Certificate of Good Moral', 'Certificate of Residency',
-  'Certificate of Solo Parent', 'Certificate of Indigency', 'Barangay Clearance',
-  'Barangay Permit (for installations)', 'Barangay Business Clearance', 'Barangay Certification (First Time Jobseeker)',
-  'Barangay Business Permit', 'Barangay BADAC Certificate', 'Certificate of Oneness'
+  'Barangay Clearance', 'Barangay Permit (for installations)', 'Certificate of Indigency', 
+  'Certificate of Solo Parent', 'Certificate of Residency', 'Barangay Business Permit',
+  'Barangay BADAC Certificate', 'Certificate of Good Moral', 'Certificate of Cohabitation', 
+  'Barangay Business Clearance', 'Barangay Certification (First Time Jobseeker)', 'Certificate of Oneness'
+    
 ];
 
 const form = reactive({
@@ -310,13 +346,19 @@ const cohabitationRules = {
   male_partner_birthdate: { required: helpers.withMessage('Male partner birthdate is required.', required) },
   female_partner: { required: helpers.withMessage('Female partner is required.', required) },
   female_partner_birthdate: { required: helpers.withMessage('Female partner birthdate is required.', required) },
-  year_started_cohabiting: { required: helpers.withMessage('Year started living together is required.', required) },
+  year_started_cohabiting: {
+    required: helpers.withMessage('Year started living together is required.', required),
+    minValue: helpers.withMessage('Year cannot be negative.', minValue(0))
+  },
 };
 
 const barangayClearanceRules = {
   type_of_work: { required: helpers.withMessage('Type of Work is required.', required) },
   other_work: {}, // Optional
-  number_of_storeys: {}, // Optional
+  number_of_storeys: {
+    required: helpers.withMessage('Number of storeys is required.', required),
+    minValue: helpers.withMessage('Number of storeys cannot be negative.', minValue(0))
+  },
   purpose_of_clearance: { required: helpers.withMessage('Purpose of Clearance is required.', required) },
 };
 
@@ -330,8 +372,14 @@ const barangayBusinessPermitRules = {
 };
 
 const firstTimeJobseekerRules = {
-  years_lived: { required: helpers.withMessage('Number of Years at Address is required.', required) },
-  months_lived: { required: helpers.withMessage('Number of Months at Address is required.', required) },
+  years_lived: {
+    required: helpers.withMessage('Number of Years at Address is required.', required),
+    minValue: helpers.withMessage('Years cannot be negative.', minValue(0))
+  },
+  months_lived: {
+    required: helpers.withMessage('Number of Months at Address is required.', required),
+    minValue: helpers.withMessage('Months cannot be negative.', minValue(0)),
+  },
 };
 
 const certificateOfIndigencyRules = {
@@ -388,7 +436,7 @@ const rules = computed(() => {
     baseRules.details = certificateOfIndigencyRules;
   } else if (form.request_type === 'Barangay Permit (for installations)') {
     baseRules.details = barangayPermitRules;
-  } else if (form.request_type === 'Barangay Badac Certificate') {
+  } else if (form.request_type === 'Barangay BADAC Certificate') {
     baseRules.details = barangayBadacCertificate;
   }
   // Add more `else if` for other document types as you define their rules.
@@ -471,8 +519,34 @@ watch(() => form.request_type, (newType, oldType) => {
       form.details.female_partner_birthdate = null;
       form.details.year_started_cohabiting = null;
     }
-    // Add similar explicit initializations for other document types if their fields need defaults
-    // e.g., if (newType === 'Barangay Clearance') { form.details.type_of_work = ''; form.details.purpose_of_clearance = ''; }
+    if (newType === 'Barangay Clearance') {
+      form.details.type_of_work = '';
+      form.details.other_work = '';
+      form.details.number_of_storeys = null; // Initialize number to null or 0
+      form.details.purpose_of_clearance = '';
+    }
+    if (newType === 'Barangay Business Clearance') {
+      form.details.business_name = '';
+      form.details.nature_of_business = '';
+    }
+    if (newType === 'Barangay Business Permit') {
+      form.details.business_name = '';
+      form.details.business_address = '';
+    }
+    if (newType === 'Barangay Certification (First Time Jobseeker)') {
+      form.details.years_lived = null;
+      form.details.months_lived = null;
+    }
+    if (newType === 'Certificate of Indigency') {
+      form.details.medical_educational_financial = null;
+    }
+    if (newType === 'Barangay BADAC Certificate') {
+      form.details.badac_certificate = null;
+    }
+    if (newType === 'Barangay Permit (for installations)') {
+      form.details.installation_construction_repair = '';
+      form.details.project_site = '';
+    }
   }
 });
 
@@ -497,7 +571,7 @@ const handleFemalePartnerSelection = (selectedPartner) => {
 async function saveRequest() {
   const isFormCorrect = await v$.value.$validate();
   if (!isFormCorrect) {
-    $toast.fire({ title: 'Please complete all required fields.', icon: 'error' });
+    $toast.fire({ title: 'Please complete all required fields and correct invalid entries.', icon: 'error' });
     return;
   }
   
