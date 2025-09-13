@@ -117,7 +117,7 @@
               label="New Password"
               :type="showPassword ? 'text' : 'password'"
               variant="outlined"
-              hint="Leave blank to keep the current password."
+              hint="Leave blank to keep the current password. Minimum 8 characters, with uppercase and special character if changed."
               persistent-hint
               :error-messages="v$.password.$errors.map(e => e.$message)"
               @blur="v$.password.$touch"
@@ -148,7 +148,7 @@
 import { reactive, ref, onMounted, computed } from "vue";
 import { useMyFetch } from "~/composables/useMyFetch";
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf } from '@vuelidate/validators';
+import { required, email, minLength, sameAs, requiredIf, helpers } from '@vuelidate/validators';
 
 const { $toast } = useNuxtApp();
 const router = useRouter();
@@ -180,7 +180,13 @@ const rules = {
   username: { required },
   email: { required, email },
   contact_number: { required },
-  password: { minLength: minLength(6) },
+  // START - MODIFIED PASSWORD VALIDATION
+  password: { 
+    minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
+    hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
+    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
+  },
+  // END - MODIFIED PASSWORD VALIDATION
   repeat_password: {
     requiredIf: requiredIf(passwordRef),
     sameAs: sameAs(passwordRef)

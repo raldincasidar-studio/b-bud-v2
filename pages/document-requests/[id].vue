@@ -1,4 +1,4 @@
- <template>
+<template>
   <v-container class="my-10">
     <!-- Loading and Error States -->
     <div v-if="loading" class="text-center pa-10">
@@ -91,16 +91,193 @@
           <!-- Dynamic Details Section (Read-Only) -->
           <div v-if="request.request_type && request.details">
             <h3 class="text-h6 mb-4">{{ request.request_type }} - Details</h3>
-            <div v-if="request.request_type === 'Certificate of Cohabitation'">
+            
+            <!-- Conditional Blocks based on Request Type from new.vue -->
+
+            <!-- Barangay Clearance -->
+            <div v-if="request.request_type === 'Barangay Clearance'">
               <v-row>
-                <v-col cols="12" md="6"><v-text-field :model-value="request.details.male_partner_name" label="Full Name of Male Partner" readonly variant="outlined"></v-text-field></v-col>
-                <v-col cols="12" md="6"><v-text-field :model-value="request.details.male_partner_birthdate" label="Birthdate of Male Partner" type="date" readonly variant="outlined"></v-text-field></v-col>
-                <v-col cols="12" md="6"><v-text-field :model-value="request.details.female_partner_name" label="Full Name of Female Partner" readonly variant="outlined"></v-text-field></v-col>
-                <v-col cols="12" md="6"><v-text-field :model-value="request.details.female_partner_birthdate" label="Birthdate of Female Partner" type="date" readonly variant="outlined"></v-text-field></v-col>
-                <v-col cols="12" md="6"><v-text-field :model-value="request.details.year_started_cohabiting" label="Year Started Living Together" type="number" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.type_of_work" label="Type of Work" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.other_work" label="Other Work" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.number_of_storeys" label="Number of Storeys" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.purpose_of_clearance" label="Purpose of Clearance" readonly variant="outlined"></v-text-field></v-col>
               </v-row>
             </div>
-            <!-- Add other read-only document detail sections here as needed -->
+
+            <!-- Barangay Permit (for installations) -->
+            <div v-else-if="request.request_type === 'Barangay Permit (for installations)'">
+              <v-row>
+                <v-col cols="12" md="6">
+                  <v-text-field
+                    :model-value="request.details.installation_construction_repair"
+                    label="Installation/Construction/Repair"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6">
+                  <v-text-field
+                    :model-value="request.details.project_site"
+                    label="Project Site"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+            </div>
+
+            <!-- Certificate of Indigency -->
+            <div v-else-if="request.request_type === 'Certificate of Indigency'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.details.medical_educational_financial"
+                    label="Purpose (Medical/Educational/Financial)"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+            </div>
+            
+            <!-- Certificate of Solo Parent (Placeholder - add fields from new.vue if available) -->
+            <div v-else-if="request.request_type === 'Certificate of Solo Parent'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.purpose"
+                    label="Reason for Solo Parent Status"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <!-- Add other fields for Certificate of Solo Parent if they exist in new.vue and backend -->
+              </v-row>
+            </div>
+
+            <!-- Certificate of Residency (Placeholder - add fields from new.vue if available) -->
+            <div v-else-if="request.request_type === 'Certificate of Residency'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.purpose"
+                    label="Purpose of Residency"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <v-col cols="12" md="6" v-if="request.details.years_of_residency">
+                  <v-text-field
+                    :model-value="request.details.years_of_residency"
+                    label="Years of Residency"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <!-- Add other fields for Certificate of Residency if they exist in new.vue and backend -->
+              </v-row>
+            </div>
+
+            <!-- Barangay Business Permit -->
+            <div v-else-if="request.request_type === 'Barangay Business Permit'">
+              <v-row>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.business_name" label="Business Trade Name" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.business_address" label="Business Address" readonly variant="outlined"></v-text-field></v-col>
+              </v-row>
+            </div>
+
+            <!-- Barangay BADAC Certificate -->
+            <div v-else-if="request.request_type === 'Barangay BADAC Certificate'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.details.badac_certificate"
+                    label="BADAC Purpose"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+            </div>
+
+            <!-- Certificate of Good Moral (Placeholder - add fields from new.vue if available) -->
+            <div v-else-if="request.request_type === 'Certificate of Good Moral'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.purpose"
+                    label="Purpose of Good Moral Certificate"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <!-- Add other fields for Certificate of Good Moral if they exist in new.vue and backend -->
+              </v-row>
+            </div>
+
+            <!-- Certificate of Cohabitation -->
+            <div v-else-if="request.request_type === 'Certificate of Cohabitation'">
+              <v-row>
+                <v-col cols="12" md="6" v-if="request.details.male_partner_name"><v-text-field :model-value="request.details.male_partner_name" label="Full Name of Male Partner" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6" v-if="request.details.male_partner_birthdate"><v-text-field :model-value="request.details.male_partner_birthdate" label="Birthdate of Male Partner" type="date" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6" v-if="request.details.female_partner_name"><v-text-field :model-value="request.details.female_partner_name" label="Full Name of Female Partner" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6" v-if="request.details.female_partner_birthdate"><v-text-field :model-value="request.details.female_partner_birthdate" label="Birthdate of Female Partner" type="date" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6" v-if="request.details.year_started_cohabiting"><v-text-field :model-value="request.details.year_started_cohabiting" label="Year Started Living Together" type="number" readonly variant="outlined"></v-text-field></v-col>
+                <!-- If male_partner_id or female_partner_id are explicitly saved AND you wish to display them, uncomment below: -->
+                <!-- <v-col cols="12" md="6" v-if="request.details.male_partner_id"><v-text-field :model-value="request.details.male_partner_id" label="Male Partner ID" readonly variant="outlined"></v-text-field></v-col> -->
+                <!-- <v-col cols="12" md="6" v-if="request.details.female_partner_id"><v-text-field :model-value="request.details.female_partner_id" label="Female Partner ID" readonly variant="outlined"></v-text-field></v-col> -->
+              </v-row>
+            </div>
+
+            <!-- Barangay Business Clearance -->
+            <div v-else-if="request.request_type === 'Barangay Business Clearance'">
+              <v-row>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.business_name" label="Business Trade Name" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.nature_of_business" label="Nature of Business" readonly variant="outlined"></v-text-field></v-col>
+              </v-row>
+            </div>
+
+            <!-- Barangay Certification (First Time Jobseeker) -->
+            <div v-else-if="request.request_type === 'Barangay Certification (First Time Jobseeker)'">
+              <v-row>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.years_lived" label="Number of Years at Address" type="number" readonly variant="outlined"></v-text-field></v-col>
+                <v-col cols="12" md="6"><v-text-field :model-value="request.details.months_livedf" label="Number of Months at Address" type="number" readonly variant="outlined"></v-text-field></v-col>
+              </v-row>
+            </div>
+
+            <!-- Certificate of Oneness (Placeholder - add fields from new.vue if available) -->
+            <div v-else-if="request.request_type === 'Certificate of Oneness'">
+              <v-row>
+                <v-col cols="12">
+                  <v-text-field
+                    :model-value="request.purpose"
+                    label="Reason for Certificate of Oneness"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+                <!-- Add other fields for Certificate of Oneness if they exist in new.vue and backend -->
+              </v-row>
+            </div>
+
+            <!-- Generic Fallback: Display all details if no specific type match -->
+            <div v-else>
+              <v-row>
+                <v-col
+                  v-for="(value, key) in request.details"
+                  :key="key"
+                  cols="12"
+                  md="6"
+                >
+                  <v-text-field
+                    :model-value="value"
+                    :label="formatDetailLabel(key)"
+                    readonly
+                    variant="outlined"
+                  ></v-text-field>
+                </v-col>
+              </v-row>
+            </div>
           </div>
           
           <!-- NEW: Display reason for decline/invalidation -->
@@ -541,6 +718,17 @@ const formatTimestamp = (dateString) => {
       hour: '2-digit', minute: '2-digit', hour12: true
     });
   } catch (e) { return dateString; }
+};
+
+const formatDetailLabel = (key) => {
+  if (!key) return '';
+  // Convert snake_case or camelCase to "Title Case" and replace underscores with spaces
+  return key
+    .replace(/([A-Z])/g, ' $1') // Add space before capital letters
+    .replace(/_/g, ' ')         // Replace underscores with spaces
+    .split(' ')                 // Split into words
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1)) // Capitalize first letter of each word
+    .join(' ');
 };
 
 // --- ZOOM VIEWER LOGIC ---

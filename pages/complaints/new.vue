@@ -187,15 +187,40 @@
                 prepend-icon="mdi-paperclip"
                 accept="image/*,video/*"
               ></v-file-input>
-              <v-row v-if="proofPreviewUrls.length > 0" class="mt-4">
-                <v-col v-for="(url, index) in proofPreviewUrls" :key="index" cols="6" sm="4" md="3">
-                  <v-img :src="url" aspect-ratio="1" class="grey lighten-2" cover>
-                    <template v-slot:placeholder>
-                      <v-row class="fill-height ma-0" align="center" justify="center">
-                        <v-progress-circular indeterminate color="grey lighten-5"></v-progress-circular>
-                      </v-row>
-                    </template>
-                  </v-img>
+              <v-row v-if="proofPreviewItems.length > 0" class="mt-4">
+                <v-col v-for="(item, index) in proofPreviewItems" :key="item.url || index" cols="6" sm="4" md="3">
+                  <v-card flat outlined class="d-flex flex-column justify-center align-center">
+                    <div class="image-video-preview-wrapper">
+                      <template v-if="item.type.startsWith('image/')">
+                        <v-img :src="item.url" aspect-ratio="1" cover>
+                          <template v-slot:placeholder>
+                            <v-row class="fill-height ma-0" align="center" justify="center">
+                              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+                            </v-row>
+                          </template>
+                          <template v-slot:error>
+                            <v-row class="fill-height ma-0" align="center" justify="center">
+                              <v-icon size="64" color="error">mdi-image-broken-variant</v-icon>
+                            </v-row>
+                          </template>
+                        </v-img>
+                      </template>
+                      <template v-else-if="item.type.startsWith('video/')">
+                        <video :src="item.url" controls playsinline muted preload="metadata"
+                               style="width: 100%; height: 100%; object-fit: contain; background-color: black;"
+                               @error="handleVideoError(item.file.name)">
+                            Your browser does not support the video tag.
+                            <source :src="item.url" :type="item.type">
+                        </video>
+                      </template>
+                      <template v-else>
+                        <div class="pa-4 text-center">
+                          <v-icon size="64">mdi-file</v-icon>
+                          <p class="text-caption mt-2">{{ item.file.name }}</p>
+                        </div>
+                      </template>
+                    </div>
+                  </v-card>
                 </v-col>
               </v-row>
           </v-col>
@@ -230,7 +255,7 @@ const form = reactive({
   proof_files: [],
 });
 
-const proofPreviewUrls = ref([]);
+const proofPreviewItems = ref([]); // Changed to store objects with url, type, and file
 
 const complaintCategories = ref([
   'Theft / Robbery', 'Scam / Fraud', 'Physical Assault / Violence', 'Verbal Abuse / Threats',
@@ -248,7 +273,6 @@ const isLoadingComplainants = ref(false);
 const rules = {
     complainant_resident: {
         required: helpers.withMessage('A complainant must be selected.', required),
-        // UPDATED: Check both 'status' and 'account_status'
         isActive: helpers.withMessage(
             (value) => {
                 if (!value) return "Complainant not selected.";
@@ -324,6 +348,7 @@ const searchResidentsAPI = debounce(async (query) => {
     }
 }, 500);
 
+// --- RE-INTRODUCED: Function to convert file to Base64 ---
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
     if (!file) {
@@ -337,13 +362,44 @@ const convertFileToBase64 = (file) => {
   });
 };
 
+// Watch for changes in proof_files to update previews (this part remains optimized and working)
 watch(() => form.proof_files, (newFiles) => {
+  // Revoke previous object URLs to prevent memory leaks
+  proofPreviewItems.value.forEach(item => {
+    if (item.url) { // Ensure url exists before revoking
+      URL.revokeObjectURL(item.url);
+    }
+  });
+
   if (!newFiles || newFiles.length === 0) {
-    proofPreviewUrls.value = [];
+    proofPreviewItems.value = [];
+    console.log("No files selected, clearing previews.");
     return;
   }
-  proofPreviewUrls.value = newFiles.map(file => URL.createObjectURL(file));
+
+  proofPreviewItems.value = newFiles.map(file => {
+    try {
+      const url = URL.createObjectURL(file);
+      console.log(`[Preview] Created URL for file '${file.name}': ${url}, Type: ${file.type}, Size: ${file.size} bytes`);
+      return {
+        url: url, // Create object URL for preview
+        type: file.type, // Store file type to determine rendering
+        file: file, // Keep a reference to the original file object
+      };
+    } catch (e) {
+      console.error(`[Preview Error] Failed to create object URL for file '${file.name}':`, e);
+      $toast.fire({ title: `Could not preview '${file.name}'.`, icon: 'error' });
+      return { url: null, type: file.type, file: file, error: true }; // Mark as error
+    }
+  });
+  console.log("[Preview] Updated proofPreviewItems:", proofPreviewItems.value);
 }, { deep: true });
+
+// Handler for video error events
+const handleVideoError = (fileName) => {
+  console.error(`[Video Playback Error] Failed to load/play video: ${fileName}. Check network tab for blob: URL status.`);
+  $toast.fire({ title: `Could not play video '${fileName}'. It might be corrupted or in an unsupported format.`, icon: 'error' });
+};
 
 watch(complainantSearchQuery, (newQuery) => { searchResidentsAPI(newQuery); });
 
@@ -367,6 +423,7 @@ async function saveComplaint() {
   saving.value = true;
 
   try {
+    // --- REVERTED: Convert files to Base64 for JSON payload ---
     const proofs_base64 = await Promise.all(
       form.proof_files.map(file => convertFileToBase64(file))
     );
@@ -383,12 +440,13 @@ async function saveComplaint() {
       processed_by_personnel: form.processed_by_personnel,
       status: form.status,
       notes_description: form.notes_description,
-      proofs_base64: proofs_base64,
+      proofs_base64: proofs_base64, // Send Base64 array
     };
     
+    // Send as JSON
     const { error } = await useMyFetch('/api/complaints', {
       method: 'POST',
-      body: payload,
+      body: payload, // This will be sent as application/json
     });
     
     if (error.value) throw new Error(error.value.data?.message || 'Failed to submit complaint');
@@ -411,5 +469,26 @@ async function saveComplaint() {
   display: block;
   margin-bottom: 4px;
   font-weight: 500;
+}
+/* Ensure previews maintain aspect ratio within their container */
+.image-video-preview-wrapper {
+  width: 100%;
+  padding-top: 100%; /* 1:1 Aspect Ratio */
+  position: relative;
+  overflow: hidden;
+  background-color: #f0f0f0; /* Light background to make empty space visible */
+  display: flex; /* For centering content in generic file case */
+  justify-content: center;
+  align-items: center;
+}
+
+.image-video-preview-wrapper .v-img,
+.image-video-preview-wrapper video {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain; /* Default for both to ensure full content is visible. */
 }
 </style>
