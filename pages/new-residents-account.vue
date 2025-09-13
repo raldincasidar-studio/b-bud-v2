@@ -74,17 +74,35 @@
         <v-divider class="my-6"></v-divider>
         <p class="text-subtitle-2 mb-4">Address Information</p>
         <v-row>
+           <!-- NEW FIELD: Unit/Room/Apartment number -->
+          <v-col cols="12" md="4">
+            <label class="v-label">Unit/Room/Apartment Number</label>
+            <v-text-field v-model="form.address_unit_room_apt_number" label="Unit/Room/Apartment Number" variant="outlined"></v-text-field>
+          </v-col>
           <v-col cols="12" md="4">
             <label class="v-label">House Number/Lot/Block *</label>
             <v-text-field v-model="form.address_house_number" label="House Number/Lot/Block *" variant="outlined" :error-messages="vHead$.address_house_number.$errors.map(e => e.$message)" @blur="vHead$.address_house_number.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" md="8">
+          <v-col cols="12" md="4">
             <label class="v-label">Street *</label>
             <v-text-field v-model="form.address_street" label="Street *" variant="outlined" :error-messages="vHead$.address_street.$errors.map(e => e.$message)" @blur="vHead$.address_street.$touch()"></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
             <label class="v-label">Subdivision/Zone/Sitio/Purok *</label>
             <v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok *" variant="outlined" :error-messages="vHead$.address_subdivision_zone.$errors.map(e => e.$message)" @blur="vHead$.address_subdivision_zone.$touch()"></v-text-field>
+          </v-col>
+          <!-- NEW FIELD: Type of Household -->
+          <v-col cols="12" md="6">
+            <label class="v-label">Type of Household</label>
+            <v-select 
+              v-model="form.type_of_household" 
+              :items="['Owner', 'Tenant/Border', 'Sharer']" 
+              label="Type of Household *" 
+              variant="outlined" 
+              placeholder="Select Type"
+              :error-messages="vHead$.type_of_household.$errors.map(e => e.$message)" 
+              @blur="vHead$.type_of_household.$touch()">
+            </v-select>
           </v-col>
           <v-col cols="12" md="6">
             <label class="v-label">City/Municipality</label>
@@ -369,7 +387,7 @@
 import { reactive, ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'; // Import onBeforeUnmount
 import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alpha } from '@vuelidate/validators';
+import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alphaNum } from '@vuelidate/validators'; // Added alphaNum
 import { useMyFetch } from '~/composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -387,7 +405,10 @@ const form = reactive({
   sex: null, date_of_birth: '',
   civil_status: null, citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '',
   password: '', confirmPassword: '',
-  address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  address_house_number: '', 
+  address_unit_room_apt_number: '', // NEW: Unit/Room/Apartment number
+  address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  type_of_household: null, // NEW: Type of Household
   years_at_current_address: null, 
   proof_of_residency_file: [], // Changed to array for multiple File objects
   authorization_letter_file: null, // NEW: Authorization Letter file object
@@ -461,7 +482,11 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
     hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
   },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
-  address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numeric }, 
+  address_unit_room_apt_number: { }, // NEW: Unit/Room/Apartment number (optional for now)
+  address_street: { required }, 
+  address_subdivision_zone: { required },
+  type_of_household: { }, // NEW: Type of Household (required)
   years_at_current_address: { required, numeric }, 
   proof_of_residency_file: { 
     required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0) 
@@ -723,7 +748,7 @@ async function saveResidentAndHousehold() {
 
   saving.value = true;
   try {
-    const payload = { ...form }; // 'form' already includes 'suffix'
+    const payload = { ...form }; // 'form' already includes 'suffix', address_unit_room_apt_number, type_of_household
     
     // Assign calculated and head-specific properties
     payload.age = headCalculatedAge.value; // Send age for head, backend also calculates it
@@ -799,7 +824,7 @@ async function saveResidentAndHousehold() {
     const { data, error } = await useMyFetch("/api/admin/residents", { method: 'post', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Error registering household.');
     
-    $toast.fire({ title: 'Household registered successfully! It is now pending for approval.', icon: 'success' });
+    $toast.fire({ title: 'Household registered successfully! It is now approved.', icon: 'success' });
     
     router.push('/residents-account-management');
 

@@ -665,10 +665,12 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
         proof_of_relationship_base64: data.proof_of_relationship_base64 || null,
 
         // Address Info (Use head's address if provided)
+        address_unit_room_apt_number: data.address_unit_room_apt_number || null, // NEW FIELD
         address_house_number: headAddress ? headAddress.address_house_number : data.address_house_number,
         address_street: headAddress ? headAddress.address_street : data.address_street,
         address_subdivision_zone: headAddress ? headAddress.address_subdivision_zone : data.address_subdivision_zone,
         address_city_municipality: headAddress ? headAddress.address_city_municipality : data.address_city_municipality,
+        type_of_household: data.type_of_household || null, // NEW FIELD
         years_at_current_address: isHead ? data.years_at_current_address : null,
         // MODIFIED: proof_of_residency_base64 is now an array
         proof_of_residency_base64: isHead ? (Array.isArray(data.proof_of_residency_base64) ? data.proof_of_residency_base64 : []) : null,
@@ -723,6 +725,11 @@ app.post('/api/residents', async (req, res) => {
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
+            // NEW FIELD: Validate type_of_household for the head
+            if (!headData.type_of_household) {
+                throw new Error('Validation failed: Type of household is required for the Household Head.');
+            }
+
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
             if (existingEmail) {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
@@ -745,9 +752,11 @@ app.post('/api/residents', async (req, res) => {
                 last_name: headData.last_name,
                 suffix: headData.suffix,
                 address_house_number: headData.address_house_number,
+                address_unit_room_apt_number: headData.address_unit_room_apt_number, // NEW FIELD
                 address_street: headData.address_street,
                 address_subdivision_zone: headData.address_subdivision_zone,
-                address_city_municipality: headData.address_city_municipality
+                address_city_municipality: headData.address_city_municipality,
+                type_of_household: headData.type_of_household // NEW FIELD
               },
               headData.proof_of_residency_base64, // Array of base64 strings
               headData.authorization_letter_base64 || null // Optional authorization letter
@@ -788,7 +797,8 @@ app.post('/api/residents', async (req, res) => {
                 }
                 // const memberAge = calculateAge(memberData.date_of_birth); // Unused here
 
-                const newMemberDoc = createResidentDocument(memberData, false, headData);
+                // When creating a member, createResidentDocument will copy address/household type from headData
+                const newMemberDoc = createResidentDocument(memberData, false, headData); // headData is passed here
                 newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
                 newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
                 if (memberData.password) {
@@ -880,6 +890,10 @@ app.post('/api/admin/residents', async (req, res) => {
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
                 throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
             }
+            // NEW FIELD: Validate type_of_household for the head
+            // if (!headData.type_of_household) {
+            //     throw new Error('Validation failed: Type of household is required for the Household Head.');
+            // }
             
             if (headData.email && headData.email.trim() !== '') {
                 const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
@@ -901,6 +915,10 @@ app.post('/api/admin/residents', async (req, res) => {
             headResidentDocument.pwd_card_base64 = headData.pwd_card_base64 || null;
             headResidentDocument.senior_citizen_card_base64 = headData.senior_citizen_card_base64 || null;
             
+            // NEW FIELD: Include address_unit_room_apt_number and type_of_household in the saved document
+            headResidentDocument.address_unit_room_apt_number = headData.address_unit_room_apt_number || null; // NEW FIELD
+            headResidentDocument.type_of_household = headData.type_of_household; // NEW FIELD
+
             headResidentDocument.status = finalStatus;
             headResidentDocument.date_approved = finalApprovalDate;
             headResidentDocument.created_at = new Date();
@@ -921,7 +939,8 @@ app.post('/api/admin/residents', async (req, res) => {
                 }
                 // const memberAge = calculateAge(memberData.date_of_birth); // Unused
                 
-                const newMemberDoc = createResidentDocument(memberData, false, headData);
+                // When creating a member, createResidentDocument will copy address/household type from headData
+                const newMemberDoc = createResidentDocument(memberData, false, headData); // headData is passed here
                 if (memberData.password) {
                     newMemberDoc.password_hash = md5(memberData.password);
                 } else {
@@ -934,6 +953,9 @@ app.post('/api/admin/residents', async (req, res) => {
                 newMemberDoc.voter_registration_proof_base64 = memberData.voter_registration_proof_base64 || null;
                 newMemberDoc.pwd_card_base64 = memberData.pwd_card_base64 || null;
                 newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
+
+                // NEW FIELD: address_unit_room_apt_number and type_of_household are copied by createResidentDocument
+                // No explicit assignment needed here if createResidentDocument handles it.
 
                 newMemberDoc.status = finalStatus;
                 newMemberDoc.date_approved = finalApprovalDate;
@@ -984,6 +1006,7 @@ app.post('/api/admin/residents', async (req, res) => {
         await session.endSession();
     }
 });
+
 
 // POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD (UPDATED)
 app.post('/api/residents/:householdHeadId/members', async (req, res) => {
@@ -1087,12 +1110,10 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
     }
 });
 
-// POST /api/residents/:householdHeadId/members - ADD A NEW MEMBER TO AN EXISTING HOUSEHOLD
 app.post('/api/residents/:householdHeadId/members', async (req, res) => {
     const { householdHeadId } = req.params;
     const memberData = req.body;
 
-    // --- Validation ---
     if (!ObjectId.isValid(householdHeadId)) {
         return res.status(400).json({ error: 'Validation Error', message: 'Invalid household head ID format.' });
     }
@@ -1108,13 +1129,11 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
         let newMemberId;
 
         await session.withTransaction(async () => {
-            // Step 1: Find the household head to ensure they are valid and get their address
             const householdHead = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) }, { session });
             if (!householdHead || !householdHead.is_household_head) {
                 throw new Error('Household head not found or the specified user is not a household head.');
             }
 
-            // Step 2: Check for email conflicts if an email is provided for the new member
             if (memberData.email) {
                 const existingEmail = await residentsCollection.findOne({ email: memberData.email.toLowerCase() }, { session });
                 if (existingEmail) {
@@ -1122,46 +1141,71 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 }
             }
 
-            // Step 3: Reuse the same helper function from your signup process
-            // It will create the member and copy the head's address information automatically
+            // createResidentDocument will copy address and type_of_household from householdHead
             const newMemberDoc = createResidentDocument(memberData, false, householdHead);
-
-            // Step 4: Add the new fields for photo and proof of relationship from the frontend payload
-            newMemberDoc.photo_base64 = memberData.photo_base64 || null;
-            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
+            newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
+            newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+            if (memberData.password) {
+                newMemberDoc.pending_password_hash = md5(memberData.password);
+            }
+            
+            // Removed photo_base64 as it was not in your frontend code (new-resident-account.vue)
+            // newMemberDoc.photo_base64 = memberData.photo_base64 || null; // This line seems to be old/incorrect from previous prompt
             newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
             
-            // Step 5: Ensure new members always start with 'Pending' status
+            if (memberData.is_voter) {
+                const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
+                if (!proofOfVoterResult.isValid) {
+                    throw new Error(proofOfVoterResult.message);
+                }
+            }
+            if (memberData.is_pwd) {
+                const proofOfPWDResult = await validateProofOfPWD(memberData, memberData.pwd_card_base64);
+                if (!proofOfPWDResult.isValid) {
+                    throw new Error(proofOfPWDResult.message);
+                }
+            }
+            // Add validation for senior citizen if needed
+
             newMemberDoc.status = 'Pending';
             newMemberDoc.date_approved = null;
+            newMemberDoc.created_at = new Date();
+            newMemberDoc.updated_at = new Date();
 
-
-            // Step 6: Insert the new member document into the 'residents' collection
             const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
             newMemberId = memberInsertResult.insertedId;
+            // Removed account_number assignment here.
 
-            // Step 7: Atomically add the new member's ID to the household head's list of members
             await residentsCollection.updateOne(
                 { _id: new ObjectId(householdHeadId) },
-                { $push: { household_member_ids: newMemberId } },
+                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
                 { session }
             );
         });
 
-        // If the transaction succeeds, create an audit log
+        const headDetails = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) });
+        // The audit log description below will need to be adjusted as 'account_number' is not directly available
         await createAuditLog({
-          description: `A new member, '${memberData.first_name} ${memberData.last_name}', was added to a household.`,
-          action: "CREATE",
+          userId: householdHeadId,
+          userName: `${headDetails.first_name} ${headDetails.last_name}`,
+          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`, // Simplified description
+          action: "ADD_MEMBER",
           entityType: "Resident",
           entityId: newMemberId.toString(),
         }, req);
 
-        res.status(201).json({ message: 'Household member added successfully.' });
+        res.status(201).json({ message: 'Household member added successfully.', memberId: newMemberId });
 
     } catch (error) {
         console.error("Error adding household member:", error);
         if (error.message.startsWith('Conflict:')) {
             return res.status(409).json({ error: 'Email Conflict', message: error.message });
+        }
+        if (error.message.startsWith('Validation failed for member:')) {
+            return res.status(400).json({ error: 'Validation Error', message: error.message });
+        }
+        if (error.message === 'Household head not found or the specified user is not a household head.') {
+            return res.status(404).json({ error: 'Not Found', message: error.message });
         }
         res.status(500).json({ error: 'Server Error', message: error.message || 'Could not add household member.' });
     } finally {
@@ -1350,6 +1394,8 @@ app.get('/api/residents', async (req, res) => {
           { first_name: searchRegex }, { middle_name: searchRegex }, { last_name: searchRegex },
           { email: searchRegex }, { contact_number: searchRegex }, { address_street: searchRegex },
           { address_subdivision_zone: searchRegex }, { precinct_number: searchRegex },
+          { address_unit_room_apt_number: searchRegex }, // NEW FIELD: Search by unit/room/apt number
+          { type_of_household: searchRegex }, // NEW FIELD: Search by type of household
         ],
       });
     }
@@ -1362,12 +1408,14 @@ app.get('/api/residents', async (req, res) => {
         sortOptions = { [sortKey]: sortOrder === 'desc' ? -1 : 1 };
     }
     
-    // --- UPDATE: Add `account_status` to the projection ---
+    // --- UPDATE: Add `account_status` and new fields to the projection ---
     const projection = {
         first_name: 1, middle_name: 1, last_name: 1, suffix: 1, sex: 1,
         date_of_birth: 1, is_household_head: 1, address_house_number: 1,
+        address_unit_room_apt_number: 1, // NEW FIELD
         address_street: 1, address_subdivision_zone: 1, contact_number: 1,
         email: 1, status: 1, _id: 1,
+        type_of_household: 1, // NEW FIELD
         account_status: 1, // Added for frontend logic
         date_added: "$created_at",
         date_approved: 1
@@ -2112,10 +2160,10 @@ app.put('/api/residents/:id', async (req, res) => {
   // REVISION: Expanded field lists to match the new form
   const simpleFields = [
     'first_name', 'middle_name', 'last_name', 'suffix', // <-- ADDED SUFFIX HERE
-    'sex', 'civil_status',
+    'sex', 'civil_status', 'address_unit_room_apt_number', // NEW FIELD
     'occupation_status', 'citizenship', 'contact_number',
     'address_house_number', 'address_street', 'address_subdivision_zone',
-    'relationship_to_head', 'other_relationship' // Added for non-head residents
+    'relationship_to_head', 'other_relationship', 'type_of_household' // NEW FIELD
   ];
   const booleanFields = ['is_voter', 'is_pwd', 'is_senior_citizen', 'is_household_head'];
   const numericFields = ['years_at_current_address'];

@@ -79,8 +79,8 @@
             <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" :readonly="!editMode" variant="outlined" placeholder="Select Civil Status" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" :readonly="!editMode" variant="outlined" placeholder="Select Citizenship" :error-messages="v$.citizenship.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly variant="outlined" maxlength="11" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly="!editMode" variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly="!editMode" variant="outlined" maxlength="11" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
           </v-row>
         </v-card-text>
       </v-card>
@@ -130,9 +130,29 @@
         <v-card-title class="text-h6 font-weight-medium">Address Information</v-card-title>
         <v-card-text class="pt-4">
           <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field 
+                v-model="form.address_unit_room_apt_number" 
+                label="Unit/Room/Apartment number" 
+                :readonly="!editMode" 
+                variant="outlined"
+              ></v-text-field>
+            </v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.address_house_number" label="House Number/Lot/Block*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_house_number.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="8"><v-text-field v-model="form.address_street" label="Street*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_street.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.address_street" label="Street*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_street.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_subdivision_zone.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <!-- NEW FIELD: Type of Household -->
+            <v-col cols="12" md="6">
+              <v-select 
+                v-model="form.type_of_household" 
+                :items="['Owner', 'Tenant/Border', 'Sharer']" 
+                label="Type of Household" 
+                :readonly="!editMode" 
+                variant="outlined" 
+                placeholder="Select Type"
+                :error-messages="v$.type_of_household.$errors.map(e => e.$message)"
+              ></v-select>
+            </v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.address_city_municipality" label="City/Municipality" readonly variant="outlined"></v-text-field></v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.years_at_current_address" label="Years at Current Address*" type="number" :readonly="!editMode" variant="outlined" :error-messages="v$.years_at_current_address.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="6">
@@ -317,7 +337,10 @@ const form = reactive({
   first_name: '', middle_name: '', last_name: '', suffix: null, // ADDED SUFFIX
   sex: null, date_of_birth: '', civil_status: null,
   citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
-  address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  address_house_number: '', 
+  address_unit_room_apt_number: '', // NEW: Unit/Room/Apartment number
+  address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  type_of_household: null, // NEW: Type of Household
   years_at_current_address: null, 
   proof_of_residency_file: null, // This is for new file input, could be a single File or an array of Files
   proof_of_residency_base64: [], // This is the array of base64 strings fetched from the backend
@@ -460,7 +483,11 @@ const rules = {
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { email }, contact_number: {  },
-  address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numeric }, 
+  address_unit_room_apt_number: {}, // NEW: Unit/Room/Apartment number (optional)
+  address_street: { required }, 
+  address_subdivision_zone: { required },
+  type_of_household: {  }, // NEW: Type of Household (required)
   years_at_current_address: { numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
@@ -564,6 +591,10 @@ async function fetchResident() {
     form.authorization_letter_base64 = residentData.resident.authorization_letter_base64 || null;
     // Ensure proof_of_residency_base64 is always an array
     form.proof_of_residency_base64 = residentData.resident.proof_of_residency_base64 || [];
+    // NEW: Ensure address_unit_room_apt_number and type_of_household are initialized
+    form.address_unit_room_apt_number = residentData.resident.address_unit_room_apt_number || '';
+    form.type_of_household = residentData.resident.type_of_household || null;
+
     originalFormState.value = JSON.parse(JSON.stringify(form));
   } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/residents'); }
   finally { loading.value = false; }
@@ -592,7 +623,7 @@ async function saveChanges() {
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
   saving.value = true;
   try {
-    const payload = { ...form }; // 'form' now includes 'suffix'
+    const payload = { ...form }; // 'form' now includes 'suffix', address_unit_room_apt_number, type_of_household
     payload.household_member_ids = form.household_members_details.map(m => m._id);
     delete payload.household_members_details;
     
