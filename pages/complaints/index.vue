@@ -1,3 +1,4 @@
+// filed complaints index.vue
 <template>
   <v-container class="my-10">
     <v-row justify="space-between" align="center" class="mb-5">
@@ -120,10 +121,12 @@ const initialSortBy = ref([{ key: 'date_of_complaint', order: 'desc' }]);
 
 // No longer fetching current user status on this page, per previous request.
 
+// UPDATED: Added 'Unresolved' status
 const STATUS_CONFIG = {
   'All':                 { color: 'primary', icon: 'mdi-filter-variant' },
   'New':                 { color: 'info', icon: 'mdi-bell-ring-outline' },
   'Under Investigation': { color: 'warning', icon: 'mdi-magnify-scan' },
+  'Unresolved':          { color: 'blue-grey-darken-3', icon: 'mdi-alert-circle-outline' }, // NEW STATUS
   'Resolved':            { color: 'success', icon: 'mdi-check-circle-outline' },
   'Closed':              { color: 'grey-darken-1', icon: 'mdi-archive-outline' },
   'Dismissed':           { color: 'error', icon: 'mdi-cancel' },
@@ -146,6 +149,7 @@ const getAvailableActions = (currentStatus) => {
   const allActions = {
     'New': { status: 'New', title: 'Mark as New' },
     'Under Investigation': { status: 'Under Investigation', title: 'Start Investigation' },
+    'Unresolved': { status: 'Unresolved', title: 'Mark as Unresolved' }, // NEW ACTION
     'Resolved': { status: 'Resolved', title: 'Mark as Resolved' },
     'Closed': { status: 'Closed', title: 'Mark as Closed' },
     'Dismissed': { status: 'Dismissed', title: 'Dismiss Complaint' },

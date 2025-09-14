@@ -5333,7 +5333,8 @@ app.post('/api/complaints/:id/notes', async (req, res) => {
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, reason } = req.body;
-  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+  // UPDATED: Added 'Unresolved' to the list of allowed statuses
+  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Unresolved', 'Resolved', 'Closed', 'Dismissed'];
   
   if (!status || !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
@@ -5367,9 +5368,10 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
 
     const updateSet = { status: status, updated_at: new Date() };
 
-    if (reason && status === 'Dismissed') {
+    // If dismissing, set the reason. Otherwise, unset it to clear previous dismissal reasons.
+    if (status === 'Dismissed' && reason) {
         updateSet.status_reason = reason;
-    } else {
+    } else if (originalComplaint.status_reason) { // Only unset if there was a reason previously
         await complaintsCollection.updateOne(
             { _id: originalComplaint._id },
             { $unset: { status_reason: "" } }

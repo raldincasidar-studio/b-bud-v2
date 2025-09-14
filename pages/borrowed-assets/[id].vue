@@ -21,11 +21,49 @@
           <p class="text-grey-darken-1">Ref #: {{ transactionId }}</p>
         </v-col>
         <v-col class="text-right">
+            <!-- ADDED: Status Chip -->
+            <v-chip :color="getStatusColor(transactionData.status)" label size="large" class="font-weight-bold mr-4">{{ transactionData.status }}</v-chip>
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="isSaving" variant="flat" rounded="lg">Save</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" variant="text" rounded="lg">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" rounded="lg">Delete</v-btn>
         </v-col>
       </v-row>
+
+      <!-- ✨ STATUS TRACKER START ✨ -->
+      <div class="status-tracker-container my-12">
+        <div class="progress-bar-container">
+            <div class="progress-bar-bg"></div>
+            <div
+                class="progress-bar-fg"
+                :class="isFailureState ? 'bg-error' : 'bg-primary'"
+                :style="{ width: progressWidth }"
+            ></div>
+        </div>
+        <div class="steps-container">
+            <div v-for="(step, index) in trackerSteps" :key="step.name" class="step-item">
+                <div
+                    class="step-circle"
+                    :class="{
+                        'completed': !isFailureState && index < activeStepIndex,
+                        'current': !isFailureState && index === activeStepIndex,
+                        'declined': isFailureState && index < activeStepIndex, // Use 'declined' for steps before failure point
+                        'failure-point': isFailureState && index === activeStepIndex
+                    }"
+                >
+                    <v-icon size="large">
+                        {{ getStepIcon(index, step.icon) }}
+                    </v-icon>
+                </div>
+                <div
+                    class="step-label mt-3"
+                    :class="{ 'font-weight-bold text-primary': !isFailureState && index === activeStepIndex }"
+                >
+                    {{ step.name }}
+                </div>
+            </div>
+        </div>
+      </div>
+      <!-- ✨ STATUS TRACKER END ✨ -->
 
       <v-row>
         <!-- Left Column: Transaction Details -->
@@ -188,6 +226,8 @@ import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 import Swal from 'sweetalert2';
 
+// NOTE: This STATUS_CONFIG is already correctly defined and used for the chip and list-item.
+// The tracker steps will use their own icons, primarily derived from here.
 const STATUS_CONFIG = {
   Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
   Processing: { color: 'blue', icon: 'mdi-cogs' },
@@ -243,6 +283,60 @@ function openGallery(id) {
   }
 }
 
+// --- STATUS TRACKER CONFIGURATION (UPDATED) ---
+// Define tracker steps directly using your backend status names for the main progression
+const trackerSteps = ref([
+    { name: 'Pending', icon: STATUS_CONFIG.Pending.icon },
+    { name: 'Processing', icon: STATUS_CONFIG.Processing.icon },
+    { name: 'Approved', icon: STATUS_CONFIG.Approved.icon },
+    { name: 'Returned', icon: STATUS_CONFIG.Returned.icon },
+    { name: 'Resolved', icon: STATUS_CONFIG.Resolved.icon }
+]);
+
+// Computed properties for tracker failure states
+const isRejected = computed(() => transactionData.value?.status === 'Rejected');
+const isLostOrDamaged = computed(() => transactionData.value?.status === 'Lost' || transactionData.value?.status === 'Damaged');
+const isFailureState = computed(() => isRejected.value || isLostOrDamaged.value);
+
+const activeStepIndex = computed(() => {
+  if (!transactionData.value) return -1;
+
+  const currentStatus = transactionData.value.status;
+  const stepNames = trackerSteps.value.map(step => step.name);
+
+  // Handle failure states first
+  if (isRejected.value) {
+    // Rejected typically happens during or after 'Processing'.
+    // We set 'Processing' as the failure point (index 1 in trackerSteps).
+    return stepNames.indexOf('Processing');
+  }
+  if (isLostOrDamaged.value) {
+    // Lost/Damaged happens after 'Approved' (item has been released).
+    // We set 'Approved' as the failure point (index 2 in trackerSteps).
+    return stepNames.indexOf('Approved');
+  }
+
+  // Handle normal progression statuses and 'Overdue'
+  let index = stepNames.indexOf(currentStatus);
+  
+  // 'Overdue' is a state that occurs when the item is 'Approved' but not returned on time.
+  // From the tracker's progression, it's still at the 'Approved' stage awaiting return/resolution.
+  if (currentStatus === 'Overdue') {
+      index = stepNames.indexOf('Approved');
+  }
+
+  return index;
+});
+
+const progressWidth = computed(() => {
+  if (activeStepIndex.value < 0) return '0%';
+  // Ensure we don't divide by zero if there's only one step
+  const totalStepsForProgressBar = trackerSteps.value.length > 1 ? (trackerSteps.value.length - 1) : 1;
+  const percentage = (activeStepIndex.value / totalStepsForProgressBar) * 100;
+  return `${percentage}%`;
+});
+
+
 // --- LIFECYCLE & DATA FETCHING ---
 onMounted(async () => {
     await fetchTransaction();
@@ -256,6 +350,7 @@ async function fetchTransaction() {
     
     let currentTransaction = data.value.transaction;
 
+    // Auto-update 'Pending' to 'Processing'
     if (currentTransaction.status === 'Pending') {
       const { data: updateData, error: updateError } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
         method: 'PATCH', body: { status: 'Processing' }
@@ -406,6 +501,21 @@ async function deleteTransaction() {
 }
 
 // --- HELPER FUNCTIONS ---
+function getStepIcon(index, defaultIcon) {
+    if (isFailureState.value) {
+        // For failure states, steps *before* the activeStepIndex are marked as 'completed'
+        // The activeStepIndex itself is the 'failure-point'
+        if (index < activeStepIndex.value) return 'mdi-check';
+        if (index === activeStepIndex.value) return 'mdi-close';
+        return defaultIcon;
+    }
+    // Normal successful flow
+    if (index < activeStepIndex.value) {
+        return 'mdi-check';
+    }
+    return defaultIcon;
+}
+
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -436,5 +546,100 @@ const formatDateTime = (dateString) => {
 .ga-2 { gap: 8px; }
 .cursor-pointer {
     cursor: pointer;
+}
+
+/* Status Tracker Styles (Copied from document requests [id].vue) */
+.status-tracker-container {
+  position: relative;
+  width: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+.steps-container {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+}
+.progress-bar-container {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  padding: 0 40px;
+  box-sizing: border-box;
+  z-index: 1;
+}
+.progress-bar-bg, .progress-bar-fg {
+  height: 4px;
+  border-radius: 2px;
+  position: absolute;
+  top: 50%;
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  transform: translateY(-50%);
+}
+.progress-bar-bg {
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  background-color: #e0e0e0;
+}
+.progress-bar-fg {
+  background-color: rgb(var(--v-theme-primary));
+  transition: width 0.4s ease-in-out;
+}
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100px; /* Adjust width as needed for spacing */
+}
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: white;
+  border: 3px solid #e0e0e0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background-color 0.4s, border-color 0.4s;
+}
+.step-circle .v-icon {
+  color: #9e9e9e;
+  transition: color 0.4s;
+}
+.step-circle.current {
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.current .v-icon {
+  color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed {
+  background-color: rgb(var(--v-theme-primary));
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed .v-icon {
+  color: white;
+}
+.step-circle.declined { /* Used for steps before a failure point */
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+}
+.step-circle.declined .v-icon {
+  color: white;
+}
+.step-circle.failure-point {
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+  box-shadow: 0 0 10px 2px rgba(var(--v-theme-error-rgb), 0.5);
+}
+.step-circle.failure-point .v-icon {
+  color: white;
+}
+.step-label {
+  font-size: 0.875rem;
+  color: #757575;
+  transition: color 0.4s, font-weight 0.4s;
 }
 </style>
