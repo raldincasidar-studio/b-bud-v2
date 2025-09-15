@@ -9,9 +9,6 @@
           <v-btn to="/budget-management/new" color="primary" size="large" prepend-icon="mdi-plus" class="mr-2">
             Add Budget
           </v-btn>
-          <v-btn color="info" size="large" prepend-icon="mdi-printer" @click="printBudgetReport" :loading="loading">
-            Print Report
-          </v-btn>
         </v-col>
       </v-row>
 
@@ -32,70 +29,122 @@
         </v-card-title>
         <v-divider></v-divider>
         
+        <!-- REVISED: Date Range Selection & Actions for Budgets -->
         <v-card-text>
-          <v-row>
-            <v-col cols="12" md="4">
-              <v-select
-                v-model="filterBy"
-                :items="filterOptions"
-                label="Filter by"
-                variant="outlined"
-                hide-details
-                @update:model-value="applyFilter"
-              ></v-select>
-            </v-col>
-            <v-col v-if="filterBy === 'day'" cols="12" md="4">
+          <v-card-title class="font-size-15 text-left pb-0 pl-0 mr-0">Date Range Selection & Actions</v-card-title>
+            
+          <!-- First row for Start Date, End Date, Presets, and Print Button -->
+          <v-row align="center" justify="center" >
+            <v-col cols="12" sm="6" md="3">
               <v-menu
-                v-model="showDayPicker"
+                v-model="startDateMenu"
                 :close-on-content-click="false"
-                :nudge-right="40"
                 transition="scale-transition"
                 offset-y
                 min-width="auto"
               >
                 <template v-slot:activator="{ props }">
                   <v-text-field
-                    v-model="formattedSelectedDay"
-                    label="Select Day"
-                    prepend-icon="mdi-calendar"
+                    v-model="formattedStartDate"
+                    label="Start Date"
+                    prepend-inner-icon="mdi-calendar"
                     readonly
-                    v-bind="props"
                     variant="outlined"
-                    hide-details
+                    density="compact"
+                    v-bind="props"
+                    clearable
+                    @click:clear="clearDateRange(); loadBudgets()"
+                    class="mt-5 pb-0 mb-0 pr-2"
                   ></v-text-field>
                 </template>
                 <v-date-picker
-                  v-model="selectedDay"
-                  @update:model-value="applyFilter"
-                  no-title
-                  scrollable
+                  v-model="startDate"
+                  @update:model-value="startDateMenu = false; applyDateFilters()"
+                  show-adjacent-months
+                  :max="endDate ? endDate.toISOString().split('T')[0] : undefined"
                 ></v-date-picker>
               </v-menu>
             </v-col>
-            <v-col v-if="filterBy === 'month'" cols="12" md="4">
-              <v-select
-                v-model="selectedMonth"
-                :items="months"
-                item-title="name"
-                item-value="value"
-                label="Select Month"
-                variant="outlined"
-                hide-details
-                @update:model-value="applyFilter"
-              ></v-select>
+
+            <v-col cols="12" sm="6" md="3">
+              <v-menu
+                v-model="endDateMenu"
+                :close-on-content-click="false"
+                transition="scale-transition"
+                offset-y
+                min-width="auto"
+              >
+                <template v-slot:activator="{ props }">
+                  <v-text-field
+                    v-model="formattedEndDate"
+                    label="End Date"
+                    prepend-inner-icon="mdi-calendar"
+                    readonly
+                    variant="outlined"
+                    density="compact"
+                    v-bind="props"
+                    clearable
+                    @click:clear="clearDateRange(); loadBudgets()"
+                    class="mt-5 pb-0 mb-0 pr-2"
+                  ></v-text-field>
+                </template>
+                <v-date-picker
+                  v-model="endDate"
+                  @update:model-value="endDateMenu = false; applyDateFilters()"
+                  :min="startDate ? startDate.toISOString().split('T')[0] : undefined"
+                  show-adjacent-months
+                ></v-date-picker>
+              </v-menu>
             </v-col>
-            <v-col v-if="filterBy === 'year'" cols="12" md="4">
+
+            <v-col cols="12" md="6" class="d-flex align-center justify-end flex-wrap">
+              <v-btn-toggle
+                v-model="selectedDateFilterPreset"
+                color="primary"
+                variant="outlined"
+                density="compact"
+                group
+                class="mr-4 flex-wrap mb-2 mb-md-0"
+              >
+                <v-btn value="day" @click="setDateRangePreset('day')">Day</v-btn>
+                <v-btn value="week" @click="setDateRangePreset('week')">Week</v-btn>
+                <v-btn value="month" @click="setDateRangePreset('month')">Month</v-btn>
+                <v-btn value="year" @click="setDateRangePreset('year')">Year</v-btn>
+              </v-btn-toggle>
+              
+              <!-- Print Data Button, now opens the dialog -->
+              <v-btn
+                color="info"
+                prepend-icon="mdi-printer"
+                @click="openPrintDialog"
+                :disabled="budgets.length === 0 && !loading"
+                class="mb-2 mb-md-0"
+              >
+                Print Data
+              </v-btn>
+            </v-col>
+          </v-row>
+
+          <!-- New row for Filter by Year dropdown, aligned below Start/End Date -->
+          <v-row>
+            <v-col cols="12" md="3">
               <v-select
                 v-model="selectedYear"
                 :items="years"
-                label="Select Year"
+                label="Quick Filter by Year"
                 variant="outlined"
+                density="compact"
                 hide-details
-                @update:model-value="applyFilter"
+                clearable
+                @click:clear="clearSelectedYear(); loadBudgets()"
+                @update:model-value="loadBudgets()"
+                class="mt-0 pt-0 pr-2"
               ></v-select>
             </v-col>
           </v-row>
         </v-card-text>
+        <v-divider></v-divider>
+        <!-- End Date Range Selection & Actions -->
 
         <v-data-table-server
           v-model:items-per-page="itemsPerPage"
@@ -103,8 +152,7 @@
           :items-length="totalBudgets"
           :items="budgets"
           :loading="loading"
-          :search="searchKey"
-          @update:options="updateTable"
+          @update:options="loadBudgets"
           class="elevation-0"
           item-value="_id"
         >
@@ -118,102 +166,215 @@
             </v-btn>
           </template>
 
-          <template v-slot:loading>
-            <v-skeleton-loader type="table-row@5"></v-skeleton-loader>
+          <template v-slot:no-data>
+            <v-alert type="info" class="ma-3">No budget entries found matching your criteria.</v-alert>
           </template>
 
         </v-data-table-server>
       </v-card>
+
+    <!-- Print Dialog (similar to inventory) -->
+    <v-dialog v-model="printDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dense color="primary">
+          <v-toolbar-title>Printable Budget Report</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="printDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+          <v-btn icon dark @click="printContent">
+            <v-icon>mdi-printer</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="pa-8">
+          <div id="print-area">
+            <h3 class="text-h5 text-center mb-6">Budget Management Report</h3>
+            <p class="text-center text-grey-darken-1 mb-4">
+                Report Date: {{ new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }}
+                <span v-if="startDate && endDate">
+                    (Filtered from {{ formattedStartDate }} to {{ formattedEndDate }})
+                </span>
+                <span v-else-if="startDate">
+                    (Filtered from {{ formattedStartDate }} onwards)
+                </span>
+                <span v-else-if="endDate">
+                    (Filtered up to {{ formattedEndDate }})
+                </span>
+                <span v-else-if="selectedYear">
+                    (Filtered for Year: {{ selectedYear }})
+                </span>
+                <span v-else>
+                    (No specific date filter applied)
+                </span>
+            </p>
+            <table class="print-table">
+              <thead>
+                <tr>
+                  <th v-for="header in printableHeaders" :key="header.key">{{ header.title }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in budgetsForPrint" :key="item._id">
+                  <td>{{ item.budgetName }}</td>
+                  <td>{{ item.category }}</td>
+                  <td class="text-right">{{ formatCurrency(item.amount) }}</td>
+                  <td>{{ formatDate(item.date) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="text-caption text-center mt-6">Generated by B-bud System.</p>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
 
 <script setup>
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onMounted } from 'vue';
 import { useMyFetch } from '@/composables/useMyFetch';
+import { useNuxtApp } from '#app'; 
+
+const { $toast } = useNuxtApp();
 
 const headers = [
   { title: 'Budget Name', align: 'start', key: 'budgetName', sortable: true },
   { title: 'Category', align: 'start', key: 'category', sortable: true },
-  { title: 'Amount', align: 'start', key: 'amount', sortable: false },
+  { title: 'Amount', align: 'end', key: 'amount', sortable: false }, // Align to end for currency
   { title: 'Date', align: 'start', key: 'date', sortable: true },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ];
+
+// Headers to be displayed in the print view (excluding 'Actions')
+const printableHeaders = computed(() => {
+  return headers.filter(header => header.key !== 'action');
+});
+
 
 const searchKey = ref('');
 const totalBudgets = ref(0);
 const budgets = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
+const currentTableOptions = ref({}); // To store current table options for reloading
 
-const filterBy = ref('');
-const filterOptions = [
-  { title: 'No Filter', value: '' },
-  { title: 'Filter by Day', value: 'day' },
-  { title: 'Filter by Month', value: 'month' },
-  { title: 'Filter by Year', value: 'year' },
-];
 
-const showDayPicker = ref(false);
-const selectedDay = ref(null);
-const selectedMonth = ref(null);
-const selectedYear = ref(new Date().getFullYear()); // Default to current year
+// --- NEW Date Range Selection ---
+const startDate = ref(null); // Will store Date objects
+const endDate = ref(null);   // Will store Date objects
+const startDateMenu = ref(false);
+const endDateMenu = ref(false);
+const selectedDateFilterPreset = ref(null); // 'day', 'week', 'month', 'year'
 
-const months = Array.from({ length: 12 }, (_, i) => {
-  const date = new Date(null, i + 1, null);
-  return { name: date.toLocaleString('en-US', { month: 'long' }), value: i + 1 };
+const formattedStartDate = computed(() => startDate.value ? new Date(startDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+const formattedEndDate = computed(() => endDate.value ? new Date(endDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+
+
+// --- Existing Year Dropdown Logic (Adapted) ---
+const distinctBudgetYears = ref([]); 
+const selectedYear = ref(null); 
+
+// --- Print functionality refs and methods ---
+const printDialog = ref(false);
+const budgetsForPrint = ref([]); // Holds all data for printing
+
+
+async function fetchDistinctBudgetYears() {
+  try {
+    const { data, error } = await useMyFetch('/api/budgets/years');
+    if (error.value) {
+      console.error("Failed to fetch distinct budget years:", error.value);
+      distinctBudgetYears.value = [];
+    } else {
+      distinctBudgetYears.value = data.value?.years || [];
+      distinctBudgetYears.value.sort((a, b) => a - b);
+    }
+  } catch (err) {
+    console.error("An exception occurred while fetching distinct budget years:", err);
+    distinctBudgetYears.value = [];
+  }
+}
+
+// Years for the dropdown
+const years = computed(() => {
+  if (distinctBudgetYears.value.length > 0) {
+    return distinctBudgetYears.value;
+  }
+  const currentYear = new Date().getFullYear();
+  // Provide a default range if no years are in DB
+  return [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2].sort((a, b) => a - b);
 });
-const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i);
 
-const formattedSelectedDay = computed(() => {
-  return selectedDay.value ? new Date(selectedDay.value).toLocaleDateString('en-GB') : '';
-});
-
-watch(filterBy, (newVal) => {
-  if (newVal === 'day') {
-    selectedMonth.value = null;
-    selectedYear.value = null; 
-  } else if (newVal === 'month') {
-    selectedDay.value = null;
-    if (!selectedYear.value) selectedYear.value = new Date().getFullYear(); 
-  } else if (newVal === 'year') {
-    selectedDay.value = null;
-    selectedMonth.value = null;
+// Set initial selectedYear based on fetched years or current year
+watch(distinctBudgetYears, (newYears) => {
+  if (newYears.length > 0) {
+    const currentYear = new Date().getFullYear();
+    if (newYears.includes(currentYear)) {
+      selectedYear.value = currentYear;
+    } else {
+      selectedYear.value = newYears[newYears.length - 1]; 
+    }
   } else {
-    selectedDay.value = null;
-    selectedMonth.value = null;
     selectedYear.value = new Date().getFullYear(); 
   }
-  applyFilter();
+}, { immediate: true }); 
+
+
+// --- WATCHERS for Search and Filters ---
+let searchDebounceTimer = null;
+watch(searchKey, () => {
+  clearTimeout(searchDebounceTimer);
+  searchDebounceTimer = setTimeout(() => {
+    loadBudgets({ ...currentTableOptions.value, page: 1 });
+  }, 500);
 });
 
-async function updateTable(options) {
+// Watch for changes in selectedYear (always triggers loadBudgets if changed)
+watch(selectedYear, (newVal, oldVal) => {
+  if (newVal !== oldVal) {
+    loadBudgets({ ...currentTableOptions.value, page: 1 });
+  }
+});
+
+
+// --- DATA LOADING (REVISED) ---
+async function loadBudgets(options) {
   loading.value = true;
-  
-  const { page, itemsPerPage: newItemsPerPage, sortBy } = options;
+  if (options) { 
+    currentTableOptions.value = options; 
+  } else { 
+    options = currentTableOptions.value;
+  }
+
+  const { page, itemsPerPage: rpp, sortBy } = options; 
   
   try {
-    const sortByKey = sortBy.length ? sortBy[0].key : 'date'; 
-    const sortOrder = sortBy.length ? sortBy[0].order : 'desc';   
+    const sortByKey = sortBy && sortBy.length ? sortBy[0].key : 'date'; 
+    const sortOrder = sortBy && sortBy.length ? sortBy[0].order : 'desc';   
 
     const queryParams = {
       search: searchKey.value, 
       page: page,
-      itemsPerPage: newItemsPerPage,
+      itemsPerPage: rpp,
       sortBy: sortByKey,
       sortOrder: sortOrder,
     };
 
-    if (filterBy.value === 'day' && selectedDay.value) {
-      const date = new Date(selectedDay.value);
-      if (!isNaN(date)) {
-        queryParams.filterDay = date.toISOString().split('T')[0];
-      }
-    } else if (filterBy.value === 'month' && selectedMonth.value) {
-      queryParams.filterMonth = selectedMonth.value;
-      queryParams.filterYear = selectedYear.value || new Date().getFullYear(); 
-    } else if (filterBy.value === 'year' && selectedYear.value) {
+    // Apply date range filter if available
+    if (startDate.value) {
+      queryParams.start_date = new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString();
+    }
+    if (endDate.value) {
+      queryParams.end_date = new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString();
+    }
+
+    // Only apply selected year filter if NO specific date range is set
+    if (!startDate.value && !endDate.value && selectedYear.value) {
       queryParams.filterYear = selectedYear.value;
     }
+
+    // Clean up undefined/null/empty string query params
+    Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
     const { data, error } = await useMyFetch('/api/budgets', {
       query: queryParams
@@ -230,15 +391,67 @@ async function updateTable(options) {
 
   } catch (err) {
       console.error("An exception occurred while fetching budgets:", err);
+      $toast.fire({ title: 'An unexpected error occurred while loading budgets.', icon: 'error' });
   } finally {
       loading.value = false;
   }
 }
 
-const applyFilter = () => {
-  updateTable({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
-  showDayPicker.value = false;
+// --- Date Filter Functions (from Inventory code) ---
+const clearDateRange = () => {
+  startDate.value = null;
+  endDate.value = null;
+  selectedDateFilterPreset.value = null; 
 };
+
+const clearSelectedYear = () => {
+  selectedYear.value = null;
+};
+
+const applyDateFilters = () => {
+  // If manual dates are set or cleared, clear any active preset selection
+  if ((startDate.value !== null || endDate.value !== null) && selectedDateFilterPreset.value !== null) {
+      selectedDateFilterPreset.value = null;
+  } else if (startDate.value === null && endDate.value === null) {
+      selectedDateFilterPreset.value = null; 
+  }
+  loadBudgets({ ...currentTableOptions.value, page: 1 });
+};
+
+const setDateRangePreset = (preset) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); 
+
+  let newStartDate = null;
+  let newEndDate = null;
+
+  switch (preset) {
+    case 'day':
+      newStartDate = new Date(today);
+      newEndDate = new Date(today); 
+      break;
+    case 'week':
+      newStartDate = new Date(today);
+      newStartDate.setDate(today.getDate() - today.getDay());
+      newEndDate = new Date(newStartDate);
+      newEndDate.setDate(newStartDate.getDate() + 6);
+      break;
+    case 'month':
+      newStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
+      break;
+    case 'year':
+      const targetYear = selectedYear.value || today.getFullYear(); 
+      newStartDate = new Date(targetYear, 0, 1); 
+      newEndDate = new Date(targetYear, 11, 31); 
+      break;
+  }
+  startDate.value = newStartDate;
+  endDate.value = newEndDate;
+  selectedDateFilterPreset.value = preset; 
+  loadBudgets({ ...currentTableOptions.value, page: 1 });
+};
+
 
 const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -249,291 +462,168 @@ const formatCurrency = (amount) => {
   return new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(amount);
 };
 
-// --- Print Functionality ---
-async function printBudgetReport() {
-    loading.value = true;
+
+// --- REVISED Print Functionality ---
+
+// Function to fetch all assets matching current filters for printing
+async function fetchAllBudgetsForPrint() {
     try {
-        const reportYear = selectedYear.value || new Date().getFullYear();
-
         const queryParams = {
-            itemsPerPage: -1, // Request all items for the report
-            sortBy: 'date',
-            sortOrder: 'asc',
+            search: searchKey.value,
+            start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
+            end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
+            filterYear: (!startDate.value && !endDate.value && selectedYear.value) ? selectedYear.value : undefined,
+            itemsPerPage: 999999 // Request a very high number of items to get all data
         };
-
-        if (filterBy.value === 'day' && selectedDay.value) {
-            const date = new Date(selectedDay.value);
-            if (!isNaN(date)) {
-                queryParams.filterDay = date.toISOString().split('T')[0];
-            }
-        } else if (filterBy.value === 'month' && selectedMonth.value) {
-            queryParams.filterMonth = selectedMonth.value;
-            queryParams.filterYear = reportYear; 
-        } else if (filterBy.value === 'year') {
-            queryParams.filterYear = selectedYear.value; 
-        } else { 
-            queryParams.filterYear = reportYear;
+        // If no date filters are set, default to current year for report (consistent with old logic)
+        if (!queryParams.start_date && !queryParams.end_date && !queryParams.filterYear) {
+            queryParams.filterYear = new Date().getFullYear();
         }
 
-        const { data: allBudgetsData, error: allBudgetsError } = await useMyFetch('/api/budgets', {
-            query: queryParams
-        });
+        Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
-        if (allBudgetsError.value) { 
-            console.error("Failed to fetch all budgets for report:", allBudgetsError.value);
-            alert("Could not generate report: Failed to fetch budget data.");
-            return;
-        }
+        const { data, error } = await useMyFetch('/api/budgets', { query: queryParams });
 
-        // --- Fetch logos from backend endpoint ---
-        const { data: logoData, error: logoError } = await useMyFetch('/api/logos');
-        if (logoError.value) {
-            console.error("Failed to fetch logos:", logoError.value);
-            alert("Could not generate report: Failed to fetch logo data.");
-            return;
-        }
-        // Destructure all three specific logo Base64 strings
-        const { manilaLogo, bagongPilipinasLogo, cityBudgetLogo } = logoData.value;
-        // --- END Fetch logos ---
-
-        const allBudgets = allBudgetsData.value?.budgets || [];
+        if (error.value) throw new Error('Failed to load all budgets for printing.');
         
-        // Pass all three fetched Base64 logo strings to the generatePrintContent function
-        const printContent = generatePrintContent(
-            allBudgets, 
-            reportYear, 
-            manilaLogo, 
-            bagongPilipinasLogo, 
-            cityBudgetLogo // This is the logo for the City Budget Office
-        );
-        
-        const printWindow = window.open('', '_blank', 'height=800,width=1200');
-        if (printWindow) {
-            printWindow.document.write(printContent);
-            printWindow.document.close();
-            printWindow.focus();
-            printWindow.print();
-            // printWindow.onafterprint = () => printWindow.close(); 
-        } else {
-            alert('Please allow pop-ups for printing.');
-        }
-
-    } catch (err) {
-        console.error("Error generating print report:", err);
-        alert("An error occurred while preparing the print report.");
-    } finally {
-        loading.value = false;
+        return data.value?.budgets || [];
+    } catch (e) {
+        $toast.fire({ title: e.message, icon: 'error' });
+        return [];
     }
 }
 
-// Updated generatePrintContent to accept three distinct Base64 logo parameters
-function generatePrintContent(budgetsForReport, reportYear, manilaLogoBase64, bagongPilipinasLogoBase64, cityBudgetLogoBase64) {
-    // Helper function for currency formatting in the print content
-    const formatPrintCurrency = (amount) => {
-        return amount.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    };
 
-    // --- DEBUGGING: Log the received data for the report ---
-    console.log("Budgets received for print report (budgetsForReport):", budgetsForReport);
-    console.log("Manila Logo Base64:", manilaLogoBase64 ? manilaLogoBase64.substring(0, 50) + "..." : "Not provided");
-    console.log("Bagong Pilipinas Logo Base64:", bagongPilipinasLogoBase64 ? bagongPilipinasLogoBase64.substring(0, 50) + "..." : "Not provided");
-    console.log("City Budget Logo Base64:", cityBudgetLogoBase64 ? cityBudgetLogoBase64.substring(0, 50) + "..." : "Not provided");
-    // --- END DEBUGGING ---
+const openPrintDialog = async () => {
+  loading.value = true; // Show loading while fetching all data
+  budgetsForPrint.value = await fetchAllBudgetsForPrint();
+  loading.value = false;
 
-    // Group budgets by category
-    const groupedBudgets = budgetsForReport.reduce((acc, item) => {
-        const category = item.category || 'Uncategorized';
-        if (!acc[category]) {
-            acc[category] = { items: [], total: 0 };
-        }
-        const amount = parseFloat(item.amount) || 0;
-        acc[category].items.push({ budgetName: item.budgetName, amount: amount });
-        acc[category].total += amount;
-        return acc;
-    }, {});
+  if (budgetsForPrint.value.length > 0) {
+      printDialog.value = true;
+  } else {
+      $toast.fire({ title: 'No data to print for the selected filters.', icon: 'info' });
+  }
+};
 
-    let totalExpenditures = 0;
-    let expenditureHtml = '';
-
-    // Generate HTML for each category
-    for (const categoryName in groupedBudgets) {
-        const categoryData = groupedBudgets[categoryName];
-        totalExpenditures += categoryData.total;
-
-        expenditureHtml += `
-            <tr>
-                <td class="no-indent"><b>${categoryName}</b></td>
-                <td class="amount-col-sub nowrap">P</td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(categoryData.total)}</td>
-            </tr>
-        `;
-        categoryData.items.forEach((item, index) => {
-            expenditureHtml += `
-                <tr>
-                    <td class="indent-1">${String.fromCharCode(97 + index)}. ${item.budgetName}</td>
-                    <td class="amount-col-sub nowrap">P</td>
-                    <td class="amount-col-total nowrap">${formatPrintCurrency(item.amount)}</td>
-                </tr>
-            `;
-        });
-    }
-
-    // Hardcoded Income Values from the provided image
-    const beginningBalance = 0;
-    const rptShareCY2022 = 0;
-    const ntaShare = 0;
-    const rptShareOther = 0; 
-    const otherIncome = 0;
-
-    const totalAvailableResources = beginningBalance + rptShareCY2022 + ntaShare + rptShareOther + otherIncome;
-    
-    // Placeholder for Barangay Name - replace with dynamic value if available
-    const barangayInfo = "436, Zone 44, District 4"; // Specific from the image
-
-    const totalAppropriationAmountFormatted = formatPrintCurrency(totalAvailableResources);
-
-    return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Barangay Budget Report - CY ${reportYear}</title>
-        <style>
-            body { font-family: 'Times New Roman', serif; margin: 20mm; font-size: 11pt; }
-            .header { text-align: center; margin-bottom: 20px; }
-            .header-top-row {
-                display: flex;
-                justify-content: space-between; /* Pushes items to the ends */
-                align-items: flex-start; /* Aligns items to the top */
-                margin-bottom: 5px;
-                width: 100%;
-                box-sizing: border-box; /* Include padding in width calculation */
+const printContent = () => {
+  const printContentDiv = document.getElementById('print-area');
+  if (printContentDiv) {
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Budget Management Report</title>
+          <style>
+            /* Basic print styles */
+            body { font-family: sans-serif; margin: 20px; color: #333; }
+            h3 { text-align: center; margin-bottom: 20px; color: #333; }
+            p { text-align: center; margin-bottom: 15px; color: #555; }
+            .print-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+              page-break-inside: auto; /* Allow table to break across pages */
             }
-            .header-text-block {
-                flex-grow: 1; /* Allows text to take available space */
-                text-align: center;
-                line-height: 1.2;
-                padding: 0 10px; /* Small padding to prevent text/logos from touching */
+            .print-table tr { page-break-inside: avoid; page-break-after: auto; }
+            .print-table th, .print-table td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              text-align: left;
+              font-size: 0.9em;
             }
-            .header-text-block p { margin: 2px 0; }
-            .title { font-weight: bold; font-size: 13pt; margin-bottom: 15px; }
-            .section-title { font-weight: bold; margin-top: 15px; margin-bottom: 5px; }
-            table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-            th, td { border: none; padding: 2px 5px; text-align: left; vertical-align: top;}
-            .amount-col { text-align: right; width: 100px; }
-            .amount-col-sub { text-align: right; width: 80px; }
-            .amount-col-total { text-align: right; width: 120px; }
-            .total-row { font-weight: bold; border-top: 1px solid black; }
-            .grand-total-row { font-weight: bold; border-top: 2px double black; }
-            .no-indent { padding-left: 0; }
-            .indent-1 { padding-left: 20px; }
-            .indent-2 { padding-left: 40px; }
-
-            /* Styles for logos */
-            .logo {
-                height: 100px; /* Increased height */
-                width: auto;
-                object-fit: contain;
+            .print-table th {
+              background-color: #f2f2f2;
+              font-weight: bold;
             }
-            .city-budget-logo-top-center {
-                height: 100px; /* Increased height */
-                width: auto;
-                object-fit: contain;
-                display: block; /* Important for centering with margin auto */
-                margin: 0 auto 5px auto; /* Center it above the text and add space */
+            .text-right {
+                text-align: right;
             }
-            
-            /* Specific style to prevent line breaks in specific cells if possible */
-            .nowrap { white-space: nowrap; }
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <div class="header-top-row">
-                <!-- Left Logo: Manila Logo -->
-                <div style="flex-shrink: 0;">
-                    ${manilaLogoBase64 ? `<img src="${manilaLogoBase64}" alt="Manila Logo" class="logo" />` : ''}
-                </div>
-                
-                <div class="header-text-block">
-                    <!-- Center Top Logo: City Budget Logo -->
-                    ${cityBudgetLogoBase64 ? `<img src="${cityBudgetLogoBase64}" alt="City Budget Logo" class="city-budget-logo-top-center" />` : ''}
-                    <p>Republic of the Philippines</p>
-                    <p>City of Manila</p>
-                    <p>CITY BUDGET OFFICE</p>
-                </div>
-                
-                <!-- Right Logo: Bagong Pilipinas Logo -->
-                <div style="flex-shrink: 0;">
-                    ${bagongPilipinasLogoBase64 ? `<img src="${bagongPilipinasLogoBase64}" alt="Bagong Pilipinas Logo" class="logo" />` : ''}
-                </div>
-            </div>
-            
-            <br>
-            <p style="font-size: 10pt; text-align: left;">
-                The Honorable Vice Mayor and Presiding Officer<br>
-                and Members of the Sangguniang Panlungsod<br>
-                Manila
-            </p>
-            <p style="font-size: 10pt; text-align: left;">
-                Ladies and Gentlemen:
-            </p>
-            <p style="font-size: 10pt; text-align: justify; text-indent: 20px;">
-                Forwarded pursuant to Section 333 of RA 7160 is the Annual Budget for CY ${reportYear} of Barangay ${barangayInfo} with a total appropriation amounting to ${totalAppropriationAmountFormatted} only. 
-                it was approved under Barangay Appropriation Ordinance No. 01 series of ${reportYear} on February 01, ${reportYear} and received by this office on June 03, ${reportYear}. The budget was prepared pursuant to LBM No. 87 – A dated December 28,2023.
-            </p>
-            <p style="font-size: 10pt; text-align: justify; text-indent: 20px;">
-                The estimated income, certified as available for appropriation by the Barangay Chairman and Barangay Treasurer and Officer-in-Charge, City Accountant and the proposed expenditures as shown below are in consonance with the New Government Accounting System (No As).
-            </p>
-        </div>
+            .text-caption {
+              font-size: 0.75em;
+              color: #777;
+              margin-top: 20px;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentDiv.innerHTML}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  } else {
+    $toast.fire({ title: 'Print area not found.', icon: 'error' });
+  }
+};
 
-        <p class="section-title">Estimated Income for Budget</p>
-        <table>
-            <tr>
-                <td class="no-indent">Beginning Balance</td>
-                <td class="amount-col-sub nowrap">P</td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(beginningBalance)}</td>
-            </tr>
-            <tr>
-                <td class="no-indent">Share on Real Property Tax CY 2022</td>
-                <td class="amount-col-sub nowrap">P</td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(rptShareCY2022)}</td>
-            </tr>
-            <tr>
-                <td class="no-indent">Share from National Tax Allotment</td>
-                <td class="amount-col-sub"></td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(ntaShare)}</td>
-            </tr>
-            <tr>
-                <td class="no-indent">Share on Real Property Tax</td>
-                <td class="amount-col-sub"></td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(rptShareOther)}</td>
-            </tr>
-            <tr>
-                <td class="no-indent">Other income</td>
-                <td class="amount-col-sub"></td>
-                <td class="amount-col-total nowrap">${formatPrintCurrency(otherIncome)}</td>
-            </tr>
-            <tr class="total-row">
-                <td class="no-indent"><b>Total Available Resources</b></td>
-                <td class="amount-col-sub nowrap"><b>P</b></td>
-                <td class="amount-col-total nowrap"><b>${formatPrintCurrency(totalAvailableResources)}</b></td>
-            </tr>
-        </table>
 
-        <p class="section-title">Expenditures:</p>
-        <table>
-            ${expenditureHtml}
-            <tr class="grand-total-row">
-                <td class="no-indent"><b>Total Expenditures</b></td>
-                <td class="amount-col-sub nowrap"><b>P</b></td>
-                <td class="amount-col-total nowrap"><b>${formatPrintCurrency(totalExpenditures)}</b></td>
-            </tr>
-        </table>
-    </body>
-    </html>
-    `;
-}
-
-// Initial load of the table data
-updateTable({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+// Initial load of the table data and distinct years
+onMounted(async () => {
+    await fetchDistinctBudgetYears();
+    loadBudgets({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
+});
 </script>
+
+<style scoped>
+.v-data-table-server {
+  font-size: 0.9rem;
+}
+.text-capitalize {
+  text-transform: capitalize;
+}
+
+/* Styles specific for printing the dialog content (from inventory) */
+@media print {
+  /* Hide all elements on the page except the active print dialog */
+  body > *:not(.v-overlay-container) {
+    display: none !important;
+  }
+  .v-overlay-container {
+    display: block !important;
+    position: static; /* Important for print to not be fixed */
+    top: auto !important;
+    left: auto !important;
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
+    overflow: visible !important;
+  }
+
+  /* Target the specific dialog for printing */
+  .v-dialog--fullscreen.v-overlay__content {
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: none !important;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .v-card {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    height: auto !important;
+    width: auto !important;
+  }
+  
+  .v-toolbar {
+    display: none !important; /* Hide toolbar in print */
+  }
+  .v-card-text {
+    padding: 0 !important;
+  }
+  #print-area {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+}
+</style>

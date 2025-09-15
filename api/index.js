@@ -6930,13 +6930,12 @@ app.get('/api/budgets/categories', async (req, res) => {
 
 app.get('/api/budgets', async (req, res) => {
     try {
-        const dab = await db();
+        const dab = await db(); // Get database connection
         const collection = dab.collection('budgets');
 
-        const { search, sortBy, sortOrder, filterDay, filterMonth, filterYear } = req.query; // Destructure new filter parameters
-        const page = parseInt(req.query.page) || 1;
-        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10; // Use 'let' to allow modification
-        // Ensure itemsPerPage is at least 1 if not -1
+        const { search, sortBy, sortOrder, start_date, end_date, filterYear } = req.query;
+        let page = parseInt(req.query.page) || 1;
+        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
         if (itemsPerPage !== -1 && itemsPerPage < 1) itemsPerPage = 10; 
 
         console.log("Backend received /api/budgets query params:", req.query);
@@ -6954,36 +6953,31 @@ app.get('/api/budgets', async (req, res) => {
             };
         }
 
-        // Date filters
-        if (filterDay) {
-            // filterDay comes as 'YYYY-MM-DD'
-            const startOfDay = new Date(filterDay);
-            startOfDay.setUTCHours(0, 0, 0, 0); // Start of the selected day in UTC
-            const endOfDay = new Date(filterDay);
-            endOfDay.setUTCHours(23, 59, 59, 999); // End of the selected day in UTC
-
-            query.date = {
-                $gte: startOfDay,
-                $lte: endOfDay,
-            };
-        } else if (filterMonth && filterYear) {
-            // filterMonth is 1-12, filterYear is YYYY
-            const startOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth) - 1, 1)); // Month is 0-indexed in JS Date
-            const endOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth), 0)); // Last day of the month
-
-            query.date = {
-                $gte: startOfMonth,
-                $lte: endOfMonth,
-            };
-        } else if (filterYear) {
-            // filterYear is YYYY
-            const startOfYear = new Date(Date.UTC(filterYear, 0, 1));
-            const endOfYear = new Date(Date.UTC(filterYear, 11, 31, 23, 59, 59, 999));
+        // NEW: Date Range filters (start_date and end_date)
+        if (start_date || end_date) {
+            query.date = {};
+            if (start_date) {
+                // Parse ISO string to Date object
+                query.date.$gte = new Date(start_date);
+                console.log(`Filtering from start_date: ${new Date(start_date).toISOString()}`);
+            }
+            if (end_date) {
+                // Parse ISO string to Date object
+                query.date.$lte = new Date(end_date);
+                console.log(`Filtering up to end_date: ${new Date(end_date).toISOString()}`);
+            }
+        } 
+        // Existing: Filter by Year (only if no specific start/end dates are provided)
+        else if (filterYear) {
+            const year = parseInt(filterYear);
+            const startOfYear = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+            const endOfYear = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 
             query.date = {
                 $gte: startOfYear,
                 $lte: endOfYear,
             };
+            console.log(`Filtering by year: ${filterYear}, UTC range: ${startOfYear.toISOString()} to ${endOfYear.toISOString()}`);
         }
         
         let sortOptions = { date: -1 }; // Default sort
@@ -6991,20 +6985,17 @@ app.get('/api/budgets', async (req, res) => {
             sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
         }
 
-        console.log("Final MongoDB Query:", JSON.stringify(query));
+        console.log("Final MongoDB Query for /api/budgets:", JSON.stringify(query));
 
         let cursor = collection.find(query).sort(sortOptions);
 
-        // --- IMPORTANT FIX: Conditionally apply skip and limit ---
         if (itemsPerPage !== -1) {
             const skip = (page - 1) * itemsPerPage;
             cursor = cursor.skip(skip).limit(itemsPerPage);
         }
-        // --- END IMPORTANT FIX ---
 
         const budgets = await cursor.toArray();
-        console.log("Number of budgets fetched:", budgets.length);
-
+        console.log("Number of budgets fetched for /api/budgets:", budgets.length);
 
         const totalBudgets = await collection.countDocuments(query);
 
@@ -7016,6 +7007,52 @@ app.get('/api/budgets', async (req, res) => {
     } catch (error) {
         console.error("Error fetching budget entries:", error);
         res.status(500).json({ error: 'Failed to fetch budget entries.' });
+    }
+});
+
+// NEW ROUTE: Endpoint to fetch distinct budget years for the filter dropdown
+app.get('/api/budgets/years', async (req, res) => {
+    try {
+        const dab = await db();
+        const collection = dab.collection('budgets');
+
+        // MongoDB aggregation pipeline to extract distinct years
+        const distinctYears = await collection.aggregate([
+            {
+                $project: {
+                    // Assuming 'date' field in your MongoDB collection is stored as an ISODate (BSON Date type).
+                    // If your 'date' field is a string (e.g., "DD/MM/YYYY"), you would first need to convert it using $dateFromString:
+                    // convertedDate: { $dateFromString: { dateString: "$date", format: "%d/%m/%Y" } }
+                    // Then use: year: { $year: "$convertedDate" }
+                    year: { $year: "$date" }
+                }
+            },
+            {
+                $group: {
+                    _id: "$year" // Group by the extracted year to get unique values
+                }
+            },
+            {
+                $sort: { _id: 1 } // Sort the years in ascending order
+            },
+            {
+                $project: {
+                    _id: 0,      // Exclude the default _id field
+                    year: "$_id" // Project the grouped _id value as 'year'
+                }
+            }
+        ]).toArray();
+
+        // Convert the array of objects [{ year: 2025 }, { year: 2026 }]
+        // to a simple array of numbers [2025, 2026]
+        const yearsArray = distinctYears.map(item => item.year);
+
+        console.log("Fetched distinct budget years:", yearsArray);
+        res.status(200).json({ years: yearsArray });
+
+    } catch (error) {
+        console.error("Error fetching distinct budget years:", error);
+        res.status(500).json({ message: "Failed to fetch distinct budget years." });
     }
 });
 
