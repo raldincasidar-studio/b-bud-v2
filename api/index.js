@@ -1342,27 +1342,30 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 //     }
 // });
 
-// GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
+// GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters AND DATE RANGE
 app.get('/api/residents', async (req, res) => {
   try {
     const {
       search, status, is_voter, is_senior, is_pwd,
-      occupation, minAge, maxAge, sortBy, sortOrder
+      occupation, minAge, maxAge, sortBy, sortOrder,
+      start_date, end_date // <-- ADDED: Date range query parameters
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-    const skip = (page - 1) * itemsPerPage;
+    // Calculate skip only if itemsPerPage is not a very large number (like for print all functionality)
+    const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; 
 
     const dab = await db();
     const residentsCollection = dab.collection('residents');
     const filters = [];
 
-    // --- UPDATE: Handle 'On-hold' status filter ---
+    // --- Handle 'On-hold' status filter ---
     if (status) {
       if (status === 'On-hold') {
-        // 'On-hold' means the primary status is 'Approved' but the secondary account status is 'Deactivated'
         filters.push({ status: 'Approved', account_status: 'Deactivated' });
+      } else if (status === 'All') {
+        // No status filter if 'All' is selected
       } else {
         filters.push({ status: status });
       }
@@ -1386,6 +1389,21 @@ app.get('/api/residents', async (req, res) => {
       }
       filters.push({ date_of_birth: ageFilter });
     }
+
+    // --- ADDED: Date Range Filtering for 'created_at' (Date Added) ---
+    if (start_date || end_date) {
+      const dateAddedFilter = {};
+      if (start_date) {
+        dateAddedFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+      }
+      if (end_date) {
+        dateAddedFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+      }
+      if (Object.keys(dateAddedFilter).length > 0) {
+        filters.push({ created_at: dateAddedFilter });
+      }
+    }
+    // --- END ADDED Date Range Filtering ---
 
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
@@ -2700,6 +2718,7 @@ app.post('/api/document-requests', async (req, res) => {
     res.status(500).json({ error: 'Error adding document request.' });
   }
 });
+
 
 // GET ALL DOCUMENTS (GET)
 app.get('/api/documents', async (req, res) => {
@@ -4161,7 +4180,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
   }
 });
 
-// 2. GET ALL BORROWED ASSETS (GET) - UPDATED
+// 2. GET ALL BORROWED ASSETS (GET) - UPDATED with Date Range Filtering
 app.get('/api/borrowed-assets', async (req, res) => {
   try {
     const dab = await db();
@@ -4192,7 +4211,7 @@ app.get('/api/borrowed-assets', async (req, res) => {
     }
     // --- END OF AUTOMATION ---
 
-    const { search, status, sortBy, sortOrder, byResidentId = '' } = req.query;
+    const { search, status, sortBy, sortOrder, byResidentId = '', start_date, end_date } = req.query; // ADDED start_date, end_date
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
     const skip = (page - 1) * itemsPerPage;
@@ -4207,16 +4226,32 @@ app.get('/api/borrowed-assets', async (req, res) => {
         const statusArray = status.split(',').map(s => s.trim());
         matchConditions.push({ status: { $in: statusArray } });
     }
+
+    // --- ADDED: Date Range Filtering for borrow_datetime ---
+    if (start_date || end_date) {
+      const dateRangeCondition = {};
+      if (start_date) {
+        dateRangeCondition.$gte = new Date(start_date);
+      }
+      if (end_date) {
+        dateRangeCondition.$lte = new Date(end_date);
+      }
+      matchConditions.push({ borrow_datetime: dateRangeCondition });
+    }
+    // --- END ADDED ---
     
     const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
     let sortStage = { $sort: { borrow_datetime: -1 } };
     if (sortBy) { sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } }; }
 
     const aggregationPipeline = [
+      // 1. Initial lookup for borrower details (needed for search and display)
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      // 2. Add borrower_details as a single object
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
-      // REMOVED: No longer need to calculate 'current_status', it's now accurate in the DB
+      // 3. Match documents based on all filters (search, status, resident ID, and now date range)
       { $match: mainMatchStage },
+      // 4. Project the final output fields
       {
         $project: {
           _id: 1, ref_no: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1,
@@ -4224,14 +4259,26 @@ app.get('/api/borrowed-assets', async (req, res) => {
           borrower_name: { $concat: [ { $ifNull: ["$borrower_details.first_name", "Unknown"] }, " ", { $ifNull: ["$borrower_details.last_name", "Resident"] } ] },
         }
       },
+      // 5. Sort the results
       sortStage,
+      // 6. Skip and limit for pagination
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
 
     const transactions = await borrowedAssetsCollection.aggregate(aggregationPipeline).toArray();
-    // Simplified count now that the DB is accurate
-    const totalTransactions = await borrowedAssetsCollection.countDocuments(mainMatchStage); 
+    
+    // For total count, we should apply the same matching conditions but without skip/limit
+    // The count needs to happen *after* the initial lookup and match, but *before* the skip/limit
+    const countPipeline = [
+      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      { $match: mainMatchStage }, // Apply the same match conditions
+      { $count: "total" } // Count the documents that passed the match
+    ];
+    const countResult = await borrowedAssetsCollection.aggregate(countPipeline).toArray();
+    const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
+
 
     res.json({ transactions, total: totalTransactions, page, itemsPerPage, totalPages: Math.ceil(totalTransactions / itemsPerPage) });
   } catch (error) {
@@ -4551,13 +4598,16 @@ app.get('/api/assets', async (req, res) => {
     const categoryFilter = req.query.category || '';
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    // ADDED: Extract start_date and end_date from query
+    const start_date = req.query.start_date;
+    const end_date = req.query.end_date;
+
     const skip = (page - 1) * itemsPerPage;
 
     const dab = await db();
     const collection = dab.collection('assets');
 
     // --- Build the match conditions for filtering ---
-    let matchConditions = {};
     const andConditions = [];
     if (search) {
         const searchRegex = new RegExp(search, 'i');
@@ -4566,6 +4616,26 @@ app.get('/api/assets', async (req, res) => {
     if (categoryFilter) {
         andConditions.push({ category: categoryFilter });
     }
+
+    // --- ADDED: Date Range Filtering for asset creation date (created_at) ---
+    // Assuming 'created_at' is the field that stores when the asset record was created.
+    // Adjust 'created_at' if your actual field name is different (e.g., 'date_added').
+    if (start_date || end_date) {
+      const dateRangeCondition = {};
+      if (start_date) {
+        dateRangeCondition.$gte = new Date(start_date);
+      }
+      if (end_date) {
+        // Ensure end_date includes the entire day
+        const endDateObj = new Date(end_date);
+        endDateObj.setHours(23, 59, 59, 999); // Set to end of the day
+        dateRangeCondition.$lte = endDateObj;
+      }
+      andConditions.push({ created_at: dateRangeCondition }); // Push to andConditions
+    }
+    // --- END ADDED ---
+
+    let matchConditions = {};
     if (andConditions.length > 0) {
         matchConditions = { $and: andConditions };
     }
@@ -4573,7 +4643,7 @@ app.get('/api/assets', async (req, res) => {
     try {
         // --- Aggregation Pipeline ---
         const aggregationPipeline = [
-            // Stage 1: Initial filtering of assets
+            // Stage 1: Initial filtering of assets (now includes date range)
             { $match: matchConditions },
 
             // Stage 2: Lookup for CURRENTLY BORROWED / OUT-OF-INVENTORY items
@@ -4627,6 +4697,7 @@ app.get('/api/assets', async (req, res) => {
             },
             
             // Stage 6: Sort before pagination
+            // Assuming default sort by 'name' as in your original code
             { $sort: { name: 1 } },
 
             // Stage 7: Use $facet for pagination and total count in one go
@@ -4884,12 +4955,16 @@ app.post('/api/complaints', async (req, res) => {
   }
 });
 
-// GET ALL COMPLAINT REQUESTS (GET)
+// GET ALL COMPLAINT REQUESTS (GET) - UPDATED with Date Range Filtering
 app.get('/api/complaints', async (req, res) => {
   const search = req.query.search || '';
   const status = req.query.status || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  // ADDED: Extract start_date and end_date from query
+  const start_date = req.query.start_date;
+  const end_date = req.query.end_date;
+
   const skip = (page - 1) * itemsPerPage;
 
   const dab = await db();
@@ -4917,13 +4992,29 @@ app.get('/api/complaints', async (req, res) => {
     ];
   }
 
+  // --- ADDED: Date Range Filtering for date_of_complaint ---
+  if (start_date || end_date) {
+    const dateRangeCondition = {};
+    if (start_date) {
+      dateRangeCondition.$gte = new Date(start_date);
+    }
+    if (end_date) {
+      // Ensure end_date includes the entire day
+      const endDateObj = new Date(end_date);
+      endDateObj.setHours(23, 59, 59, 999); // Set to end of the day
+      dateRangeCondition.$lte = endDateObj;
+    }
+    matchQuery.date_of_complaint = dateRangeCondition;
+  }
+  // --- END ADDED ---
+
   try {
     const aggregationPipeline = [
       { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } } },
       { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
-      { $match: matchQuery },
+      { $match: matchQuery }, // This $match now includes date range filter
       {
         $project: {
           _id: 1,
@@ -4931,31 +5022,31 @@ app.get('/api/complaints', async (req, res) => {
           complainant_name: { 
             $ifNull: [
                 { $concat: [ "$complainant_details.first_name", " ", "$complainant_details.last_name"] }, 
-                "$complainant_display_name"
+                "$complainant_display_name" // Fallback for existing data or if resident not found
             ]
           },
           person_complained_against: {
             $ifNull: [
               { $concat: [ "$person_complained_details.first_name", " ", "$person_complained_details.last_name"] },
-              "$person_complained_against_name"
+              "$person_complained_against_name" // Fallback for existing data or if resident not found
             ]
           },
           date_of_complaint: 1, status: 1, notes_description: 1, created_at: 1, category: 1,
         }
       },
-      { $sort: { date_of_complaint: -1, created_at: -1 } },
+      { $sort: { date_of_complaint: -1, created_at: -1 } }, // Default sort
       { $skip: skip }, { $limit: itemsPerPage }
     ];
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
     
-    // The count pipeline correctly uses the same `matchQuery`
+    // The count pipeline must also incorporate the date range filter
     const countPipeline = [
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        { $match: matchQuery },
+        { $match: matchQuery }, // This $match now includes date range filter
         { $count: 'total' }
     ];
     const countResult = await collection.aggregate(countPipeline).toArray();
@@ -5474,12 +5565,13 @@ app.delete('/api/complaints/:id', async (req, res) => {
 // ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
 
 
+// ADD NEW DOCUMENT (POST)
 // POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
 app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
   const {
     requestor_resident_id,
-    processed_by_personnel, // --- 1. RECEIVE THE NEW FIELD ---
+    processed_by_personnel,
     request_type,
     purpose,
     details,
@@ -5497,6 +5589,10 @@ app.post('/api/document-requests', async (req, res) => {
     const residentsCollection = dab.collection('residents');
     const requestsCollection = dab.collection('document_requests');
 
+    // --- ADDED: Account Status Check ---
+    await checkResidentAccountStatus(requestor_resident_id, dab);
+    // --- END ADDED ---
+
     // Fetch the requestor's name for a more descriptive log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
@@ -5505,9 +5601,11 @@ app.post('/api/document-requests', async (req, res) => {
     const customRefNo = await generateUniqueReference(requestsCollection);
 
     // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
+    // MODIFIED: Added requestor_name to the newRequest object for easier retrieval
     const newRequest = {
       ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
+      requestor_name: requestorName, // Store the requestor's name directly in the document request
       processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
@@ -5525,8 +5623,6 @@ app.post('/api/document-requests', async (req, res) => {
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
-        // Assuming your createAuditLog function correctly identifies the logged-in user from the 'req' object as the actor.
-        // The 'userId' and 'userName' here can refer to the subject of the log.
         userId: requestor ? requestor._id : null,
         userName: requestorName,
     }, req);
@@ -5537,10 +5633,170 @@ app.post('/api/document-requests', async (req, res) => {
       requestId: result.insertedId,
       refNo: customRefNo
     });
-    
+
   } catch (error) {
     console.error('Error adding document request:', error);
+    // --- ADDED: Specific error handling for account status restrictions ---
+    if (error.message.includes("account is pending approval") ||
+        error.message.includes("account has been declined") ||
+        error.message.includes("account has been permanently deactivated") ||
+        error.message.includes("account is currently On Hold/Deactivated")) {
+      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
+        error: 'Action Restricted. Account status On Hold / Deactivated.',
+        message: error.message
+      });
+    }
+    // --- END ADDED ---
     res.status(500).json({ error: 'Error adding document request.' });
+  }
+});
+
+
+// NEW ENDPOINT: GET ALL DOCUMENT REQUESTS (GET)
+// Handles search, status filter, pagination, sorting, and DATE RANGE FILTERING
+app.get('/api/document-requests', async (req, res) => {
+  const dab = await db();
+  const requestsCollection = dab.collection('document_requests');
+
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const statusFilter = req.query.status; // e.g., 'Pending', 'Approved', 'Declined', 'All'
+  const sortBy = req.query.sortBy;
+  const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1; // 1 for ascending, -1 for descending
+  const startDate = req.query.start_date; // ISO string from frontend
+  const endDate = req.query.end_date;     // ISO string from frontend
+
+  const matchQuery = {};
+
+  // Status filter
+  if (statusFilter && statusFilter !== 'All') {
+    matchQuery.document_status = statusFilter;
+  }
+
+  // Date range filter on `created_at` field
+  if (startDate || endDate) {
+    matchQuery.created_at = {};
+    if (startDate) {
+      matchQuery.created_at.$gte = new Date(startDate);
+    }
+    if (endDate) {
+      matchQuery.created_at.$lte = new Date(endDate);
+    }
+  }
+
+  let sortOptions = {};
+  if (sortBy) {
+    sortOptions[sortBy] = sortOrder;
+  } else {
+    // Default sort: newest requests first
+    sortOptions = { created_at: -1 };
+  }
+
+  try {
+    const pipeline = [
+      // 1. Match documents based on initial filters (status, date)
+      { $match: matchQuery },
+      
+      // 2. Lookup resident details
+      {
+        $lookup: {
+          from: 'residents', // The collection to join with
+          localField: 'requestor_resident_id', // Field from the input documents
+          foreignField: '_id', // Field from the "residents" documents
+          as: 'requestorInfo' // Output array field
+        }
+      },
+      // 3. Deconstruct the requestorInfo array (it will be an array with one resident)
+      {
+        $unwind: {
+          path: '$requestorInfo',
+          preserveNullAndEmptyArrays: true // Keep requests even if resident not found
+        }
+      },
+      // 4. Add a computed requestor_name field
+      {
+        $addFields: {
+          requestor_name_computed: {
+            $cond: {
+              if: '$requestorInfo.first_name', // Check if resident info exists
+              then: { $concat: ['$requestorInfo.first_name', ' ', '$requestorInfo.last_name'] },
+              else: { $ifNull: ['$requestor_name', 'N/A'] } // Fallback to denormalized or 'N/A'
+            }
+          }
+        }
+      },
+      // 5. Apply search filter (now includes the computed requestor_name)
+      // This $match must come after $addFields for requestor_name_computed to be available
+      {
+        $match: search
+          ? {
+              $or: [
+                { request_type: { $regex: new RegExp(search, 'i') } },
+                { purpose: { $regex: new RegExp(search, 'i') } },
+                { ref_no: { $regex: new RegExp(search, 'i') } },
+                { requestor_name_computed: { $regex: new RegExp(search, 'i') } } // Search on computed name
+              ]
+            }
+          : {}
+      },
+      // 6. Sort
+      { $sort: sortOptions },
+      // 7. Count total documents for pagination metadata
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          requests: { $push: '$$ROOT' }
+        }
+      },
+      // 8. Project the desired fields, apply skip and limit
+      {
+        $project: {
+          _id: 0,
+          total: 1,
+          requests: {
+            $slice: [
+              {
+                $map: {
+                  input: '$requests',
+                  as: 'request',
+                  in: {
+                    _id: '$$request._id',
+                    ref_no: '$$request.ref_no',
+                    requestor_resident_id: '$$request.requestor_resident_id',
+                    request_type: '$$request.request_type',
+                    purpose: '$$request.purpose',
+                    details: '$$request.details',
+                    document_status: '$$request.document_status',
+                    created_at: '$$request.created_at',
+                    updated_at: '$$request.updated_at',
+                    // Use the computed name
+                    requestor_name: '$$request.requestor_name_computed', 
+                    // Add other fields you need for the frontend
+                  }
+                }
+              },
+              (page - 1) * itemsPerPage,
+              itemsPerPage
+            ]
+          }
+        }
+      }
+    ];
+
+    const aggregationResult = await requestsCollection.aggregate(pipeline).toArray();
+    
+    // The result will be an array with one element containing 'total' and 'requests'
+    const result = aggregationResult.length > 0 ? aggregationResult[0] : { total: 0, requests: [] };
+
+    res.json({
+      requests: result.requests,
+      total: result.total,
+    });
+  } catch (error) {
+    console.error('Error fetching document requests:', error);
+    res.status(500).json({ error: 'Error fetching document requests.' });
   }
 });
 
