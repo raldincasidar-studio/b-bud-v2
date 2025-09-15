@@ -136,7 +136,7 @@ async function fetchCounts() {
 
         // --- Filed Complaints ---
         let fcTotal = 0;
-        const fcStatuses = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+        const fcStatuses = ['New', 'Under Investigation', 'Unresolved', 'Resolved', 'Closed', 'Dismissed'];
         for (const status of fcStatuses) {
             const { data, error } = await useMyFetch('/api/complaints', { query: { status: status, itemsPerPage: 1 } });
             if (!error.value) {
