@@ -6032,8 +6032,8 @@ app.patch('/api/document-requests/:id/release', async (req, res) => {
 
 
 
-// const isDebug = !false; /* For production */
-const isDebug = false; /* For development */
+const isDebug = !false; /* For production */
+// const isDebug = false; /* For development */
 
 // *** NEW ENDPOINT ***
 // GET /api/document-requests/:id/generate - GENERATE AND SERVE THE PDF
