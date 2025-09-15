@@ -79,8 +79,8 @@
             <v-col cols="12" md="4"><v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status*" :readonly="!editMode" variant="outlined" placeholder="Select Civil Status" :error-messages="v$.civil_status.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship*" :readonly="!editMode" variant="outlined" placeholder="Select Citizenship" :error-messages="v$.citizenship.$errors.map(e => e.$message)"></v-select></v-col>
             <v-col cols="12" md="4"><v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status*" :readonly="!editMode" variant="outlined" :error-messages="v$.occupation_status.$errors.map(e => e.$message)"></v-select></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly variant="outlined" maxlength="11" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.email" label="Email Address*" type="email" :readonly="!editMode" variant="outlined" :error-messages="v$.email.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.contact_number" label="Contact Number*" :readonly="!editMode" variant="outlined" maxlength="11" :error-messages="v$.contact_number.$errors.map(e => e.$message)"></v-text-field></v-col>
           </v-row>
         </v-card-text>
       </v-card>
@@ -113,7 +113,7 @@
                 <v-img 
                   v-if="form.proof_of_relationship_base64"
                   :src="form.proof_of_relationship_base64" 
-                  max-height="150" 
+                  height="150" 
                   contain 
                   class="mt-2 elevation-1 cursor-pointer" 
                   @click="openGallery('proof_of_relationship')"
@@ -130,16 +130,50 @@
         <v-card-title class="text-h6 font-weight-medium">Address Information</v-card-title>
         <v-card-text class="pt-4">
           <v-row>
+            <v-col cols="12" md="4">
+              <v-text-field 
+                v-model="form.address_unit_room_apt_number" 
+                label="Unit/Room/Apartment number" 
+                :readonly="!editMode" 
+                variant="outlined"
+              ></v-text-field>
+            </v-col>
             <v-col cols="12" md="4"><v-text-field v-model="form.address_house_number" label="House Number/Lot/Block*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_house_number.$errors.map(e => e.$message)"></v-text-field></v-col>
-            <v-col cols="12" md="8"><v-text-field v-model="form.address_street" label="Street*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_street.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <v-col cols="12" md="4"><v-text-field v-model="form.address_street" label="Street*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_street.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok*" :readonly="!editMode" variant="outlined" :error-messages="v$.address_subdivision_zone.$errors.map(e => e.$message)"></v-text-field></v-col>
+            <!-- NEW FIELD: Type of Household -->
+            <v-col cols="12" md="6">
+              <v-select 
+                v-model="form.type_of_household" 
+                :items="['Owner', 'Tenant/Border', 'Sharer']" 
+                label="Type of Household" 
+                :readonly="!editMode" 
+                variant="outlined" 
+                placeholder="Select Type"
+                :error-messages="v$.type_of_household.$errors.map(e => e.$message)"
+              ></v-select>
+            </v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.address_city_municipality" label="City/Municipality" readonly variant="outlined"></v-text-field></v-col>
             <v-col cols="12" md="6"><v-text-field v-model="form.years_at_current_address" label="Years at Current Address*" type="number" :readonly="!editMode" variant="outlined" :error-messages="v$.years_at_current_address.$errors.map(e => e.$message)"></v-text-field></v-col>
             <v-col cols="12" md="6">
-              <v-file-input v-if="editMode" v-model="form.proof_of_residency_file" label="Upload to Replace Proof of Residency" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
-              <div v-else><label class="v-label mb-1">Uploaded Proof of Residency</label>
-                <!-- UPDATED: The click handler will now open the new zoomable viewer -->
-                <v-img v-if="form.proof_of_residency_base64" :src="form.proof_of_residency_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('proof_of_residency')"></v-img>
+              <v-file-input v-if="editMode" v-model="form.proof_of_residency_file" label="Upload to Replace Proof of Residency" variant="outlined" accept="image/*,application/pdf" clearable multiple></v-file-input>
+              <div v-else>
+                <label class="v-label mb-1">Uploaded Proof of Residency</label>
+                <div v-if="form.proof_of_residency_base64 && form.proof_of_residency_base64.length > 0" class="d-flex flex-wrap gap-2 mt-2">
+                  <div v-for="(src, idx) in form.proof_of_residency_base64" :key="idx" class="d-inline-block">
+                    <v-img :src="src" height="100" width="100" contain class="border rounded elevation-1 cursor-pointer" @click="openGallery('proof_of_residency', idx)"></v-img>
+                  </div>
+                </div>
+                <p v-else class="text-grey mt-2">No file uploaded.</p>
+              </div>
+            </v-col>
+
+            <!-- NEW: Authorization Letter Field -->
+            <v-col cols="12" md="6">
+              <v-file-input v-if="editMode" v-model="form.authorization_letter_file" label="Upload to Replace Authorization Letter (Optional)" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
+              <div v-else>
+                <label class="v-label mb-1">Uploaded Authorization Letter (Optional)</label>
+                <v-img v-if="form.authorization_letter_base64" :src="form.authorization_letter_base64" height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('authorization_letter')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -157,7 +191,7 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.voter_id_file" label="Upload to Replace Voter's ID" variant="outlined" accept="image/*,application/pdf" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded Voter's ID</label>
-                <v-img v-if="form.voter_registration_proof_base64" :src="form.voter_registration_proof_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('voter_id')"></v-img>
+                <v-img v-if="form.voter_registration_proof_base64" :src="form.voter_registration_proof_base64" height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('voter_id')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -174,7 +208,7 @@
             <v-col cols="12" md="6">
               <v-file-input v-if="editMode" v-model="form.pwd_card_file" label="Upload to Replace PWD ID Card" variant="outlined" accept="image/*" clearable></v-file-input>
               <div v-else><label class="v-label mb-1">Uploaded PWD ID Card</label>
-                <v-img v-if="form.pwd_card_base64" :src="form.pwd_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('pwd_card')"></v-img>
+                <v-img v-if="form.pwd_card_base64" :src="form.pwd_card_base64" height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('pwd_card')"></v-img>
                 <p v-else class="text-grey mt-2">No file uploaded.</p>
               </div>
             </v-col>
@@ -187,7 +221,7 @@
               <v-col cols="12" md="6">
                 <v-file-input v-if="editMode" v-model="form.senior_citizen_card_file" label="Upload to Replace Senior ID" variant="outlined" accept="image/*" clearable></v-file-input>
                 <div v-else><label class="v-label mb-1">Uploaded Senior Citizen ID</label>
-                  <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" max-height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('senior_card')"></v-img>
+                  <v-img v-if="form.senior_citizen_card_base64" :src="form.senior_citizen_card_base64" height="150" contain class="mt-2 elevation-1 cursor-pointer" @click="openGallery('senior_card')"></v-img>
                   <p v-else class="text-grey mt-2">No file uploaded.</p>
                 </div>
               </v-col>
@@ -202,7 +236,13 @@
       <v-dialog v-model="imageViewerDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
         <v-card>
           <v-toolbar dark color="primary">
+            <v-btn icon dark @click="showPrevImage" :disabled="currentGalleryImages.length <= 1">
+              <v-icon>mdi-chevron-left</v-icon>
+            </v-btn>
             <v-toolbar-title>{{ viewerImageTitle }}</v-toolbar-title>
+            <v-btn icon dark @click="showNextImage" :disabled="currentGalleryImages.length <= 1">
+              <v-icon>mdi-chevron-right</v-icon>
+            </v-btn>
             <v-spacer></v-spacer>
             <v-btn icon dark @click="imageViewerDialog = false">
               <v-icon>mdi-close</v-icon>
@@ -213,11 +253,13 @@
             style="background-color: rgba(0,0,0,0.8); position: relative; overflow: auto;"
           >
             <v-img
+              :key="viewerImageSrc"
               :src="viewerImageSrc"
               contain
               max-height="90vh"
               max-width="90vw"
               :style="imageStyle"
+              class="bg-surface-variant"
             ></v-img>
             <div class="zoom-controls">
               <v-btn icon="mdi-magnify-minus-outline" @click="zoomOut" class="mx-1" title="Zoom Out"></v-btn>
@@ -295,8 +337,15 @@ const form = reactive({
   first_name: '', middle_name: '', last_name: '', suffix: null, // ADDED SUFFIX
   sex: null, date_of_birth: '', civil_status: null,
   citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '', newPassword: '', confirmNewPassword: '',
-  address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
-  years_at_current_address: null, proof_of_residency_file: null, proof_of_residency_base64: null,
+  address_house_number: '', 
+  address_unit_room_apt_number: '', // NEW: Unit/Room/Apartment number
+  address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  type_of_household: null, // NEW: Type of Household
+  years_at_current_address: null, 
+  proof_of_residency_file: null, // This is for new file input, could be a single File or an array of Files
+  proof_of_residency_base64: [], // This is the array of base64 strings fetched from the backend
+  authorization_letter_file: null, // NEW: Authorization Letter file object
+  authorization_letter_base64: null, // NEW: Authorization Letter base64 string
   is_voter: false, voter_id_number: '', voter_id_file: null, voter_registration_proof_base64: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null, pwd_card_base64: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null, senior_citizen_card_base64: null,
@@ -317,11 +366,14 @@ const householdMemberSearchQuery = ref('');
 const eligibleMemberSearchResults = ref([]);
 const isLoadingEligibleMembers = ref(false);
 
-// --- NEW: Image Viewer State (replaces old gallery state) ---
+// --- NEW: Image Viewer State ---
 const imageViewerDialog = ref(false);
 const viewerImageSrc = ref('');
 const viewerImageTitle = ref('');
 const zoomLevel = ref(1);
+
+const currentGalleryImages = ref([]); // Stores array of srcs for current gallery set (e.g., all proof of residency)
+const currentImageIndex = ref(0); // Index within currentGalleryImages
 
 const updatingStatus = ref(false);
 const actionReasonDialog = ref(false);
@@ -342,27 +394,6 @@ const calculatedAge = computed(() => {
 
 const isSenior = computed(() => calculatedAge.value !== null && calculatedAge.value >= 60);
 
-// This computed property is still used to find the image details
-const imageGallerySource = computed(() => {
-  const items = [];
-  if (form.proof_of_residency_base64) {
-    items.push({ id: 'proof_of_residency', src: form.proof_of_residency_base64, title: 'Proof of Residency' });
-  }
-  if (form.proof_of_relationship_base64) {
-    items.push({ id: 'proof_of_relationship', src: form.proof_of_relationship_base64, title: 'Proof of Relationship' });
-  }
-  if (form.voter_registration_proof_base64) {
-    items.push({ id: 'voter_id', src: form.voter_registration_proof_base64, title: "Uploaded Voter's ID" });
-  }
-  if (form.pwd_card_base64) {
-    items.push({ id: 'pwd_card', src: form.pwd_card_base64, title: 'Uploaded PWD ID Card' });
-  }
-  if (form.senior_citizen_card_base64) {
-    items.push({ id: 'senior_card', src: form.senior_citizen_card_base64, title: 'Uploaded Senior Citizen ID' });
-  }
-  return items;
-});
-
 const imageStyle = computed(() => ({
   transform: `scale(${zoomLevel.value})`,
   transition: 'transform 0.2s ease-out'
@@ -370,15 +401,51 @@ const imageStyle = computed(() => ({
 
 // --- FUNCTIONS ---
 
-// UPDATED: This function now opens the new zoomable viewer
-function openGallery(id) {
-  const imageItem = imageGallerySource.value.find(item => item.id === id);
-  if (imageItem) {
-    viewerImageSrc.value = imageItem.src;
-    viewerImageTitle.value = imageItem.title;
-    zoomLevel.value = 1; // Reset zoom on open
-    imageViewerDialog.value = true;
+// UPDATED: This function now populates the viewer and handles multi-image sets
+function openGallery(id, initialIndex = 0) {
+  currentGalleryImages.value = []; // Reset current gallery
+  currentImageIndex.value = 0; // Reset index
+
+  if (id === 'proof_of_residency' && form.proof_of_residency_base64 && form.proof_of_residency_base64.length > 0) {
+    currentGalleryImages.value = form.proof_of_residency_base64;
+    currentImageIndex.value = Math.min(Math.max(0, initialIndex), currentGalleryImages.value.length - 1);
+    viewerImageSrc.value = currentGalleryImages.value[currentImageIndex.value];
+    viewerImageTitle.value = `Proof of Residency (${currentImageIndex.value + 1} of ${currentGalleryImages.value.length})`;
+  } else {
+    // Handle single images
+    let singleImageSrc = null;
+    let singleImageTitle = '';
+
+    if (id === 'authorization_letter' && form.authorization_letter_base64) {
+      singleImageSrc = form.authorization_letter_base64;
+      singleImageTitle = 'Authorization Letter';
+    } else if (id === 'proof_of_relationship' && form.proof_of_relationship_base64) {
+      singleImageSrc = form.proof_of_relationship_base64;
+      singleImageTitle = 'Proof of Relationship';
+    } else if (id === 'voter_id' && form.voter_registration_proof_base64) {
+      singleImageSrc = form.voter_registration_proof_base64;
+      singleImageTitle = "Uploaded Voter's ID";
+    } else if (id === 'pwd_card' && form.pwd_card_base64) {
+      singleImageSrc = form.pwd_card_base64;
+      singleImageTitle = 'Uploaded PWD ID Card';
+    } else if (id === 'senior_card' && form.senior_citizen_card_base64) {
+      singleImageSrc = form.senior_citizen_card_base64;
+      singleImageTitle = 'Uploaded Senior Citizen ID';
+    }
+
+    if (singleImageSrc) {
+      currentGalleryImages.value = [singleImageSrc]; // Treat as a single-item gallery
+      currentImageIndex.value = 0;
+      viewerImageSrc.value = singleImageSrc;
+      viewerImageTitle.value = singleImageTitle;
+    } else {
+      // No image found, don't open dialog
+      return;
+    }
   }
+
+  zoomLevel.value = 1; // Reset zoom on open
+  imageViewerDialog.value = true;
 }
 
 // NEW: Zoom control functions
@@ -386,13 +453,41 @@ const zoomIn = () => { zoomLevel.value += 0.2; };
 const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
 const resetZoom = () => { zoomLevel.value = 1; };
 
+// NEW: Navigation for multi-image galleries
+const showNextImage = () => {
+  if (currentGalleryImages.value.length > 1) {
+    currentImageIndex.value = (currentImageIndex.value + 1) % currentGalleryImages.value.length;
+    viewerImageSrc.value = currentGalleryImages.value[currentImageIndex.value];
+    // Update title for multi-image type
+    if (viewerImageTitle.value.startsWith('Proof of Residency')) {
+      viewerImageTitle.value = `Proof of Residency (${currentImageIndex.value + 1} of ${currentGalleryImages.value.length})`;
+    }
+    resetZoom();
+  }
+};
+
+const showPrevImage = () => {
+  if (currentGalleryImages.value.length > 1) {
+    currentImageIndex.value = (currentImageIndex.value - 1 + currentGalleryImages.value.length) % currentGalleryImages.value.length;
+    viewerImageSrc.value = currentGalleryImages.value[currentImageIndex.value];
+    // Update title for multi-image type
+    if (viewerImageTitle.value.startsWith('Proof of Residency')) {
+      viewerImageTitle.value = `Proof of Residency (${currentImageIndex.value + 1} of ${currentGalleryImages.value.length})`;
+    }
+    resetZoom();
+  }
+};
 
 const rules = {
   first_name: { required }, last_name: { required }, suffix: {}, // ADDED SUFFIX RULE (optional)
   sex: { required }, date_of_birth: { required },
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { email }, contact_number: {  },
-  address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
+  address_house_number: { required, numeric }, 
+  address_unit_room_apt_number: {}, // NEW: Unit/Room/Apartment number (optional)
+  address_street: { required }, 
+  address_subdivision_zone: { required },
+  type_of_household: {  }, // NEW: Type of Household (required)
   years_at_current_address: { numeric },
   newPassword: { minLength: minLength(6) },
   confirmNewPassword: { sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.newPassword))) },
@@ -416,6 +511,9 @@ const rules = {
     )
   },
   // END: FIXED VALIDATION LOGIC
+  // NEW: Authorization Letter validation (optional, can add more specific checks if needed)
+  authorization_letter_file: {},
+  authorization_letter_base64: {},
 };
 const v$ = useVuelidate(rules, form);
 
@@ -489,6 +587,14 @@ async function fetchResident() {
     form.date_of_birth = form.date_of_birth ? new Date(form.date_of_birth).toISOString().split('T')[0] : '';
     // ensure suffix is properly initialized even if null from backend
     form.suffix = residentData.resident.suffix || null; 
+    // NEW: Ensure authorization_letter_base64 is populated from fetched data
+    form.authorization_letter_base64 = residentData.resident.authorization_letter_base64 || null;
+    // Ensure proof_of_residency_base64 is always an array
+    form.proof_of_residency_base64 = residentData.resident.proof_of_residency_base64 || [];
+    // NEW: Ensure address_unit_room_apt_number and type_of_household are initialized
+    form.address_unit_room_apt_number = residentData.resident.address_unit_room_apt_number || '';
+    form.type_of_household = residentData.resident.type_of_household || null;
+
     originalFormState.value = JSON.parse(JSON.stringify(form));
   } catch(e) { $toast.fire({ title: e.message, icon: 'error' }); router.push('/residents'); }
   finally { loading.value = false; }
@@ -499,6 +605,12 @@ const cancelEdit = () => { Object.assign(form, JSON.parse(JSON.stringify(origina
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
     if (!file || file.length === 0) { resolve(null); return; }
+    // If the file is already a base64 string, return it as is. This handles cases where
+    // an existing base64 image is not replaced and thus remains a string in the form.
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      resolve(file);
+      return;
+    }
     const reader = new FileReader();
     reader.onloadend = () => resolve(reader.result);
     reader.onerror = reject;
@@ -511,17 +623,36 @@ async function saveChanges() {
   if (!isFormCorrect) { $toast.fire({ title: 'Please correct form errors.', icon: 'error' }); return; }
   saving.value = true;
   try {
-    const payload = { ...form }; // 'form' now includes 'suffix'
+    const payload = { ...form }; // 'form' now includes 'suffix', address_unit_room_apt_number, type_of_household
     payload.household_member_ids = form.household_members_details.map(m => m._id);
     delete payload.household_members_details;
     
-    if (form.voter_id_file) payload.voter_registration_proof_base64 = await convertFileToBase64(form.voter_id_file);
-    if (form.pwd_card_file) payload.pwd_card_base64 = await convertFileToBase64(form.pwd_card_file);
-    if (form.senior_citizen_card_file) payload.senior_citizen_card_base64 = await convertFileToBase64(form.senior_citizen_card_file);
-    if (form.proof_of_residency_file) payload.proof_of_residency_base64 = await convertFileToBase64(form.proof_of_residency_file);
-    if (form.proof_of_relationship_file) payload.proof_of_relationship_base64 = await convertFileToBase64(form.proof_of_relationship_file);
+    // Convert new files to base64 only if a new file is uploaded
+    // Otherwise, keep the existing base64 string
+    payload.voter_registration_proof_base64 = form.voter_id_file ? await convertFileToBase64(form.voter_id_file) : payload.voter_registration_proof_base64;
+    payload.pwd_card_base64 = form.pwd_card_file ? await convertFileToBase64(form.pwd_card_file) : payload.pwd_card_base64;
+    payload.senior_citizen_card_base64 = form.senior_citizen_card_file ? await convertFileToBase64(form.senior_citizen_card_file) : payload.senior_citizen_card_base64;
+    
+    // Handle proof_of_residency_base64 as an array. If new files are uploaded, map them to base64.
+    // If form.proof_of_residency_file is null/empty, retain the existing array from backend.
+    if (form.proof_of_residency_file && form.proof_of_residency_file.length > 0) {
+      payload.proof_of_residency_base64 = await Promise.all(form.proof_of_residency_file.map(file => convertFileToBase64(file)));
+    } else {
+      payload.proof_of_residency_base64 = payload.proof_of_residency_base64; // Retain existing array
+    }
 
-    delete payload.voter_id_file; delete payload.pwd_card_file; delete payload.senior_citizen_card_file; delete payload.proof_of_residency_file; delete payload.proof_of_relationship_file;
+    payload.proof_of_relationship_base64 = form.proof_of_relationship_file ? await convertFileToBase64(form.proof_of_relationship_file) : payload.proof_of_relationship_base64;
+    payload.authorization_letter_base64 = form.authorization_letter_file ? await convertFileToBase64(form.authorization_letter_file) : payload.authorization_letter_base64;
+
+    // Remove the temporary file objects as they are not sent to the backend directly
+    delete payload.voter_id_file; 
+    delete payload.pwd_card_file; 
+    delete payload.senior_citizen_card_file; 
+    delete payload.proof_of_residency_file; 
+    delete payload.proof_of_relationship_file;
+    delete payload.authorization_letter_file;
+    delete payload.newPassword; // Only for frontend, not part of API payload
+    delete payload.confirmNewPassword; // Only for frontend, not part of API payload
     
     await useMyFetch(`/api/residents/${residentId}`, { method: 'PUT', body: payload });
     $toast.fire({ title: 'Resident updated successfully!', icon: 'success' });
@@ -579,6 +710,10 @@ async function deleteResident() {
   border-radius: 24px;
   z-index: 10;
   display: flex;
+  gap: 8px;
+}
+
+.gap-2 { /* Added utility class for spacing from the other component */
   gap: 8px;
 }
 </style>

@@ -74,17 +74,35 @@
         <v-divider class="my-6"></v-divider>
         <p class="text-subtitle-2 mb-4">Address Information</p>
         <v-row>
+           <!-- NEW FIELD: Unit/Room/Apartment number -->
+          <v-col cols="12" md="4">
+            <label class="v-label">Unit/Room/Apartment Number</label>
+            <v-text-field v-model="form.address_unit_room_apt_number" label="Unit/Room/Apartment Number" variant="outlined"></v-text-field>
+          </v-col>
           <v-col cols="12" md="4">
             <label class="v-label">House Number/Lot/Block *</label>
             <v-text-field v-model="form.address_house_number" label="House Number/Lot/Block *" variant="outlined" :error-messages="vHead$.address_house_number.$errors.map(e => e.$message)" @blur="vHead$.address_house_number.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" md="8">
+          <v-col cols="12" md="4">
             <label class="v-label">Street *</label>
             <v-text-field v-model="form.address_street" label="Street *" variant="outlined" :error-messages="vHead$.address_street.$errors.map(e => e.$message)" @blur="vHead$.address_street.$touch()"></v-text-field>
           </v-col>
           <v-col cols="12" md="6">
             <label class="v-label">Subdivision/Zone/Sitio/Purok *</label>
             <v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok *" variant="outlined" :error-messages="vHead$.address_subdivision_zone.$errors.map(e => e.$message)" @blur="vHead$.address_subdivision_zone.$touch()"></v-text-field>
+          </v-col>
+          <!-- NEW FIELD: Type of Household -->
+          <v-col cols="12" md="6">
+            <label class="v-label">Type of Household</label>
+            <v-select 
+              v-model="form.type_of_household" 
+              :items="['Owner', 'Tenant/Border', 'Sharer']" 
+              label="Type of Household *" 
+              variant="outlined" 
+              placeholder="Select Type"
+              :error-messages="vHead$.type_of_household.$errors.map(e => e.$message)" 
+              @blur="vHead$.type_of_household.$touch()">
+            </v-select>
           </v-col>
           <v-col cols="12" md="6">
             <label class="v-label">City/Municipality</label>
@@ -94,10 +112,52 @@
             <label class="v-label">Years at Current Address *</label>
             <v-text-field v-model="form.years_at_current_address" label="Years at Current Address *" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field>
           </v-col>
+
+          <!-- UPDATED: Proof of Residency for multiple attachments -->
           <v-col cols="12" md="6">
             <label class="v-label">Upload Proof of Residency *</label>
-            <v-file-input v-model="form.proof_of_residency_file" label="Upload Proof of Residency *" variant="outlined" accept="image/*,application/pdf" :error-messages="vHead$.proof_of_residency_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.proof_of_residency_file.$touch()"></v-file-input>
-             <v-img v-if="proofResidencyPreviewUrl" :src="proofResidencyPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+            <v-file-input 
+              v-model="newProofResidencyFiles" 
+              label="Upload Proof of Residency *" 
+              variant="outlined" 
+              accept="image/*,application/pdf" 
+              :error-messages="vHead$.proof_of_residency_file.$errors.map(e => e.$message)" 
+              show-size 
+              clearable 
+              multiple 
+              @blur="vHead$.proof_of_residency_file.$touch()">
+            </v-file-input>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <div v-for="(item, index) in proofResidencyPreviews" :key="item.id" class="position-relative">
+                <template v-if="item.file && item.file.type.startsWith('image/')">
+                  <!-- BUG FIX: Changed max-height/width to explicit height/width for reliable rendering -->
+                  <v-img :src="item.url" class="border rounded" height="100" width="100" contain></v-img>
+                </template>
+                <template v-else-if="item.file && item.file.type === 'application/pdf'">
+                  <v-icon size="64" class="border rounded" style="width: 100px; height: 100px; display: flex; align-items: center; justify-content: center;">
+                    mdi-file-pdf-box
+                  </v-icon>
+                  <p class="text-caption text-truncate mt-1" style="max-width: 100px;">{{ item.file.name }}</p>
+                </template>
+                <v-btn icon="mdi-close-circle" size="x-small" color="error" class="position-absolute" style="top: -8px; right: -8px;" @click="removeProofOfResidencyImage(index)"></v-btn>
+              </div>
+            </div>
+          </v-col>
+
+          <!-- NEW: Authorization Letter Field for Head -->
+          <v-col cols="12" md="6">
+            <label class="v-label">Authorization Letter (Optional)</label>
+            <v-file-input 
+              v-model="form.authorization_letter_file" 
+              label="Upload Authorization Letter" 
+              variant="outlined" 
+              accept="image/*,application/pdf" 
+              show-size 
+              clearable 
+              @blur="vHead$.authorization_letter_file.$touch()">
+            </v-file-input>
+            <!-- Authorization Letter already uses explicit height="150", which is good. -->
+            <v-img v-if="authorizationLetterPreviewUrl" :src="authorizationLetterPreviewUrl" class="mt-2" height="150" contain></v-img>
           </v-col>
         </v-row>
 
@@ -112,7 +172,8 @@
           <v-col cols="12" md="6">
             <label class="v-label">Upload Voter's ID Card</label>
             <v-file-input v-model="form.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vHead$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.voter_id_file.$touch()"></v-file-input>
-            <v-img v-if="voterIdPreviewUrl" :src="voterIdPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+            <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+            <v-img v-if="voterIdPreviewUrl" :src="voterIdPreviewUrl" class="mt-2" height="150" contain></v-img>
           </v-col>
         </v-row>
 
@@ -127,7 +188,8 @@
           <v-col cols="12" md="6">
             <label class="v-label">Upload PWD ID Card</label>
             <v-file-input v-model="form.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vHead$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.pwd_card_file.$touch()"></v-file-input>
-            <v-img v-if="pwdCardPreviewUrl" :src="pwdCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+            <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+            <v-img v-if="pwdCardPreviewUrl" :src="pwdCardPreviewUrl" class="mt-2" height="150" contain></v-img>
           </v-col>
         </v-row>
         <v-row v-if="isHeadSenior">
@@ -141,7 +203,8 @@
             <v-col cols="12" md="6">
               <label class="v-label">Upload Senior Citizen ID Card</label>
               <v-file-input v-model="form.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vHead$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.senior_citizen_card_file.$touch()"></v-file-input>
-              <v-img v-if="seniorCardPreviewUrl" :src="seniorCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+              <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+              <v-img v-if="seniorCardPreviewUrl" :src="seniorCardPreviewUrl" class="mt-2" height="150" contain></v-img>
             </v-col>
           </template>
         </v-row>
@@ -154,7 +217,7 @@
         <v-row>
             <v-col cols="12" sm="6">
               <label class="v-label">Password *</label>
-              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 6 characters" persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
+              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 8 characters, with uppercase and special character." persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
             </v-col>
             <v-col cols="12" sm="6">
               <label class="v-label">Confirm Password *</label>
@@ -228,7 +291,8 @@
             <v-col cols="12" md="6">
               <label class="v-label">Upload Proof of Relationship</label>
               <v-file-input v-model="memberForm.proof_of_relationship_file" label="Upload Proof of Relationship" variant="outlined" accept="image/*,.pdf" hint="Required for relationship validation'." persistent-hint :error-messages="vMember$.proof_of_relationship_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.proof_of_relationship_file.$touch()"></v-file-input>
-              <v-img v-if="memberRelationshipProofPreviewUrl" :src="memberRelationshipProofPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+              <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+              <v-img v-if="memberRelationshipProofPreviewUrl" :src="memberRelationshipProofPreviewUrl" class="mt-2" height="150" contain></v-img>
             </v-col>
 
             <v-col cols="12" md="3">
@@ -272,7 +336,8 @@
             <v-col cols="12" md="6">
               <label class="v-label">Upload Voter's ID Card</label>
               <v-file-input v-model="memberForm.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vMember$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.voter_id_file.$touch()"></v-file-input>
-              <v-img v-if="memberVoterIdPreviewUrl" :src="memberVoterIdPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+              <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+              <v-img v-if="memberVoterIdPreviewUrl" :src="memberVoterIdPreviewUrl" class="mt-2" height="150" contain></v-img>
             </v-col>
           </v-row>
           
@@ -287,7 +352,8 @@
             <v-col cols="12" md="6">
               <label class="v-label">Upload PWD ID Card</label>
               <v-file-input v-model="memberForm.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vMember$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.pwd_card_file.$touch()"></v-file-input>
-              <v-img v-if="memberPwdCardPreviewUrl" :src="memberPwdCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
+            <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+              <v-img v-if="memberPwdCardPreviewUrl" :src="memberPwdCardPreviewUrl" class="mt-2" height="150" contain></v-img>
             </v-col>
           </v-row>
           <v-row v-if="isMemberSenior">
@@ -301,26 +367,11 @@
               <v-col cols="12" md="6">
                 <label class="v-label">Upload Senior Citizen ID Card</label>
                 <v-file-input v-model="memberForm.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vMember$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.senior_citizen_card_file.$touch()"></v-file-input>
-                <v-img v-if="memberSeniorCardPreviewUrl" :src="memberSeniorCardPreviewUrl" class="mt-2" max-height="150" contain></v-img>
-              </v-col>
+                <!-- BUG FIX: Changed max-height to explicit height for reliable rendering -->
+                <v-img v-if="memberSeniorCardPreviewUrl" :src="memberSeniorCardPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
             </template>
           </v-row>
-          
-          <!-- <template v-if="memberAge >= 15">
-            <v-divider class="my-6"></v-divider>
-            <p class="text-subtitle-2 mb-4">Account Creation (Optional, for ages 15+)</p>
-            <v-row>
-              <v-col cols="12" md="6">
-                <label class="v-label">Email Address</label>
-                <v-text-field v-model="memberForm.email" label="Email Address" type="email" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.email.$errors.map(e => e.$message)" @blur="vMember$.email.$touch()"></v-text-field>
-              </v-col>
-              <v-col cols="12" md="6">
-                <label class="v-label">Password</label>
-                <v-text-field v-model="memberForm.password" label="Password" :type="showMemberPassword ? 'text' : 'password'" variant="outlined" hint="Required if creating an account" persistent-hint :error-messages="vMember$.password.$errors.map(e => e.$message)" @blur="vMember$.password.$touch()" :append-inner-icon="showMemberPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showMemberPassword = !showMemberPassword"></v-text-field>
-              </v-col>
-            </v-row>
-          </template> -->
-
         </v-card-text>
         <v-card-actions>
           <v-spacer></v-spacer>
@@ -333,10 +384,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, watch } from 'vue';
+import { reactive, ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'; // Import onBeforeUnmount
 import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alpha } from '@vuelidate/validators';
+import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alphaNum } from '@vuelidate/validators'; // Added alphaNum
 import { useMyFetch } from '~/composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -354,18 +405,32 @@ const form = reactive({
   sex: null, date_of_birth: '',
   civil_status: null, citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '',
   password: '', confirmPassword: '',
-  address_house_number: '', address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
-  years_at_current_address: null, proof_of_residency_file: null,
+  address_house_number: '', 
+  address_unit_room_apt_number: '', // NEW: Unit/Room/Apartment number
+  address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  type_of_household: null, // NEW: Type of Household
+  years_at_current_address: null, 
+  proof_of_residency_file: [], // Changed to array for multiple File objects
+  authorization_letter_file: null, // NEW: Authorization Letter file object
   is_voter: false, voter_id_number: '', voter_id_file: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null,
   household_members_to_create: [],
 });
 
+// NEW: Temporary ref for new file selection in proof of residency
+const newProofResidencyFiles = ref([]); 
+
+// Refs to store generated object URLs for single file previews
 const voterIdPreviewUrl = ref(null);
 const pwdCardPreviewUrl = ref(null);
 const seniorCardPreviewUrl = ref(null);
-const proofResidencyPreviewUrl = ref(null);
+const authorizationLetterPreviewUrl = ref(null); 
+
+// Ref to store { file: File, url: string, id: number } for multiple proof of residency previews
+// We use 'id' for stable keys in v-for and easier revocation
+const proofResidencyPreviews = ref([]); 
+let proofResidencyIdCounter = 0; // To generate unique IDs for previews
 
 const calculateAge = (dob) => {
   if (!dob) return null;
@@ -410,14 +475,29 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
   sex: { required }, date_of_birth: dateOfBirthValidation,
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
-  password: { required, minLength: minLength(6) },
+  password: { 
+    required, 
+    minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
+    hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
+    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
+  },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
-  address_house_number: { required, numeric }, address_street: { required }, address_subdivision_zone: { required },
-  years_at_current_address: { required, numeric }, proof_of_residency_file: { required: helpers.withMessage('Proof of Residency is required.', required) },
+  address_house_number: { required, numeric }, 
+  address_unit_room_apt_number: { }, // NEW: Unit/Room/Apartment number (optional for now)
+  address_street: { required }, 
+  address_subdivision_zone: { required },
+  type_of_household: { }, // NEW: Type of Household (required)
+  years_at_current_address: { required, numeric }, 
+  proof_of_residency_file: { 
+    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0) 
+  }, // Updated validation for array of File objects
+  authorization_letter_file: {}, // NEW: Optional file
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => form.is_voter && !form.voter_id_number)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf(() => form.is_pwd && !form.pwd_card_file)) },
   pwd_card_file: { requiredIf: helpers.withMessage('PWD Card or ID Number is required.', requiredIf(() => form.is_pwd && !form.pwd_id)) },
+  senior_citizen_id: { requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_card_file)) },
+  senior_citizen_card_file: { requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf(() => form.is_senior_citizen && !form.senior_citizen_id)) },
 };
 const vHead$ = useVuelidate(headRules, form);
 
@@ -470,24 +550,116 @@ const memberRules = {
 };
 const vMember$ = useVuelidate(memberRules, memberForm);
 
+// Helper function to create/revoke object URLs
 const urlCreator = (file) => file ? URL.createObjectURL(file) : null;
+const urlRevoker = (url) => { if (url) URL.revokeObjectURL(url); };
 
-watch(() => form.voter_id_file, (newFile) => { voterIdPreviewUrl.value = urlCreator(newFile); });
-watch(() => form.pwd_card_file, (newFile) => { pwdCardPreviewUrl.value = urlCreator(newFile); });
-watch(() => form.senior_citizen_card_file, (newFile) => { seniorCardPreviewUrl.value = urlCreator(newFile); });
-watch(() => form.proof_of_residency_file, (newFile) => { proofResidencyPreviewUrl.value = urlCreator(newFile); });
+// Watch for changes in the temporary input for Proof of Residency
+// This watches the v-file-input's model-value (new files selected)
+watch(newProofResidencyFiles, (newFiles) => {
+  if (newFiles && newFiles.length > 0) {
+    // Add new files to the main form array
+    form.proof_of_residency_file.push(...newFiles);
+    // Clear the temporary input so the v-file-input itself visually resets
+    newProofResidencyFiles.value = [];
+    vHead$.value.proof_of_residency_file.$touch(); // Re-trigger validation for the main array
+  }
+});
 
-watch(() => memberForm.voter_id_file, (newFile) => { memberVoterIdPreviewUrl.value = urlCreator(newFile); });
-watch(() => memberForm.pwd_card_file, (newFile) => { memberPwdCardPreviewUrl.value = urlCreator(newFile); });
-watch(() => memberForm.senior_citizen_card_file, (newFile) => { memberSeniorCardPreviewUrl.value = urlCreator(newFile); });
-watch(() => memberForm.proof_of_relationship_file, (newFile) => { memberRelationshipProofPreviewUrl.value = urlCreator(newFile); });
+// Watch the actual form.proof_of_residency_file array for changes
+// This is where we manage the creation and revocation of object URLs for previews
+watch(() => form.proof_of_residency_file, (currentFiles, oldFiles) => {
+  // Revoke URLs for files that are no longer in the list
+  if (oldFiles) {
+    const oldFileUrls = new Map(oldFiles.map((f, i) => [f, proofResidencyPreviews.value[i]?.url]));
+    const currentFileSet = new Set(currentFiles);
+    proofResidencyPreviews.value.forEach(item => {
+      if (!currentFileSet.has(item.file)) {
+        urlRevoker(item.url);
+      }
+    });
+  }
+
+  // Generate new previews for current files, re-using existing ones if possible
+  const newPreviews = [];
+  currentFiles.forEach(file => {
+    // Find if this file already has a preview
+    const existingPreview = proofResidencyPreviews.value.find(p => p.file === file);
+    if (existingPreview) {
+      newPreviews.push(existingPreview);
+    } else {
+      // Create new preview
+      newPreviews.push({
+        file: file,
+        url: urlCreator(file),
+        id: proofResidencyIdCounter++ // Assign a unique ID
+      });
+    }
+  });
+  proofResidencyPreviews.value = newPreviews;
+}, { deep: true, immediate: true }); // Deep watch for array content, immediate for initial load
+
+// Watchers for single file previews (ensure old URLs are revoked)
+watch(() => form.voter_id_file, (newFile, oldFile) => { 
+  urlRevoker(voterIdPreviewUrl.value); 
+  voterIdPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => form.pwd_card_file, (newFile, oldFile) => { 
+  urlRevoker(pwdCardPreviewUrl.value); 
+  pwdCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => form.senior_citizen_card_file, (newFile, oldFile) => { 
+  urlRevoker(seniorCardPreviewUrl.value); 
+  seniorCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => form.authorization_letter_file, (newFile, oldFile) => { 
+  urlRevoker(authorizationLetterPreviewUrl.value); 
+  authorizationLetterPreviewUrl.value = urlCreator(newFile); 
+}); 
+
+watch(() => memberForm.voter_id_file, (newFile, oldFile) => { 
+  urlRevoker(memberVoterIdPreviewUrl.value);
+  memberVoterIdPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.pwd_card_file, (newFile, oldFile) => { 
+  urlRevoker(memberPwdCardPreviewUrl.value);
+  memberPwdCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.senior_citizen_card_file, (newFile, oldFile) => { 
+  urlRevoker(memberSeniorCardPreviewUrl.value);
+  memberSeniorCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.proof_of_relationship_file, (newFile, oldFile) => { 
+  urlRevoker(memberRelationshipProofPreviewUrl.value);
+  memberRelationshipProofPreviewUrl.value = urlCreator(newFile); 
+});
+
+
+const removeProofOfResidencyImage = (indexToRemove) => {
+  // Revoke the specific URL for the item being removed
+  urlRevoker(proofResidencyPreviews.value[indexToRemove]?.url);
+  // Remove from both form data and preview data
+  form.proof_of_residency_file.splice(indexToRemove, 1);
+  proofResidencyPreviews.value.splice(indexToRemove, 1); // Keep previews in sync
+  vHead$.value.proof_of_residency_file.$touch(); // Re-trigger validation
+};
 
 const openMemberDialog = (index = null) => { 
   if (index !== null) {
     editingMemberIndex.value = index;
     Object.assign(memberForm, form.household_members_to_create[index]);
+    // Set previews for existing member files if they exist
+    memberVoterIdPreviewUrl.value = urlCreator(memberForm.voter_id_file);
+    memberPwdCardPreviewUrl.value = urlCreator(memberForm.pwd_card_file);
+    memberSeniorCardPreviewUrl.value = urlCreator(memberForm.senior_citizen_card_file);
+    memberRelationshipProofPreviewUrl.value = urlCreator(memberForm.proof_of_relationship_file);
   } else {
     editingMemberIndex.value = null;
+    Object.assign(memberForm, getInitialMemberForm()); // Reset form for new member
+    urlRevoker(memberVoterIdPreviewUrl.value); memberVoterIdPreviewUrl.value = null;
+    urlRevoker(memberPwdCardPreviewUrl.value); memberPwdCardPreviewUrl.value = null;
+    urlRevoker(memberSeniorCardPreviewUrl.value); memberSeniorCardPreviewUrl.value = null;
+    urlRevoker(memberRelationshipProofPreviewUrl.value); memberRelationshipProofPreviewUrl.value = null;
   }
   showMemberDialog.value = true;
 };
@@ -496,6 +668,12 @@ const closeMemberDialog = () => {
     showMemberDialog.value = false;
     editingMemberIndex.value = null;
     vMember$.value.$reset();
+    // Revoke object URLs for memberForm files before resetting
+    urlRevoker(memberVoterIdPreviewUrl.value);
+    urlRevoker(memberPwdCardPreviewUrl.value);
+    urlRevoker(memberSeniorCardPreviewUrl.value);
+    urlRevoker(memberRelationshipProofPreviewUrl.value);
+
     Object.assign(memberForm, getInitialMemberForm());
     memberVoterIdPreviewUrl.value = null;
     memberPwdCardPreviewUrl.value = null;
@@ -516,33 +694,36 @@ const saveMember = async () => {
   closeMemberDialog();
 };
 
-const removeMember = (index) => { form.household_members_to_create.splice(index, 1); };
+const removeMember = (index) => { 
+  // For robustness, revoke URLs associated with the member's files if they exist
+  const memberToRemove = form.household_members_to_create[index];
+  urlRevoker(urlCreator(memberToRemove.voter_id_file));
+  urlRevoker(urlCreator(memberToRemove.pwd_card_file));
+  urlRevoker(urlCreator(memberToRemove.senior_citizen_card_file));
+  urlRevoker(urlCreator(memberToRemove.proof_of_relationship_file));
+
+  form.household_members_to_create.splice(index, 1); 
+};
 
 
-const convertFileToBase64 = (files) => {
+const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
-    if (!files) {
+    if (!file) { // Handle null or undefined file
       resolve(null);
       return;
     }
 
-    let file = null;
-
-    if (typeof files === 'string') {
-      resolve(files);
+    // If it's already a base64 string (e.g., from an existing record), resolve it as is.
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      resolve(file);
       return;
     }
 
-    if (Array.isArray(files) && files.length > 0) {
-      file = files[0];
-    }
-    else if (files instanceof File || files instanceof Blob) {
-      file = files;
-    }
-
-    if (!file) {
-      resolve(null);
-      return;
+    // Ensure it's a File object or something that FileReader can handle
+    if (!(file instanceof File || file instanceof Blob)) {
+        console.warn('Attempted to convert non-File/Blob object to base64:', file);
+        resolve(null);
+        return;
     }
 
     const reader = new FileReader();
@@ -552,7 +733,6 @@ const convertFileToBase64 = (files) => {
   });
 };
 
-// --- UPDATED AND CORRECTED FUNCTION ---
 async function saveResidentAndHousehold() {
   const isFormCorrect = await vHead$.value.$validate();
   
@@ -568,47 +748,49 @@ async function saveResidentAndHousehold() {
 
   saving.value = true;
   try {
-    // Create a shallow copy of the form to build the payload.
-    // Avoids JSON.stringify issues with File objects.
-    const payload = { ...form }; // 'form' already includes 'suffix'
+    const payload = { ...form }; // 'form' already includes 'suffix', address_unit_room_apt_number, type_of_household
     
     // Assign calculated and head-specific properties
     payload.age = headCalculatedAge.value; // Send age for head, backend also calculates it
     payload.is_household_head = true;
-    payload.status = 'Approved';
-    payload.date_approved = new Date().toISOString();
-    
+    payload.status = 'Pending'; // New registrations are pending for approval
+    // payload.date_approved is set on approval, not here
+
     // Convert all files for the HEAD to base64
-    [
-      payload.voter_registration_proof_base64,
-      payload.pwd_card_base64,
-      payload.senior_citizen_card_base64,
-      payload.proof_of_residency_base64
+    const [
+      voter_registration_proof_base64,
+      pwd_card_base64,
+      senior_citizen_card_base64,
+      proof_of_residency_base64_array, // This will be an array of base64 strings
+      authorization_letter_base64 // NEW: Authorization Letter base64
     ] = await Promise.all([
       convertFileToBase64(form.voter_id_file),
       convertFileToBase64(form.pwd_card_file),
       convertFileToBase64(form.senior_citizen_card_file),
-      convertFileToBase64(form.proof_of_residency_file)
+      // Map and convert each proof of residency file to base64
+      Promise.all(form.proof_of_residency_file.map(file => convertFileToBase64(file))),
+      convertFileToBase64(form.authorization_letter_file) // NEW
     ]);
+
+    payload.voter_registration_proof_base64 = voter_registration_proof_base64;
+    payload.pwd_card_base64 = pwd_card_base64;
+    payload.senior_citizen_card_base64 = senior_citizen_card_base64;
+    payload.proof_of_residency_base64 = proof_of_residency_base64_array.filter(Boolean); // Filter out any nulls
+    payload.authorization_letter_base64 = authorization_letter_base64; // NEW
     
     // Process all members: convert their files and prepare them for the payload
     payload.household_members_to_create = await Promise.all(
       form.household_members_to_create.map(async (member) => {
-        // Create a copy of the member to avoid mutating the original state
         const newMemberPayload = { ...member }; // 'member' object already includes 'suffix'
         
-        // Set status for each member
-        newMemberPayload.status = 'Approved';
-        newMemberPayload.date_approved = new Date().toISOString();
-        // Backend's createResidentDocument recalculates age, so explicitly sending it from frontend is not strictly necessary.
-        // newMemberPayload.age = calculateAge(member.date_of_birth); // Optional: if you want to send age from frontend
+        newMemberPayload.status = 'Pending'; // New member registrations are also pending
+        // newMemberPayload.date_approved is set on approval
 
-        // Convert all files for this member to base64
         const [
-            voter_registration_proof_base64,
-            pwd_card_base64,
-            senior_citizen_card_base64,
-            proof_of_relationship_base64 // This now gets converted correctly
+            member_voter_registration_proof_base64,
+            member_pwd_card_base64,
+            member_senior_citizen_card_base64,
+            member_proof_of_relationship_base64
         ] = await Promise.all([
             convertFileToBase64(member.voter_id_file),
             convertFileToBase64(member.pwd_card_file),
@@ -616,11 +798,10 @@ async function saveResidentAndHousehold() {
             convertFileToBase64(member.proof_of_relationship_file)
         ]);
 
-        // Assign base64 strings to the new member payload
-        newMemberPayload.voter_registration_proof_base64 = voter_registration_proof_base64;
-        newMemberPayload.pwd_card_base64 = pwd_card_base64;
-        newMemberPayload.senior_citizen_card_base64 = senior_citizen_card_base64;
-        newMemberPayload.proof_of_relationship_base64 = proof_of_relationship_base64;
+        newMemberPayload.voter_registration_proof_base64 = member_voter_registration_proof_base64;
+        newMemberPayload.pwd_card_base64 = member_pwd_card_base64;
+        newMemberPayload.senior_citizen_card_base64 = member_senior_citizen_card_base64;
+        newMemberPayload.proof_of_relationship_base64 = member_proof_of_relationship_base64;
 
         // Clean up original file properties from the payload
         delete newMemberPayload.voter_id_file;
@@ -636,25 +817,50 @@ async function saveResidentAndHousehold() {
     delete payload.voter_id_file;
     delete payload.pwd_card_file;
     delete payload.senior_citizen_card_file;
-    delete payload.proof_of_residency_file;
+    delete payload.proof_of_residency_file; // Remove the array of File objects
+    delete payload.authorization_letter_file; // NEW
     delete payload.confirmPassword; // confirmPassword is only for frontend validation
     
-    // Send the fully prepared payload to the backend
     const { data, error } = await useMyFetch("/api/admin/residents", { method: 'post', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Error registering household.');
     
-    $toast.fire({ title: 'Household registered successfully! All accounts are now active.', icon: 'success' });
+    $toast.fire({ title: 'Household registered successfully! It is now approved.', icon: 'success' });
     
     router.push('/residents-account-management');
 
   } catch (err) {
-    $toast.fire({ title: err.message, icon: 'error' });
+    console.error("Registration error:", err);
+    $toast.fire({ title: err.message || 'An unexpected error occurred.', icon: 'error' });
   } finally {
     saving.value = false;
   }
 }
+
+// Ensure all object URLs are revoked when the component is unmounted to prevent memory leaks
+onBeforeUnmount(() => {
+  urlRevoker(voterIdPreviewUrl.value);
+  urlRevoker(pwdCardPreviewUrl.value);
+  urlRevoker(seniorCardPreviewUrl.value);
+  urlRevoker(authorizationLetterPreviewUrl.value);
+
+  proofResidencyPreviews.value.forEach(item => urlRevoker(item.url));
+
+  urlRevoker(memberVoterIdPreviewUrl.value);
+  urlRevoker(memberPwdCardPreviewUrl.value);
+  urlRevoker(memberSeniorCardPreviewUrl.value);
+  urlRevoker(memberRelationshipProofPreviewUrl.value);
+
+  // Note: For household members that might still be in the `form.household_members_to_create`
+  // when the component unmounts, their file URLs would also need explicit revocation
+  // if they were not already handled (e.g., if a member dialog was closed).
+  // This is a more complex cleanup scenario, but important for long-lived components.
+});
+
 </script>
 
 <style scoped>
 .v-label { opacity: 1; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity)); display: block; margin-bottom: 4px; font-weight: 500; }
+.gap-2 { gap: 8px; } /* Added utility class for spacing */
+.position-relative { position: relative; }
+.position-absolute { position: absolute; }
 </style>
