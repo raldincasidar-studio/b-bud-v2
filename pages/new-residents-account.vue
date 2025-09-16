@@ -217,7 +217,63 @@
         <v-row>
             <v-col cols="12" sm="6">
               <label class="v-label">Password *</label>
-              <v-text-field v-model="form.password" label="Password *" :type="showHeadPassword ? 'text' : 'password'" variant="outlined" hint="Minimum 8 characters, with uppercase and special character." persistent-hint :error-messages="vHead$.password.$errors.map(e => e.$message)" @blur="vHead$.password.$touch()" :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" @click:append-inner="showHeadPassword = !showHeadPassword"></v-text-field>
+              <v-text-field 
+                v-model="form.password" 
+                label="Password *" 
+                :type="showHeadPassword ? 'text' : 'password'" 
+                variant="outlined" 
+                hint="Minimum 8 characters, with lowercase, uppercase, numbers, and special characters. At least 3 types required." 
+                persistent-hint 
+                :error-messages="vHead$.password.$errors.map(e => e.$message)" 
+                @blur="vHead$.password.$touch()" 
+                :append-inner-icon="showHeadPassword ? 'mdi-eye-off' : 'mdi-eye'" 
+                @click:append-inner="showHeadPassword = !showHeadPassword">
+              </v-text-field>
+
+              <!-- Password Validation Checklist UI -->
+              <v-card class="mt-2" flat border>
+                <v-card-text class="py-2">
+                  <p class="text-subtitle-2 mb-2">Your password must contain:</p>
+                  <v-list density="compact" class="py-0">
+                    <v-list-item class="px-0 py-1" :class="{ 'text-success': hasEightCharacters }">
+                      <template v-slot:prepend>
+                        <v-icon :color="hasEightCharacters ? 'success' : 'grey'" :icon="hasEightCharacters ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>At least 8 characters</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item class="px-0 py-1">
+                      <template v-slot:prepend>
+                        <v-icon :color="atLeastThreeTypesValid ? 'success' : 'grey'" :icon="atLeastThreeTypesValid ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>At least 3 of the following:</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item class="px-4 py-0" :class="{ 'text-success': hasLowercase }">
+                      <template v-slot:prepend>
+                        <v-icon :color="hasLowercase ? 'success' : 'grey'" :icon="hasLowercase ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>Lower case letters (a-z)</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item class="px-4 py-0" :class="{ 'text-success': hasUppercase }">
+                      <template v-slot:prepend>
+                        <v-icon :color="hasUppercase ? 'success' : 'grey'" :icon="hasUppercase ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>Upper case letters (A-Z)</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item class="px-4 py-0" :class="{ 'text-success': hasNumber }">
+                      <template v-slot:prepend>
+                        <v-icon :color="hasNumber ? 'success' : 'grey'" :icon="hasNumber ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>Numbers (0-9)</v-list-item-title>
+                    </v-list-item>
+                    <v-list-item class="px-4 py-0" :class="{ 'text-success': hasSpecial }">
+                      <template v-slot:prepend>
+                        <v-icon :color="hasSpecial ? 'success' : 'grey'" :icon="hasSpecial ? 'mdi-check-circle' : 'mdi-circle-outline'"></v-icon>
+                      </template>
+                      <v-list-item-title>Special characters (e.g. !@#$%^&*)</v-list-item-title>
+                    </v-list-item>
+                  </v-list>
+                </v-card-text>
+              </v-card>
             </v-col>
             <v-col cols="12" sm="6">
               <label class="v-label">Confirm Password *</label>
@@ -459,6 +515,23 @@ const dateOfBirthValidation = {
   })
 };
 
+// Computed properties for real-time password validation UI
+const hasEightCharacters = computed(() => form.password.length >= 8);
+const hasLowercase = computed(() => /(?=.*[a-z])/.test(form.password));
+const hasUppercase = computed(() => /(?=.*[A-Z])/.test(form.password));
+const hasNumber = computed(() => /(?=.*\d)/.test(form.password));
+const hasSpecial = computed(() => /(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/.test(form.password));
+
+const atLeastThreeTypesValid = computed(() => {
+  let count = 0;
+  if (hasLowercase.value) count++;
+  if (hasUppercase.value) count++;
+  if (hasNumber.value) count++;
+  if (hasSpecial.value) count++;
+  return count >= 3;
+});
+
+
 const headRules = {
   first_name: { 
   required, 
@@ -478,15 +551,25 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
   password: { 
     required, 
     minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
+    hasLowercase: helpers.withMessage('Must contain at least one lowercase letter.', helpers.regex(/(?=.*[a-z])/)), // NEW
     hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
-    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/))
+    hasNumber: helpers.withMessage('Must contain at least one number (0-9).', helpers.regex(/(?=.*\d)/)), // NEW
+    hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/)),
+    atLeastThreeTypes: helpers.withMessage('Must contain at least 3 of the 4 types (lowercase, uppercase, numbers, special characters).', (value) => {
+        let count = 0;
+        if (/(?=.*[a-z])/.test(value)) count++;
+        if (/(?=.*[A-Z])/.test(value)) count++;
+        if (/(?=.*\d)/.test(value)) count++;
+        if (/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/.test(value)) count++;
+        return count >= 3;
+    })
   },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
   address_house_number: { required, numeric }, 
   address_unit_room_apt_number: { }, // NEW: Unit/Room/Apartment number (optional for now)
   address_street: { required }, 
   address_subdivision_zone: { required },
-  type_of_household: { }, // NEW: Type of Household (required)
+  type_of_household: { required: helpers.withMessage('Type of Household is required.', required) }, // NEW: Type of Household (required)
   years_at_current_address: { required, numeric }, 
   proof_of_residency_file: { 
     required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0) 
@@ -863,4 +946,8 @@ onBeforeUnmount(() => {
 .gap-2 { gap: 8px; } /* Added utility class for spacing */
 .position-relative { position: relative; }
 .position-absolute { position: absolute; }
+.v-list-item-title {
+  font-size: 0.875rem !important; /* Adjust font size to fit */
+  line-height: 1.2; /* Adjust line height for better spacing */
+}
 </style>
