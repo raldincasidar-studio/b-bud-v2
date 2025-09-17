@@ -126,7 +126,7 @@
           </v-row>
 
           <!-- New row for Filter by Year dropdown, aligned below Start/End Date -->
-          <v-row>
+          <!-- <v-row>
             <v-col cols="12" md="3">
               <v-select
                 v-model="selectedYear"
@@ -141,7 +141,7 @@
                 class="mt-0 pt-0 pr-2"
               ></v-select>
             </v-col>
-          </v-row>
+          </v-row> -->
         </v-card-text>
         <v-divider></v-divider>
         <!-- End Date Range Selection & Actions -->
