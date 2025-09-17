@@ -5,7 +5,7 @@
         <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
         <p class="mt-4 text-grey-darken-1">Loading Transaction Details...</p>
     </div>
-    <v-alert v-else-if="!transactionData._id" type="error" prominent border="start">
+    <v-alert v-else-if="!transactionData || !transactionData._id" type="error" prominent border="start">
       <template v-slot:title>Transaction Not Found</template>
       The transaction you are looking for does not exist or could not be loaded. It may have been deleted.
       <template v-slot:append>
@@ -18,7 +18,7 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Manage Transaction</h2>
-          <p class="text-grey-darken-1">Ref #: {{ transactionId }}</p>
+          <p class="text-grey-darken-1">Ref #: {{ transactionData.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
             <!-- ADDED: Status Chip -->
@@ -106,6 +106,24 @@
 
             </v-card-text>
           </v-card>
+
+          <!-- ✨ Borrowing Proof (Photo) Display ✨ -->
+          <v-card flat border prepend-icon="mdi-camera" title="Borrowing Proof (Photo)" class="mt-4">
+            <v-card-text>
+              <div v-if="transactionData.borrow_proof_image_base64" class="pa-2">
+                  <v-img
+                    :src="transactionData.borrow_proof_image_base64"
+                    max-height="300"
+                    class="elevation-2 rounded-lg border cursor-pointer"
+                    @click="openGallery('borrow_proof')"
+                  ></v-img>
+                  <p class="text-caption text-grey-darken-1 mt-2">Click image to enlarge</p>
+              </div>
+              <v-alert v-else type="info" variant="tonal" text="No borrowing proof was uploaded."></v-alert>
+            </v-card-text>
+          </v-card>
+          <!-- ✨ END Borrowing Proof (Photo) Display ✨ -->
+
         </v-col>
 
         <!-- Right Column: Status & Return Management -->
@@ -118,7 +136,7 @@
                     <v-list-item-subtitle>Current Status</v-list-item-subtitle>
                 </v-list-item>
                 <v-divider></v-divider>
-                
+
                 <!-- Status Management for Pending/Processing -->
                 <div v-if="['Pending', 'Processing'].includes(transactionData.status)">
                     <v-card-text>
@@ -135,6 +153,7 @@
                 <div v-if="['Approved', 'Overdue', 'Returned'].includes(transactionData.status)">
                     <v-card-text>
                         <p class="text-body-2 mb-4">Once the resident returns the item, upload proof and add notes on its condition.</p>
+                        <!-- Updated v-model to match single file behavior -->
                         <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined"  prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
                         <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3"></v-textarea>
                     </v-card-text>
@@ -153,14 +172,15 @@
                             <v-divider inset></v-divider>
                             <v-list-item title="Return Condition Notes" :subtitle="transactionData.return_condition_notes || 'No notes provided.'"></v-list-item>
                         </v-list>
-                        <div v-if="transactionData.return_proof_image_url" class="pa-2 mt-2">
+                        <!-- ✨ UPDATED: Display return_proof_image_base64 ✨ -->
+                        <div v-if="transactionData.return_proof_image_base64" class="pa-2 mt-2">
                             <p class="text-subtitle-2 mb-2">Return Proof:</p>
-                            <v-img :src="transactionData.return_proof_image_url" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
+                            <v-img :src="transactionData.return_proof_image_base64" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
                         </div>
                         <v-alert v-else type="info" variant="tonal" class="mt-2" text="No return proof was uploaded."></v-alert>
                     </v-card-text>
                 </div>
-                
+
                 <!-- Problem Management (Lost/Damaged) -->
                  <div v-else-if="['Lost', 'Damaged'].includes(transactionData.status)">
                     <v-card-text>
@@ -226,8 +246,6 @@ import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 import Swal from 'sweetalert2';
 
-// NOTE: This STATUS_CONFIG is already correctly defined and used for the chip and list-item.
-// The tracker steps will use their own icons, primarily derived from here.
 const STATUS_CONFIG = {
   Pending:    { color: 'blue-grey', icon: 'mdi-clock-outline' },
   Processing: { color: 'blue', icon: 'mdi-cogs' },
@@ -249,7 +267,7 @@ const router = useRouter();
 const transactionId = route.params.id;
 
 // --- STATE ---
-const transactionData = ref({});
+const transactionData = ref(null); // Initialized as null for explicit "no data" state
 const form = reactive({ item_borrowed: '', quantity_borrowed: 1, borrow_datetime: '', expected_return_date: '', notes: '' });
 const returnForm = reactive({ proofImage: null, conditionNotes: '' });
 
@@ -263,28 +281,39 @@ const confirmDeleteDialog = ref(false);
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
+// ✨ UPDATED: imageGallerySource computed property to include both Base64 proofs ✨
 const imageGallerySource = computed(() => {
   const items = [];
-  if (transactionData.value.return_proof_image_url) {
-    items.push({ 
-      id: 'return_proof', 
-      src: transactionData.value.return_proof_image_url, 
-      title: 'Return Proof' 
+  if (transactionData.value?.borrow_proof_image_base64) {
+    items.push({
+      id: 'borrow_proof',
+      src: transactionData.value.borrow_proof_image_base64,
+      title: 'Borrowing Proof'
+    });
+  }
+  if (transactionData.value?.return_proof_image_base64) { // Use the new Base64 field
+    items.push({
+      id: 'return_proof',
+      src: transactionData.value.return_proof_image_base64,
+      title: 'Return Proof'
     });
   }
   return items;
 });
 
+// ✨ UPDATED: openGallery function to correctly find the image in the gallerySource ✨
 function openGallery(id) {
   const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
   if (foundIndex > -1) {
     currentGalleryIndex.value = foundIndex;
     galleryDialog.value = true;
+  } else {
+    console.warn(`Image with ID '${id}' not found in gallery source.`);
+    $toast.fire({ title: 'Image not available or corrupted.', icon: 'warning' });
   }
 }
 
 // --- STATUS TRACKER CONFIGURATION (UPDATED) ---
-// Define tracker steps directly using your backend status names for the main progression
 const trackerSteps = ref([
     { name: 'Pending', icon: STATUS_CONFIG.Pending.icon },
     { name: 'Processing', icon: STATUS_CONFIG.Processing.icon },
@@ -293,7 +322,6 @@ const trackerSteps = ref([
     { name: 'Resolved', icon: STATUS_CONFIG.Resolved.icon }
 ]);
 
-// Computed properties for tracker failure states
 const isRejected = computed(() => transactionData.value?.status === 'Rejected');
 const isLostOrDamaged = computed(() => transactionData.value?.status === 'Lost' || transactionData.value?.status === 'Damaged');
 const isFailureState = computed(() => isRejected.value || isLostOrDamaged.value);
@@ -304,33 +332,22 @@ const activeStepIndex = computed(() => {
   const currentStatus = transactionData.value.status;
   const stepNames = trackerSteps.value.map(step => step.name);
 
-  // Handle failure states first
   if (isRejected.value) {
-    // Rejected typically happens during or after 'Processing'.
-    // We set 'Processing' as the failure point (index 1 in trackerSteps).
     return stepNames.indexOf('Processing');
   }
   if (isLostOrDamaged.value) {
-    // Lost/Damaged happens after 'Approved' (item has been released).
-    // We set 'Approved' as the failure point (index 2 in trackerSteps).
     return stepNames.indexOf('Approved');
   }
 
-  // Handle normal progression statuses and 'Overdue'
   let index = stepNames.indexOf(currentStatus);
-  
-  // 'Overdue' is a state that occurs when the item is 'Approved' but not returned on time.
-  // From the tracker's progression, it's still at the 'Approved' stage awaiting return/resolution.
   if (currentStatus === 'Overdue') {
       index = stepNames.indexOf('Approved');
   }
-
   return index;
 });
 
 const progressWidth = computed(() => {
   if (activeStepIndex.value < 0) return '0%';
-  // Ensure we don't divide by zero if there's only one step
   const totalStepsForProgressBar = trackerSteps.value.length > 1 ? (trackerSteps.value.length - 1) : 1;
   const percentage = (activeStepIndex.value / totalStepsForProgressBar) * 100;
   return `${percentage}%`;
@@ -346,8 +363,11 @@ async function fetchTransaction() {
   loading.value = true;
   try {
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`);
-    if (error.value || !data.value?.transaction) throw new Error('Transaction not found or could not be loaded.');
-    
+    if (error.value || !data.value?.transaction) {
+      transactionData.value = null; // Explicitly set to null on error or no data
+      throw new Error('Transaction not found or could not be loaded.');
+    }
+
     let currentTransaction = data.value.transaction;
 
     // Auto-update 'Pending' to 'Processing'
@@ -358,23 +378,30 @@ async function fetchTransaction() {
 
       if (updateError.value) {
         console.warn('Could not auto-update status to Processing.', updateError.value);
-      } else {
+      } else if (updateData.value?.transaction) {
         currentTransaction = updateData.value.transaction;
       }
     }
-    
+
     transactionData.value = currentTransaction;
     resetForm();
 
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
+    transactionData.value = null; // Ensure it's null when an error occurs
   } finally {
     loading.value = false;
   }
 }
 
 // --- FORM & UI LOGIC ---
+// ✨ UPDATED: resetForm to be robust against null transactionData.value ✨
 function resetForm() {
+    if (!transactionData.value) {
+        Object.assign(form, { item_borrowed: '', quantity_borrowed: 0, borrow_datetime: '', expected_return_date: '', notes: '' });
+        return;
+    }
+
     Object.assign(form, {
         item_borrowed: transactionData.value.item_borrowed,
         quantity_borrowed: transactionData.value.quantity_borrowed,
@@ -386,10 +413,21 @@ function resetForm() {
 
 const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) resetForm(); };
 const cancelEdit = () => toggleEditMode(false);
+
+// ✨ UPDATED: fileSizeRule to handle single File object for v-file-input consistently ✨
 const fileSizeRule = (value) => {
-    if (!value || !value.length) return true;
-    const file = value[0];
-    return file.size < 2000000 || 'Image size should be less than 2 MB!';
+    if (!value) return true;
+
+    let fileToValidate = null;
+    if (value instanceof File) {
+      fileToValidate = value;
+    } else if (Array.isArray(value) && value.length > 0) {
+      fileToValidate = value[0];
+    }
+
+    if (!fileToValidate) return true;
+
+    return fileToValidate.size < 2000000 || 'Image size should be less than 2 MB!';
 };
 
 // --- API ACTIONS ---
@@ -399,9 +437,9 @@ async function saveChanges() {
     const payload = { ...form, borrow_datetime: new Date(form.borrow_datetime).toISOString(), expected_return_date: new Date(form.expected_return_date).toISOString() };
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update.');
-    
+
     $toast.fire({ title: 'Transaction updated!', icon: 'success' });
-    await fetchTransaction(); 
+    await fetchTransaction();
     toggleEditMode(false);
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { isSaving.value = false; }
@@ -428,23 +466,21 @@ async function updateStatus(newStatus, promptForReason = false) {
             }
         });
 
-        if (!isConfirmed) return; // Exit if the user clicks "Cancel"
-        
-        // Add the provided reason to the API payload
+        if (!isConfirmed) return;
+
         apiPayload.notes = reason;
     }
 
-    // Call the API to update the status
     try {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
-            method: 'PATCH', 
+            method: 'PATCH',
             body: apiPayload,
         });
         if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
-        
+
         $toast.fire({ title: data.value.message, icon: 'success' });
-        
-        await fetchTransaction(); // Refresh data from the server
+
+        await fetchTransaction();
 
     } catch (e) {
         $toast.fire({ title: e.message, icon: 'error' });
@@ -454,7 +490,14 @@ async function updateStatus(newStatus, promptForReason = false) {
 async function processReturn() {
     isReturning.value = true;
     let imageBase64 = null;
-    const file = returnForm.proofImage ? returnForm.proofImage[0] : null;
+    let file = null; // Initialize file
+
+    // ✨ UPDATED: Corrected file extraction for v-file-input ✨
+    if (returnForm.proofImage instanceof File) {
+      file = returnForm.proofImage;
+    } else if (Array.isArray(returnForm.proofImage) && returnForm.proofImage.length > 0) {
+      file = returnForm.proofImage[0];
+    }
 
     if (file) {
         if (file.size > 2000000) {
@@ -476,7 +519,7 @@ async function processReturn() {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/return`, {
             method: 'PATCH',
             body: {
-                return_proof_image_base64: imageBase64,
+                return_proof_image_base64: imageBase64, // Send Base64 string to backend
                 return_condition_notes: returnForm.conditionNotes,
             },
         });
@@ -503,13 +546,10 @@ async function deleteTransaction() {
 // --- HELPER FUNCTIONS ---
 function getStepIcon(index, defaultIcon) {
     if (isFailureState.value) {
-        // For failure states, steps *before* the activeStepIndex are marked as 'completed'
-        // The activeStepIndex itself is the 'failure-point'
         if (index < activeStepIndex.value) return 'mdi-check';
         if (index === activeStepIndex.value) return 'mdi-close';
         return defaultIcon;
     }
-    // Normal successful flow
     if (index < activeStepIndex.value) {
         return 'mdi-check';
     }

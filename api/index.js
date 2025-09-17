@@ -4073,8 +4073,7 @@ const STATUS = {
 //   // Your implementation here...
 // }
 
-
-// 1. ADD NEW BORROW ASSET REQUEST (POST) - CORRECTED
+// 1. ADD NEW BORROW ASSET REQUEST (POST) - UPDATED TO EMBED BASE64 DIRECTLY
 app.post('/api/borrowed-assets', async (req, res) => {
   const dab = await db();
   const {
@@ -4086,6 +4085,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
     quantity_borrowed,
     expected_return_date,
     notes,
+    borrow_proof_image_base64, // Receives the Base64 image string (or null) from frontend
   } = req.body;
 
   // Validation
@@ -4099,6 +4099,11 @@ app.post('/api/borrowed-assets', async (req, res) => {
   if (isNaN(requestedQuantity) || requestedQuantity <= 0) {
       return res.status(400).json({ error: 'Quantity must be a number greater than 0.' });
   }
+
+  // IMPORTANT NOTE: When directly embedding Base64, consider the MongoDB document size limit (16MB).
+  // The frontend already has a 2MB file size validation rule, which helps, but doesn't guarantee against 16MB limit.
+  // No Cloudinary upload here, as per request to mimic "Filed Complaints".
+  // The 'borrow_proof_image_base64' is directly stored.
 
   try {
     // Gatekeeper: Check if the resident is allowed to borrow
@@ -4140,8 +4145,10 @@ app.post('/api/borrowed-assets', async (req, res) => {
       status: STATUS.PENDING,
       date_returned: null,
       date_resolved: null,
-      return_proof_image_url: null,
+      return_proof_image_url: null, // Keep if you intend to upload return proofs to Cloudinary later
       return_condition_notes: null,
+      // ✨ UPDATED: Directly store the Base64 string instead of a Cloudinary URL ✨
+      borrow_proof_image_base64: borrow_proof_image_base64 || null, // Store the Base64 string directly
       notes: notes ? String(notes).trim() : null,
       created_at: new Date(),
       updated_at: new Date(),
@@ -4165,9 +4172,9 @@ app.post('/api/borrowed-assets', async (req, res) => {
   } catch (error) {
     // --- CORRECTED ERROR HANDLING ---
     // Check if the error is from our account status gatekeeper
-    if (error.message.includes("On Hold/Deactivated")) {
+    if (error.message.includes("On Hold/Deactivated") || error.message.includes("pending approval") || error.message.includes("been declined")) {
       return res.status(403).json({ // 403 Forbidden is the correct HTTP status
-        error: 'Cannot borrow due to account status. On Hold/Deactivated.',
+        error: 'Cannot borrow due to account status.',
         message: error.message
       });
     }
@@ -4297,21 +4304,25 @@ const findByRefOrId = (id) => {
   return { ref_no: id };
 };
 
-// 3. GET TRANSACTION BY ID (GET) - UPDATED
+// 3. GET TRANSACTION BY ID (GET) - UPDATED to retrieve Base64 for both proofs
 app.get('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   try {
     const aggregationPipeline = [
-      { $match: findByRefOrId(id) }, 
+      { $match: findByRefOrId(id) },
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
       {
         $project: {
-          _id: 1, ref_no: 1, borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1, 
-          status: "$status", // Reads direct status
-          expected_return_date: 1, date_returned: 1, return_proof_image_url: 1, return_condition_notes: 1, notes: 1, 
+          _id: 1, ref_no: 1, borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1,
+          status: "$status",
+          expected_return_date: 1, date_returned: 1,
+          // ✨ IMPORTANT: PROJECT THE CORRECT FIELD FOR RETURN PROOF ✨
+          return_proof_image_base64: 1, // Changed from return_proof_image_url
+          return_condition_notes: 1, notes: 1,
+          borrow_proof_image_base64: 1, // Already correct for borrowing proof
           created_at: 1, updated_at: 1, borrower_resident_id: 1, borrower_display_name: 1, borrower_details: 1,
         }
       }
@@ -4432,7 +4443,7 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
   }
 });
 
-// 6. PROCESS ITEM RETURN (PATCH) - UPDATED
+// 6. PROCESS ITEM RETURN (PATCH) - UPDATED TO STORE BASE64
 app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
     const { id } = req.params;
     const { return_proof_image_base64, return_condition_notes } = req.body;
@@ -4445,13 +4456,20 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
         if (!transaction) { return res.status(404).json({ error: 'Transaction not found.' }); }
         if (![STATUS.APPROVED, STATUS.OVERDUE].includes(transaction.status)) { return res.status(400).json({ error: `Cannot return an item with status '${transaction.status}'.` }); }
 
-        const updateFields = { status: STATUS.RETURNED, date_returned: new Date(), return_proof_image_url: return_proof_image_base64 || null, return_condition_notes: return_condition_notes || "Item returned.", updated_at: new Date() };
+        // ✨ CRITICAL CHANGE HERE: Use return_proof_image_base64 field ✨
+        const updateFields = {
+            status: STATUS.RETURNED,
+            date_returned: new Date(),
+            return_proof_image_base64: return_proof_image_base64 || null, // Store Base64 directly
+            return_condition_notes: return_condition_notes || "Item returned.",
+            updated_at: new Date()
+        };
         await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
-        
+
         await checkAndReactivateAccount(dab, transaction.borrower_resident_id, transaction._id);
 
         await createAuditLog({ description: `Item returned for transaction: ${transaction.quantity_borrowed}x '${transaction.item_borrowed}'...`, action: "STATUS_CHANGE", entityType: "BorrowTransaction", entityId: transaction._id.toString() }, req);
-        
+
         // --- INSERT NOTIFICATION LOGIC HERE ---
         await createNotification(dab, {
           name: `Item Returned (Ref: ${transaction.ref_no})`,
