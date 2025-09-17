@@ -75,7 +75,7 @@ export default defineNuxtConfig({
         'Referrer-Policy': 'strict-origin-when-cross-origin',
         
         // Permissions-Policy: Controls which browser features and APIs can be used on the site.
-        'Permissions-Policy': "geolocation=(), microphone=(), camera=()",
+        'Permissions-Policy': "geolocation=(), microphone=(), camera=(self)",
       },
     },
   },
