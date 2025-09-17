@@ -1346,7 +1346,7 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 app.get('/api/residents', async (req, res) => {
   try {
     const {
-      search, status, is_voter, is_senior, is_pwd,
+      search, status, is_voter, is_senior, is_pwd, is_household_head, // ADDED is_household_head here
       occupation, minAge, maxAge, sortBy, sortOrder,
       start_date, end_date // <-- ADDED: Date range query parameters
     } = req.query;
@@ -1375,6 +1375,13 @@ app.get('/api/residents', async (req, res) => {
     if (is_pwd === 'true') filters.push({ is_pwd: true });
     if (is_senior === 'true') filters.push({ is_senior_citizen: true });
     if (occupation) filters.push({ occupation_status: occupation });
+
+    // --- ADDED: Household Role Filtering ---
+    if (is_household_head !== undefined) { // Check if the parameter is explicitly provided
+      // Convert string 'true'/'false' from query to boolean
+      filters.push({ is_household_head: is_household_head === 'true' });
+    }
+    // --- END ADDED Household Role Filtering ---
     
     if (minAge || maxAge) {
       const ageFilter = {};
@@ -2957,47 +2964,88 @@ app.post('/api/admins', async (req, res) => {
 
 // GET ALL ADMINS (GET)
 app.get('/api/admins', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    try {
+        const dab = await db(); // Assuming db() connects to your MongoDB
+        const collection = dab.collection('admins'); // Assuming 'admins' collection
 
-  const dab = await db();
-  const adminsCollection = dab.collection('admins');
+        const {
+            search,
+            page: reqPage,
+            itemsPerPage: reqItemsPerPage,
+            sortBy,
+            sortOrder,
+            start_date, // NEW: Date range start
+            end_date    // NEW: Date range end
+        } = req.query;
 
-  // UPDATED: Search query to use the new 'fullname' field
-  const query = search ? {
-    $or: [
-      { username: { $regex: new RegExp(search, 'i') } },
-      { name: { $regex: new RegExp(search, 'i') } }, // Search the combined name field
-      { email: { $regex: new RegExp(search, 'i') } },
-      { role: { $regex: new RegExp(search, 'i') } },
-    ]
-  } : {};
+        const page = parseInt(reqPage) || 1;
+        const itemsPerPage = parseInt(reqItemsPerPage) || 10;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
-  // UPDATED: Projection to return the new name fields
-  const admins = await adminsCollection.find(query, {
-    projection: {
-      username: 1,
-      firstname: 1,
-      middlename: 1,
-      lastname: 1,
-      name: 1, // Return the full name for display
-      email: 1,
-      role: 1,
-      _id: 1,
-      createdAt: 1,
-      action: { $ifNull: ["$action", ""] }
+        const filters = [];
+
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            filters.push({
+                $or: [
+                    { name: searchRegex },
+                    { username: searchRegex },
+                    { email: searchRegex },
+                    { role: searchRegex }
+                ]
+            });
+        }
+
+        // --- NEW: Add Date Range Filtering for 'createdAt' ---
+        if (start_date || end_date) {
+            const createdAtFilter = {};
+            if (start_date) {
+                createdAtFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+            }
+            if (end_date) {
+                createdAtFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+            }
+            if (Object.keys(createdAtFilter).length > 0) {
+                filters.push({ createdAt: createdAtFilter });
+            }
+        }
+        // --- END NEW Date Range Filtering ---
+
+        const finalQuery = filters.length > 0 ? { $and: filters } : {};
+
+        let sortOptions = { createdAt: -1 }; // Default sort by creation date descending
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
+
+        const admins = await collection.find(finalQuery)
+            .project({ // Select only necessary fields
+                name: 1,
+                username: 1,
+                email: 1,
+                role: 1,
+                createdAt: 1,
+                _id: 1
+            })
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        const totalAdmins = await collection.countDocuments(finalQuery);
+
+        res.json({
+            admins: admins,
+            totalAdmins: totalAdmins,
+            page: page,
+            itemsPerPage: itemsPerPage,
+            totalPages: Math.ceil(totalAdmins / itemsPerPage)
+        });
+
+    } catch (error) {
+        console.error("Error fetching admins:", error);
+        res.status(500).json({ error: 'Failed to fetch administrators.' });
     }
-  })
-    .skip((page - 1) * itemsPerPage)
-    .limit(itemsPerPage)
-    .toArray();
-
-  const totalAdmins = await adminsCollection.countDocuments(query);
-  res.json({
-    admins: admins,
-    totalAdmins: totalAdmins
-  });
 });
 
 // GET ADMIN BY ID (GET)
@@ -3222,12 +3270,14 @@ app.get('/api/barangay-officials', async (req, res) => {
             status: statusFilter,
             position: positionFilter,
             sortBy,
-            sortOrder
+            sortOrder,
+            term_start_gte, // NEW: Term start greater than or equal to
+            term_end_lte    // NEW: Term end less than or equal to
         } = req.query;
 
         const page = parseInt(req.query.page) || 1;
         const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-        const skip = (page - 1) * itemsPerPage;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
         // --- 2. (Optional but Recommended) Automatic Status Update ---
         // This ensures the data is always fresh before querying.
@@ -3237,9 +3287,16 @@ app.get('/api/barangay-officials', async (req, res) => {
             { status: 'Active', term_end: { $lt: currentDate } },
             { $set: { status: 'Inactive' } }
         );
-        // Set to 'Active' if they are within their term but still 'Inactive'
+        // Set to 'Active' if they are within their term (term_start <= now and term_end >= now or term_end is null)
         await collection.updateMany(
-            { status: 'Inactive', term_start: { $lte: currentDate }, term_end: { $gte: currentDate } },
+            { 
+                status: 'Inactive', 
+                term_start: { $lte: currentDate }, 
+                $or: [
+                    { term_end: { $gte: currentDate } },
+                    { term_end: null } // Officials with no end date are considered active
+                ]
+            },
             { $set: { status: 'Active' } }
         );
 
@@ -3247,10 +3304,10 @@ app.get('/api/barangay-officials', async (req, res) => {
         let query = {};
         const conditions = [];
 
-        if (statusFilter) {
+        if (statusFilter && statusFilter !== 'All') { // Assuming 'All' means no filter
             conditions.push({ status: statusFilter });
         }
-        if (positionFilter) {
+        if (positionFilter && positionFilter !== 'All') { // Assuming 'All' means no filter
             conditions.push({ position: positionFilter });
         }
         if (search) {
@@ -3263,6 +3320,27 @@ app.get('/api/barangay-officials', async (req, res) => {
                 ]
             });
         }
+        
+        // --- NEW: Add Term Date Range Filtering Conditions ---
+        if (term_start_gte) {
+            conditions.push({ term_start: { $gte: new Date(term_start_gte) } });
+        }
+        if (term_end_lte) {
+            // For term_end_lte, we want officials whose term ends on or before the specified date.
+            // We also need to consider officials whose term_end is null (representing 'Present' or indefinite).
+            // If term_end_lte is specified, it generally implies filtering for terms that have a defined end
+            // within that boundary. To include 'Present' officials only if their start date falls within
+            // the early part of the range, or if the end date is not explicitly bounded by term_end_lte,
+            // the logic can get complex.
+            //
+            // For simplicity and direct interpretation of "term_end_lte":
+            // We filter for officials whose 'term_end' is less than or equal to the provided date.
+            // This will exclude 'Present' officials (term_end: null) when term_end_lte is set,
+            // as 'null' is not <= a specific date. This seems to align with expecting a bounded term.
+            conditions.push({ term_end: { $lte: new Date(term_end_lte) } });
+        }
+        // --- END NEW Term Date Range Filtering Conditions ---
+
         if (conditions.length > 0) {
             query = { $and: conditions };
         }
@@ -3270,13 +3348,19 @@ app.get('/api/barangay-officials', async (req, res) => {
         // --- 4. Define Sorting Options ---
         let sortOptions = { term_start: -1 }; // Default sort: newest term first
         if (sortBy) {
-            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+            // Special handling for 'name' sort if it's a concatenated field
+            if (sortBy === 'name') {
+              sortOptions = { last_name: sortOrder === 'desc' ? -1 : 1, first_name: sortOrder === 'desc' ? -1 : 1 };
+            } else {
+              sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+            }
         }
 
         // --- 5. Fetch Paginated Data ---
         const officials = await collection.find(query)
             .project({ // Select only necessary fields for the list view
                 first_name: 1,
+                middle_name: 1, // Added middle_name for full name construction
                 last_name: 1,
                 position: 1,
                 status: 1,
@@ -3295,7 +3379,7 @@ app.get('/api/barangay-officials', async (req, res) => {
         // --- 7. Send the Response ---
         res.json({
             officials,
-            total: totalOfficials,
+            totalOfficials: totalOfficials, // Renamed 'total' to 'totalOfficials' for consistency with frontend
             page,
             itemsPerPage,
             totalPages: Math.ceil(totalOfficials / itemsPerPage)
@@ -3598,50 +3682,76 @@ async function createNotification(dbInstance, notificationData) {
 
 // =================== NOTIFICATION MODULE CRUD =========================== //
 
-// GET ALL NOTIFICATIONS (Admin view - with search, pagination, and type filter)
+// GET ALL NOTIFICATIONS (GET) - Updated to handle filters and DATE RANGE
 app.get('/api/notifications', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const typeFilter = req.query.type || '';
-  const skip = (page - 1) * itemsPerPage;
-
   try {
-    const dab = await db();
-    const notificationsCollection = dab.collection('notifications');
+    const {
+      search, type, sortBy, sortOrder,
+      start_date, end_date // ADDED: Date range query parameters
+    } = req.query;
+    
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; 
 
-    let query = {};
-    const andConditions = [];
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications'); // Assuming 'notifications' collection
+
+    const filters = [];
+
+    if (type) {
+      filters.push({ type: type });
+    }
+
+    // --- ADDED: Date Range Filtering for 'date' field ---
+    // Assuming 'date' in your notification documents represents the effective date
+    if (start_date || end_date) {
+      const dateFilter = {};
+      if (start_date) {
+        dateFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+      }
+      if (end_date) {
+        dateFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+      }
+      if (Object.keys(dateFilter).length > 0) {
+        filters.push({ date: dateFilter }); 
+      }
+    }
+    // --- END ADDED Date Range Filtering ---
 
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      andConditions.push({
+      const searchRegex = new RegExp(search.trim(), 'i');
+      filters.push({
         $or: [
-          { name: { $regex: searchRegex } },
-          { content: { $regex: searchRegex } },
-          { by: { $regex: searchRegex } },
-          { type: { $regex: searchRegex } },
+          { name: searchRegex },
+          { content: searchRegex },
+          { by: searchRegex }, // Assuming 'by' is the author field
+          // Add other searchable fields if applicable
         ],
       });
     }
 
-    // UPDATED: Aligned types with frontend
-    if (typeFilter && ['News', 'Events', 'Alert'].includes(typeFilter)) {
-      andConditions.push({ type: typeFilter });
-    }
+    const finalQuery = filters.length > 0 ? { $and: filters } : {};
 
-    if (andConditions.length > 0) {
-      query = { $and: andConditions };
+    let sortOptions = { date: -1 }; // Default sort by date descending (from 'Effective Date')
+    if (sortBy) {
+        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     }
-
+    
+    const projection = {
+        name: 1, type: 1, content: 1, target_audience: 1, recipients: 1,
+        date: 1, by: 1, _id: 1,
+    };
+    
     const notifications = await notificationsCollection
-      .find(query)
-      .sort({ date: -1 })
+      .find(finalQuery)
+      .project(projection)
+      .sort(sortOptions)
       .skip(skip)
       .limit(itemsPerPage)
       .toArray();
 
-    const totalNotifications = await notificationsCollection.countDocuments(query);
+    const totalNotifications = await notificationsCollection.countDocuments(finalQuery);
 
     res.json({
       notifications: notifications,
@@ -3650,6 +3760,7 @@ app.get('/api/notifications', async (req, res) => {
       itemsPerPage: itemsPerPage,
       totalPages: Math.ceil(totalNotifications / itemsPerPage),
     });
+
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications", message: error.message });
@@ -6833,59 +6944,89 @@ async function createAuditLog(logData, req = null) {
 
 // ======================= AUDIT LOGS ======================= //
 
-// GET /api/audit-logs
+// GET ALL AUDIT LOGS
 app.get('/api/audit-logs', async (req, res) => {
-  try {
-    const {
-      search,
-      page = 1,
-      itemsPerPage = 10,
-      sortBy,
-      sortOrder
-    } = req.query;
+    try {
+        const dab = await db(); // Assuming db() connects to your MongoDB
+        const collection = dab.collection('audit_logs'); // Assuming 'audit_logs' collection
 
-    const skip = (parseInt(page) - 1) * parseInt(itemsPerPage);
-    const limit = parseInt(itemsPerPage);
+        const {
+            search,
+            page: reqPage,
+            itemsPerPage: reqItemsPerPage,
+            sortBy,
+            sortOrder,
+            start_date, // NEW: Date range start
+            end_date    // NEW: Date range end
+        } = req.query;
 
-    const dab = await db();
-    const collection = dab.collection('audit_logs');
+        const page = parseInt(reqPage) || 1;
+        const itemsPerPage = parseInt(reqItemsPerPage) || 10;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
-    let query = {};
-    if (search) {
-      const searchRegex = new RegExp(search.trim(), 'i');
-      query = {
-        $or: [
-          { description: searchRegex },
-          { user_name: searchRegex },
-          { action: searchRegex },
-          { entityType: searchRegex }
-        ]
-      };
+        const filters = [];
+
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            filters.push({
+                $or: [
+                    { description: searchRegex },
+                    { user_name: searchRegex },
+                    { ref_no: searchRegex }
+                    // Add other searchable fields if applicable
+                ]
+            });
+        }
+
+        // --- NEW: Add Date Range Filtering for 'createdAt' ---
+        if (start_date || end_date) {
+            const createdAtFilter = {};
+            if (start_date) {
+                createdAtFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+            }
+            if (end_date) {
+                createdAtFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+            }
+            if (Object.keys(createdAtFilter).length > 0) {
+                filters.push({ createdAt: createdAtFilter });
+            }
+        }
+        // --- END NEW Date Range Filtering ---
+
+        const finalQuery = filters.length > 0 ? { $and: filters } : {};
+
+        let sortOptions = { createdAt: -1 }; // Default sort by creation date descending
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
+
+        const logs = await collection.find(finalQuery)
+            .project({ // Select only necessary fields
+                ref_no: 1,
+                user_name: 1,
+                description: 1,
+                createdAt: 1,
+                _id: 0 // Exclude _id if not needed, as ref_no is used as item-value
+            })
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        const total = await collection.countDocuments(finalQuery);
+
+        res.json({
+            logs: logs,
+            total: total,
+            page: page,
+            itemsPerPage: itemsPerPage,
+            totalPages: Math.ceil(total / itemsPerPage)
+        });
+
+    } catch (error) {
+        console.error("Error fetching audit logs:", error);
+        res.status(500).json({ error: 'Failed to fetch audit logs.' });
     }
-
-    let sortOptions = { createdAt: -1 }; // Default sort: newest first
-    if (sortBy) {
-        // Map frontend keys to backend fields if necessary
-        const sortField = sortBy === 'description' ? 'description' : 'createdAt';
-        sortOptions = { [sortField]: sortOrder === 'desc' ? -1 : 1 };
-    }
-
-    const logs = await collection.find(query)
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(limit)
-      .toArray();
-
-    const totalLogs = await collection.countDocuments(query);
-
-    res.json({
-      logs: logs,
-      total: totalLogs,
-    });
-  } catch (error) {
-    console.error("Error fetching audit logs:", error);
-    res.status(500).json({ error: "Failed to fetch audit logs", message: error.message });
-  }
 });
 
 

@@ -1,4 +1,3 @@
-// filed complaints [id].vue
 <template>
   <v-container class="my-10">
     <!-- Loading and Error States -->
@@ -24,6 +23,7 @@
           <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold mr-4">{{ form.status }}</v-chip>
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving" :disabled="isComplainantDeactivated">Save Changes</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2" :disabled="isComplainantDeactivated">Cancel</v-btn>
+          <v-btn color="info" @click="openPrintDialog" prepend-icon="mdi-printer" variant="tonal" class="mr-2">Print</v-btn> <!-- NEW PRINT BUTTON -->
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
         </v-col>
       </v-row>
@@ -417,6 +417,86 @@
       </v-card>
     </v-dialog>
 
+    <!-- NEW: Print Dialog -->
+    <v-dialog v-model="printDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dense color="primary">
+          <v-toolbar-title>Printable Complaint Details</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="printDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+          <v-btn icon dark @click="printContent">
+            <v-icon>mdi-printer</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="pa-8">
+          <div id="print-area">
+            <h3 class="text-h5 text-center mb-6">Complaint Report</h3>
+            <p class="text-center text-grey-darken-1 mb-4">
+                Report Date: {{ new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }}
+                <br>
+                Reference #: <span class="font-weight-bold">{{ form.ref_no }}</span>
+            </p>
+            
+            <h4 class="text-h6 font-weight-bold mt-6 mb-2">Complainant Information</h4>
+            <table class="print-detail-table">
+              <tr><th>Name:</th><td>{{ form.complainant_display_name }}</td></tr>
+              <tr><th>Address:</th><td>{{ form.complainant_address }}</td></tr>
+              <tr><th>Contact No.:</th><td>{{ form.contact_number }}</td></tr>
+            </table>
+
+            <h4 class="text-h6 font-weight-bold mt-6 mb-2">Complaint Details</h4>
+            <table class="print-detail-table">
+              <tr><th>Category:</th><td>{{ form.category }}</td></tr>
+              <tr><th>Date of Complaint:</th><td>{{ form.date_of_complaint }}</td></tr>
+              <tr><th>Time of Complaint:</th><td>{{ form.time_of_complaint }}</td></tr>
+              <tr><th>Person Complained Against:</th><td>{{ form.person_complained_against_name }}</td></tr>
+              <tr><th>Status:</th><td>{{ form.status }} <span v-if="form.status_reason"> (Reason: {{ form.status_reason }})</span></td></tr>
+              <tr><th colspan="2">Description:</th></tr>
+              <tr><td colspan="2" style="white-space: pre-wrap;">{{ form.notes_description }}</td></tr>
+            </table>
+
+            <h4 class="text-h6 font-weight-bold mt-6 mb-2">Proof of Complaint</h4>
+            <div v-if="form.proofs_display && form.proofs_display.length > 0">
+              <p class="text-body-2 mb-2">Attached proofs ({{ form.proofs_display.length }} items):</p>
+              <div class="proofs-print-grid">
+                <div v-for="(proof, idx) in form.proofs_display" :key="idx" class="proof-item-print">
+                  <template v-if="proof.type.startsWith('image/')">
+                    <img :src="proof.url" style="max-width: 100%; height: auto; display: block; margin-bottom: 5px;"/>
+                  </template>
+                  <template v-else-if="proof.type.startsWith('video/')">
+                    <video :src="proof.url" controls style="max-width: 100%; height: auto; display: block; margin-bottom: 5px;">
+                      Your browser does not support the video tag.
+                    </video>
+                  </template>
+                  <template v-else>
+                    <p class="text-caption">File: {{ proof.type }}</p>
+                  </template>
+                  <p class="text-caption mt-1">Type: {{ proof.type }}</p>
+                </div>
+              </div>
+              <!-- <p class="text-caption text-red-darken-2 mt-2">Note: Embedding many large files can affect printing performance and paper usage.</p> -->
+            </div>
+            <p v-else class="text-body-2">No proof was attached.</p>
+
+            <h4 class="text-h6 font-weight-bold mt-6 mb-2">Investigation Notes</h4>
+            <div v-if="investigationNotes.length > 0">
+              <div v-for="note in investigationNotes" :key="note._id" class="mb-3 print-note-item">
+                <p class="text-caption text-grey-darken-1 mb-0">
+                  {{ formatDateTime(note.createdAt) }} by <span class="font-weight-bold">{{ note.author?.name || 'System' }}</span>
+                </p>
+                <p class="text-body-2 mt-1" style="white-space: pre-wrap;">{{ note.content }}</p>
+              </div>
+            </div>
+            <p v-else class="text-body-2">No investigation notes have been added yet.</p>
+
+            <p class="text-caption text-center mt-6">Generated by B-bud System.</p>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
@@ -427,6 +507,7 @@ import { useVuelidate } from '@vuelidate/core';
 import { required, helpers } from '@vuelidate/validators';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
+import logoImage from '~/assets/img/logo.png'; // Make sure this path is correct
 
 const { $toast } = useNuxtApp();
 const route = useRoute();
@@ -490,6 +571,9 @@ const investigationNotes = ref([]);
 const newNoteContent = ref('');
 const notesLoading = ref(false);
 const addingNote = ref(false);
+
+// NEW: Print Dialog state
+const printDialog = ref(false);
 
 // --- VUELIDATE ---
 const rules = {
@@ -622,7 +706,7 @@ async function fetchComplaint(){
         Object.assign(form, {
             ...complaint,
             date_of_complaint: formatDateForInput(complaint.date_of_complaint, 'date'),
-            time_of_complaint: new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit' }).format(new Date(complaint.created_at)),
+            time_of_complaint: new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date(complaint.created_at)), // Use created_at for time
             complainant_details: complaint.complainant_details || null,
             status_reason: complaint.status_reason || ''
         });
@@ -811,6 +895,178 @@ const formatDateTime = (iso) => {
     hour: 'numeric', minute: '2-digit', hour12: true
   });
 };
+
+// --- NEW PRINT FUNCTIONS ---
+const openPrintDialog = () => {
+  printDialog.value = true;
+};
+
+const printContent = () => {
+  const printContentDiv = document.getElementById('print-area');
+  if (!printContentDiv) {
+    $toast.fire({ title: 'Print area not found.', icon: 'error' });
+    return;
+  }
+
+  const proofsHtml = form.proofs_display && form.proofs_display.length > 0
+    ? `
+      <p class="text-body-2 mb-2">Attached proofs (${form.proofs_display.length} items):</p>
+      <div class="proofs-print-grid">
+        ${form.proofs_display.map(proof => `
+          <div class="proof-item-print">
+            ${proof.type.startsWith('image/') ? `<img src="${proof.url}" style="max-width: 100%; height: auto; display: block; margin-bottom: 5px;"/>` : ''}
+            ${proof.type.startsWith('video/') ? `<video src="${proof.url}" controls style="max-width: 100%; height: auto; display: block; margin-bottom: 5px;">Your browser does not support the video tag.</video>` : ''}
+            ${!proof.type.startsWith('image/') && !proof.type.startsWith('video/') ? `<p class="text-caption">File: ${proof.type}</p>` : ''}
+            <p class="text-caption mt-1">Type: ${proof.type}</p>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : `<p class="text-body-2">No proof was attached.</p>`;
+
+  const notesHtml = investigationNotes.value.length > 0
+    ? investigationNotes.value.map(note => `
+      <div class="mb-3 print-note-item">
+        <p class="text-caption text-grey-darken-1 mb-0">
+          ${formatDateTime(note.createdAt)} by <span class="font-weight-bold">${note.author?.name || 'System'}</span>
+        </p>
+        <p class="text-body-2 mt-1" style="white-space: pre-wrap;">${note.content}</p>
+      </div>
+    `).join('')
+    : `<p class="text-body-2">No investigation notes have been added yet.</p>`;
+
+
+  const printHtml = `
+    <html>
+      <head>
+        <title>Complaint Report - ${form.ref_no}</title>
+        <style>
+          /* Basic print styles */
+          body { font-family: sans-serif; margin: 20px; color: #333; }
+          .print-header {
+            text-align: center;
+            margin-bottom: 20px;
+          }
+          .print-logo {
+            max-width: 100px; /* Adjust size as needed */
+            height: auto;
+            display: block;
+            margin: 0 auto 10px auto; /* Center with some bottom margin */
+          }
+          .print-app-name {
+            font-size: 1.5em; /* Adjust size as needed */
+            font-weight: bold;
+            margin-bottom: 10px;
+          }
+          h3 { text-align: center; margin-bottom: 20px; color: #333; }
+          p { text-align: center; margin-bottom: 15px; color: #555; }
+          
+          .print-detail-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 15px;
+          }
+          .print-detail-table th, .print-detail-table td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+            font-size: 0.9em;
+          }
+          .print-detail-table th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+            width: 25%; /* Adjust as needed */
+          }
+          .print-note-item {
+              border-left: 3px solid #ccc;
+              padding-left: 10px;
+              margin-bottom: 10px;
+          }
+          .text-caption {
+            font-size: 0.75em;
+            color: #777;
+          }
+          .proofs-print-grid {
+              display: grid;
+              grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+              gap: 15px;
+              margin-top: 10px;
+          }
+          .proof-item-print {
+              border: 1px solid #eee;
+              padding: 10px;
+              text-align: center;
+              background-color: #fcfcfc;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="print-header">
+          <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
+          <div class="print-app-name">B-Bud</div>
+        </div>
+        <div id="print-area-content">
+          <h3 class="text-h5 text-center mb-6">Complaint Report</h3>
+          <p class="text-center text-grey-darken-1 mb-4">
+              Report Date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+              <br>
+              Reference #: <span class="font-weight-bold">${form.ref_no}</span>
+          </p>
+          
+          <h4 class="text-h6 font-weight-bold mt-6 mb-2">Complainant Information</h4>
+          <table class="print-detail-table">
+            <tr><th>Name:</th><td>${form.complainant_display_name}</td></tr>
+            <tr><th>Address:</th><td>${form.complainant_address}</td></tr>
+            <tr><th>Contact No.:</th><td>${form.contact_number}</td></tr>
+          </table>
+
+          <h4 class="text-h6 font-weight-bold mt-6 mb-2">Complaint Details</h4>
+          <table class="print-detail-table">
+            <tr><th>Category:</th><td>${form.category}</td></tr>
+            <tr><th>Date of Complaint:</th><td>${form.date_of_complaint}</td></tr>
+            <tr><th>Time of Complaint:</th><td>${form.time_of_complaint}</td></tr>
+            <tr><th>Person Complained Against:</th><td>${form.person_complained_against_name}</td></tr>
+            <tr><th>Status:</th><td>${form.status} ${form.status_reason ? ` (Reason: ${form.status_reason})` : ''}</td></tr>
+            <tr><th colspan="2">Description:</th></tr>
+            <tr><td colspan="2" style="white-space: pre-wrap;">${form.notes_description}</td></tr>
+          </table>
+
+          <h4 class="text-h6 font-weight-bold mt-6 mb-2">Proof of Complaint</h4>
+          ${proofsHtml}
+
+          <h4 class="text-h6 font-weight-bold mt-6 mb-2">Investigation Notes</h4>
+          <div class="investigation-notes-print">
+            ${notesHtml}
+          </div>
+
+          <p class="text-caption text-center mt-6">Generated by B-bud System.</p>
+        </div>
+      </body>
+    </html>
+  `; 
+  
+  const printWindow = window.open('', '_blank');
+
+  if (!printWindow) {
+    $toast.fire({ title: 'Pop-up blocked! Please allow pop-ups for this site to print.', icon: 'warning' });
+    return;
+  }
+
+  printWindow.document.write(printHtml);
+  printWindow.document.close();
+  printWindow.focus();
+
+  printWindow.onafterprint = () => {
+    setTimeout(() => {
+      if (printWindow && !printWindow.closed) {
+        printWindow.close();
+      }
+    }, 100);
+  };
+
+  printWindow.print();
+};
 </script>
 
 <style scoped>
@@ -957,8 +1213,78 @@ const formatDateTime = (iso) => {
   color: white;
 }
 .step-label {
-  font-size: 0.875rem;
+  font-size: 0.875em;
   color: #757575;
   transition: color 0.4s, font-weight 0.4s;
+}
+
+/* Print Specific Styles */
+@media print {
+  body > *:not(.v-overlay-container) {
+    display: none !important;
+  }
+  .v-overlay-container {
+    display: block !important;
+    position: static;
+    top: auto !important;
+    left: auto !important;
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
+    overflow: visible !important;
+  }
+
+  .v-dialog--fullscreen.v-overlay__content {
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: none !important;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .v-card {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    height: auto !important;
+    width: auto !important;
+  }
+  
+  .v-toolbar {
+    display: none !important;
+  }
+  .v-card-text {
+    padding: 0 !important;
+  }
+  #print-area {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+  /* Additional print styles for proofs */
+  .proofs-print-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 15px;
+      margin-top: 10px;
+  }
+  .proof-item-print {
+      border: 1px solid #eee;
+      padding: 10px;
+      text-align: center;
+      background-color: #fcfcfc;
+  }
+  .proof-item-print img,
+  .proof-item-print video {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 0 auto; /* Center images/videos */
+  }
 }
 </style>

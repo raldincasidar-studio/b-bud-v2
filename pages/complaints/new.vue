@@ -14,7 +14,7 @@
 
     <v-card class="mt-4" flat border>
       <v-card-text class="py-6">
-        <!-- Complainant Section -->
+        
         <v-row>
           <v-col cols="12" md="6">
             <label class="v-label mb-1">Complainant Name <span class="text-red">*</span></label>
@@ -31,7 +31,7 @@
               @blur="v$.complainant_resident.$touch"
               no-filter
             >
-              <!-- UPDATED: Template now checks both 'status' and 'account_status' -->
+              
               <template v-slot:item="{ props, item }">
                 <v-list-item
                   v-bind="props"
@@ -103,13 +103,12 @@
               variant="outlined"
               :error-messages="v$.time_of_complaint.$errors.map(e => e.$message)"
               @blur="v$.time_of_complaint.$touch"
-              readonly
             ></v-text-field>
           </v-col>
         </v-row>
         <v-divider class="my-4"></v-divider>
         
-        <!-- Person Complained Against Section -->
+       
         <v-row>
           <v-col cols="12" md="6">
             <label class="v-label mb-1">Person Complained Against</label>
@@ -135,7 +134,7 @@
           </v-col>
         </v-row>
 
-        <!-- Category and Processed By Section -->
+        
         <v-row>
           <v-col cols="12" md="6">
             <label class="v-label mb-1">Category <span class="text-red">*</span></label>
@@ -162,7 +161,6 @@
           </v-col>
         </v-row>
 
-        <!-- Notes and Proof Section -->
         <v-row>
           <v-col cols="12">
             <label class="v-label mb-1">Notes / Description of Complaint <span class="text-red">*</span></label>
@@ -186,6 +184,9 @@
                 counter
                 prepend-icon="mdi-paperclip"
                 accept="image/*,video/*"
+                :max="5"
+                :error-messages="v$.proof_files.$errors.map(e => e.$message)"
+                @blur="v$.proof_files.$touch"
               ></v-file-input>
               <v-row v-if="proofPreviewItems.length > 0" class="mt-4">
                 <v-col v-for="(item, index) in proofPreviewItems" :key="item.url || index" cols="6" sm="4" md="3">
@@ -297,6 +298,12 @@ const rules = {
     processed_by_personnel: { required: helpers.withMessage('Processed by personnel is required.', required) },
     status: { required },
     notes_description: { required },
+    // New validation rule for proof_files
+    proof_files: {
+      maxLength: helpers.withMessage('You can attach a maximum of 5 files.', (value) => {
+        return value.length <= 5;
+      }),
+    },
 };
 const v$ = useVuelidate(rules, form);
 
@@ -377,7 +384,11 @@ watch(() => form.proof_files, (newFiles) => {
     return;
   }
 
-  proofPreviewItems.value = newFiles.map(file => {
+  // Limit files here for display, even though validation handles the backend submission.
+  // This helps visually reinforce the limit.
+  const filesToProcess = newFiles.slice(0, 5); // Take only the first 5 files for preview
+
+  proofPreviewItems.value = filesToProcess.map(file => {
     try {
       const url = URL.createObjectURL(file);
       console.log(`[Preview] Created URL for file '${file.name}': ${url}, Type: ${file.type}, Size: ${file.size} bytes`);
@@ -424,8 +435,9 @@ async function saveComplaint() {
 
   try {
     // --- REVERTED: Convert files to Base64 for JSON payload ---
+    // Ensure only up to 5 files are processed for submission based on validation
     const proofs_base64 = await Promise.all(
-      form.proof_files.map(file => convertFileToBase64(file))
+      form.proof_files.slice(0, 5).map(file => convertFileToBase64(file))
     );
 
     const payload = {

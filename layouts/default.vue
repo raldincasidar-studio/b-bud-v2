@@ -81,6 +81,7 @@ const drawer = ref(false);
 const documentRequestCount = ref(null);
 const borrowedAssetsCount = ref(null);
 const filedComplaintsCount = ref(null);
+const householdAccountManagementCount = ref(null); // New ref for Household Account Management
 
 const items = [
     { to: '/dashboard', text: 'Dashboard', icon: 'mdi-speedometer' },
@@ -105,45 +106,47 @@ async function logout() {
     router.replace('/')
 }
 
-// Function to fetch counts for all specified statuses
+// Function to fetch counts for only the specified pending/new statuses
 async function fetchCounts() {
     try {
-        // --- Document Requests ---
+        // --- Document Requests (Pending status only) ---
         let drTotal = 0;
-        const drStatuses = ['Pending', 'Processing', 'Approved', 'Ready for Pickup', 'Released', 'Declined'];
-        for (const status of drStatuses) {
-            const { data, error } = await useMyFetch('/api/document-requests', { query: { status: status, itemsPerPage: 1 } });
-            if (!error.value) {
-                drTotal += data.value?.total || 0;
-            } else {
-                console.error(`Error fetching Document Request - ${status} count:`, error.value?.message);
-            }
+        const { data: drData, error: drError } = await useMyFetch('/api/document-requests', { query: { status: 'Pending', itemsPerPage: 1 } });
+        if (!drError.value) {
+            drTotal = drData.value?.total || 0;
+        } else {
+            console.error(`Error fetching Document Request - Pending count:`, drError.value?.message);
         }
         documentRequestCount.value = drTotal;
 
-        // --- Borrowed Assets ---
+        // --- Borrowed Assets (Pending status only) ---
         let baTotal = 0;
-        const baStatuses = ['Pending', 'Processing', 'Approved', 'Returned', 'Overdue', 'Lost', 'Damaged', 'Resolved', 'Rejected'];
-        for (const status of baStatuses) {
-            const { data, error } = await useMyFetch('/api/borrowed-assets', { query: { status: status, itemsPerPage: 1 } });
-            if (!error.value) {
-                baTotal += data.value?.total || 0;
-            } else {
-                console.error(`Error fetching Borrowed Asset - ${status} count:`, error.value?.message);
-            }
+        const { data: baData, error: baError } = await useMyFetch('/api/borrowed-assets', { query: { status: 'Pending', itemsPerPage: 1 } });
+        if (!baError.value) {
+            baTotal = baData.value?.total || 0;
+        } else {
+            console.error(`Error fetching Borrowed Asset - Pending count:`, baError.value?.message);
         }
         borrowedAssetsCount.value = baTotal;
 
-        // --- Filed Complaints ---
+        // --- Household Account Management (Pending status only) ---
+        let hamTotal = 0;
+        // Assuming the endpoint for household account management also supports a 'status' query for 'Pending'
+        const { data: hamData, error: hamError } = await useMyFetch('/api/residents', { query: { status: 'Pending', itemsPerPage: 1 } });
+        if (!hamError.value) {
+            hamTotal = hamData.value?.total || 0;
+        } else {
+            console.error(`Error fetching Household Account Management - Pending count:`, hamError.value?.message);
+        }
+        householdAccountManagementCount.value = hamTotal;
+
+        // --- Filed Complaints (New status only) ---
         let fcTotal = 0;
-        const fcStatuses = ['New', 'Under Investigation', 'Unresolved', 'Resolved', 'Closed', 'Dismissed'];
-        for (const status of fcStatuses) {
-            const { data, error } = await useMyFetch('/api/complaints', { query: { status: status, itemsPerPage: 1 } });
-            if (!error.value) {
-                fcTotal += data.value?.total || 0;
-            } else {
-                console.error(`Error fetching Filed Complaint - ${status} count:`, error.value?.message);
-            }
+        const { data: fcData, error: fcError } = await useMyFetch('/api/complaints', { query: { status: 'New', itemsPerPage: 1 } });
+        if (!fcError.value) {
+            fcTotal = fcData.value?.total || 0;
+        } else {
+            console.error(`Error fetching Filed Complaint - New count:`, fcError.value?.message);
         }
         filedComplaintsCount.value = fcTotal;
 
@@ -153,6 +156,7 @@ async function fetchCounts() {
         documentRequestCount.value = 0;
         borrowedAssetsCount.value = 0;
         filedComplaintsCount.value = 0;
+        householdAccountManagementCount.value = 0; // Reset new count as well
     }
 }
 
@@ -177,6 +181,8 @@ const itemsFiltered = computed(() => {
             count = borrowedAssetsCount.value;
         } else if (item.to === '/complaints') {
             count = filedComplaintsCount.value;
+        } else if (item.to === '/residents-account-management') { // Assign count for Household Account Management
+            count = householdAccountManagementCount.value;
         }
         
         // Return a new object with all original properties, plus originalText and count

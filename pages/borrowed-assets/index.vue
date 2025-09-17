@@ -279,6 +279,7 @@ import { ref, watch, computed } from 'vue'; // Added 'computed'
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
+import logoImage from '~/assets/img/logo.png'; // Import the logo image
 
 // --- Composables ---
 const { $toast } = useNuxtApp();
@@ -506,6 +507,21 @@ const printContent = () => {
           <style>
             /* Basic print styles */
             body { font-family: sans-serif; margin: 20px; color: #333; }
+            .print-header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .print-logo {
+              max-width: 100px; /* Adjust size as needed */
+              height: auto;
+              display: block;
+              margin: 0 auto 10px auto; /* Center with some bottom margin */
+            }
+            .print-app-name {
+              font-size: 1.5em; /* Adjust size as needed */
+              font-weight: bold;
+              margin-bottom: 10px;
+            }
             h3 { text-align: center; margin-bottom: 20px; color: #333; }
             p { text-align: center; margin-bottom: 15px; color: #555; }
             .print-table {
@@ -533,12 +549,27 @@ const printContent = () => {
           </style>
         </head>
         <body>
+          <div class="print-header">
+            <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
+            <div class="print-app-name">B-Bud</div>
+          </div>
           ${printContentDiv.innerHTML}
         </body>
       </html>
     `);
     printWindow.document.close();
     printWindow.focus();
+
+    // Set the onafterprint event handler BEFORE calling print()
+    printWindow.onafterprint = () => {
+      // Small delay to ensure browser print dialog fully closes before trying to close the window
+      setTimeout(() => {
+        if (printWindow && !printWindow.closed) {
+          printWindow.close();
+        }
+      }, 100); // 100ms delay
+    };
+
     printWindow.print();
   } else {
     $toast.fire({ title: 'Print area not found.', icon: 'error' });

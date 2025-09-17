@@ -113,7 +113,7 @@
             <v-text-field v-model="form.years_at_current_address" label="Years at Current Address *" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field>
           </v-col>
 
-          <!-- UPDATED: Proof of Residency for multiple attachments -->
+          <!-- UPDATED: Proof of Residency for multiple attachments with limit -->
           <v-col cols="12" md="6">
             <label class="v-label">Upload Proof of Residency *</label>
             <v-file-input 
@@ -125,6 +125,8 @@
               show-size 
               clearable 
               multiple 
+              counter
+              :max="5"
               @blur="vHead$.proof_of_residency_file.$touch()">
             </v-file-input>
             <div class="d-flex flex-wrap gap-2 mt-2">
@@ -572,8 +574,11 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
   type_of_household: { required: helpers.withMessage('Type of Household is required.', required) }, // NEW: Type of Household (required)
   years_at_current_address: { required, numeric }, 
   proof_of_residency_file: { 
-    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0) 
-  }, // Updated validation for array of File objects
+    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0),
+    maxLength: helpers.withMessage('You can upload a maximum of 5 proof of residency files.', (value) => {
+      return value.length <= 5;
+    })
+  }, // Updated validation for array of File objects with maxLength
   authorization_letter_file: {}, // NEW: Optional file
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => form.is_voter && !form.voter_id_number)) },
@@ -641,8 +646,10 @@ const urlRevoker = (url) => { if (url) URL.revokeObjectURL(url); };
 // This watches the v-file-input's model-value (new files selected)
 watch(newProofResidencyFiles, (newFiles) => {
   if (newFiles && newFiles.length > 0) {
-    // Add new files to the main form array
-    form.proof_of_residency_file.push(...newFiles);
+    // Add new files to the main form array, ensuring the limit is respected
+    const currentCount = form.proof_of_residency_file.length;
+    const filesToAdd = newFiles.slice(0, 5 - currentCount); // Only add up to the limit
+    form.proof_of_residency_file.push(...filesToAdd);
     // Clear the temporary input so the v-file-input itself visually resets
     newProofResidencyFiles.value = [];
     vHead$.value.proof_of_residency_file.$touch(); // Re-trigger validation for the main array
@@ -665,7 +672,9 @@ watch(() => form.proof_of_residency_file, (currentFiles, oldFiles) => {
 
   // Generate new previews for current files, re-using existing ones if possible
   const newPreviews = [];
-  currentFiles.forEach(file => {
+  // Ensure only up to 5 files are processed for preview
+  const filesToPreview = currentFiles.slice(0, 5);
+  filesToPreview.forEach(file => {
     // Find if this file already has a preview
     const existingPreview = proofResidencyPreviews.value.find(p => p.file === file);
     if (existingPreview) {
@@ -850,8 +859,8 @@ async function saveResidentAndHousehold() {
       convertFileToBase64(form.voter_id_file),
       convertFileToBase64(form.pwd_card_file),
       convertFileToBase64(form.senior_citizen_card_file),
-      // Map and convert each proof of residency file to base64
-      Promise.all(form.proof_of_residency_file.map(file => convertFileToBase64(file))),
+      // Map and convert each proof of residency file to base64, limiting to the first 5
+      Promise.all(form.proof_of_residency_file.slice(0, 5).map(file => convertFileToBase64(file))),
       convertFileToBase64(form.authorization_letter_file) // NEW
     ]);
 
