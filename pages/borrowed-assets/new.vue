@@ -36,13 +36,13 @@
                 label="Search Resident from Population..."
                 prepend-inner-icon="mdi-account-search-outline"
                 variant="outlined"
-                
+
                 return-object
                 no-filter
                 clearable
-                
+
                 :rules="[rules.requiredObject, rules.borrowerIsActive]"
-                
+
                 hint="Type at least 2 characters to search for a registered resident"
                 persistent-hint
               >
@@ -118,7 +118,7 @@
                 :loading="isLoadingInventory"
                 :rules="[rules.required, rules.itemIsAvailable]"
                 variant="outlined"
-                
+
                 required
                 @update:model-value="onItemSelect"
               >
@@ -142,7 +142,7 @@
                 v-model.number="transaction.quantity_borrowed"
                 type="number"
                 variant="outlined"
-                
+
                 required
                 :disabled="!transaction.item_borrowed"
                 :rules="[rules.required, rules.quantityIsValid]"
@@ -158,7 +158,7 @@
                 type="date"
                 :rules="[rules.required, rules.futureDate]"
                 variant="outlined"
-                
+
                 required
                 :min="new Date().toISOString().split('T')[0]"
               ></v-text-field>
@@ -168,7 +168,7 @@
               <v-text-field
                 v-model="transaction.borrowed_from_personnel"
                 variant="outlined"
-                
+
                 readonly
                 hint="This is automatically filled with the logged-in user's name."
               ></v-text-field>
@@ -185,6 +185,23 @@
                 rows="3"
                 auto-grow
               ></v-textarea>
+            </v-col>
+          </v-row>
+
+          <!-- NEW: Upload Proof of Borrowing Photo -->
+          <v-row>
+            <v-col cols="12">
+              <label class="v-label mb-1">Upload Proof of Borrowing (Photo) (Optional)</label>
+              <v-file-input
+                v-model="transaction.borrowProofImage"
+                label="Choose a photo for proof of borrowing"
+                variant="outlined"
+                prepend-icon="mdi-camera"
+                accept="image/*"
+                :rules="[rules.fileSizeRule]"
+                hint="Max 2MB. This photo will be recorded as proof when the item was borrowed."
+                persistent-hint
+              ></v-file-input>
             </v-col>
           </v-row>
         </v-form>
@@ -211,6 +228,7 @@ const transaction = reactive({
   quantity_borrowed: 0,
   expected_return_date: '',
   notes: '',
+  borrowProofImage: null, // Initialized as null for a single file input
 });
 
 // Resident search state
@@ -235,20 +253,20 @@ const useDebounce = (fn, delay = 500) => {
 const rules = {
   required: value => !!value || 'This field is required.',
   requiredObject: value => (!!value && typeof value === 'object' && value !== null) || 'You must select a borrower.',
-  
+
   // UPDATED: Check both 'status' and 'account_status'
   borrowerIsActive: value => {
     if (!value) return true; // Let the 'requiredObject' rule handle empty selections.
-    
+
     // Detailed message based on resident's status
     if (value.status === 'Pending') return `Resident account is pending approval and cannot borrow new items.`;
     if (value.status === 'Declined') return `Resident account has been declined and cannot borrow new items.`;
     if (value.status === 'Deactivated') return `Resident account has been permanently deactivated and cannot borrow new items.`;
     if (value.account_status !== 'Active') return `This resident's account is On Hold and cannot borrow new items.`;
-    
+
     return true; // If all checks pass, the borrower is active and can proceed
   },
-  
+
   futureDate: value => new Date(value) >= new Date(new Date().toDateString()) || 'Date cannot be in the past.',
   itemIsAvailable: value => {
     if (!value) return true;
@@ -261,6 +279,21 @@ const rules = {
     const item = inventoryItems.value.find(i => i.name === transaction.item_borrowed);
     if (!item) return true;
     return value <= item.available || `Not enough stock. Only ${item.available} available.`;
+  },
+  // NEW: Rule for file size validation - UPDATED to handle single File object
+  fileSizeRule: value => {
+    if (!value) return true; // No file selected is valid
+
+    let fileToValidate = null;
+    if (value instanceof File) { // It's a single File object (common for v-file-input without 'multiple')
+      fileToValidate = value;
+    } else if (Array.isArray(value) && value.length > 0) { // It's an array of files (if 'multiple' was used)
+      fileToValidate = value[0];
+    }
+
+    if (!fileToValidate) return true; // Still no valid file to validate
+
+    return fileToValidate.size < 2000000 || 'Image size should be less than 2 MB!';
   },
 };
 
@@ -295,7 +328,7 @@ watch(borrowerSearchQuery, (query) => {
 async function fetchInventory() {
   isLoadingInventory.value = true;
   try {
-    const { data, error } = await useMyFetch('/api/assets', { 
+    const { data, error } = await useMyFetch('/api/assets', {
       query: { itemsPerPage: 1000 }
     });
 
@@ -319,11 +352,21 @@ onMounted(() => {
   if (userData.value) {
     transaction.borrowed_from_personnel = userData.value.name;
   }
+  // No need to defensively convert borrowProofImage to an array here.
+  // v-file-input without 'multiple' will bind a single File object or null.
 });
 
 const onItemSelect = () => {
   transaction.quantity_borrowed = 1;
 };
+
+// Helper function to convert file to Base64
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = (error) => reject(error);
+});
 
 async function saveTransaction() {
   const { valid } = await form.value.validate();
@@ -333,14 +376,57 @@ async function saveTransaction() {
   }
 
   saving.value = true;
+  let borrowProofImageBase64 = null;
+  let file = null;
+
+  // ✨ REVISED LOGIC FOR FILE EXTRACTION AND DEBUGGING ✨
+  console.log('DEBUG (Frontend): transaction.borrowProofImage before processing:', transaction.borrowProofImage);
+
+  // Check if it's a single File object (when 'multiple' prop is NOT used on v-file-input)
+  if (transaction.borrowProofImage instanceof File) {
+    file = transaction.borrowProofImage;
+  }
+  // Keep the array check for robustness, in case the prop changes, or for multiple file inputs
+  else if (Array.isArray(transaction.borrowProofImage) && transaction.borrowProofImage.length > 0) {
+    file = transaction.borrowProofImage[0];
+  }
+
+  console.log('DEBUG (Frontend): Extracted file for upload:', file);
+
+
+  if (file) {
+    if (file.size > 2000000) { // Client-side check for safety, though rules should catch it
+        $toast.fire({ title: 'File is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
+        saving.value = false;
+        return;
+    }
+    try {
+        borrowProofImageBase64 = await fileToBase64(file);
+        console.log('DEBUG (Frontend): Base64 string generated (first 50 chars):', borrowProofImageBase64 ? borrowProofImageBase64.substring(0, 50) + '...' : 'null');
+    } catch (e) {
+        console.error("DEBUG (Frontend): Error converting borrowing proof image to Base64:", e);
+        $toast.fire({ title: 'Could not process borrowing proof image file.', icon: 'error' });
+        saving.value = false;
+        return;
+    }
+  } else {
+      console.log('DEBUG (Frontend): No file selected or valid file object found for upload. borrow_proof_image_base64 will be null.');
+  }
+
   try {
     const payload = {
-      ...transaction,
       borrower_resident_id: selectedBorrower.value._id,
       borrower_display_name: selectedBorrower.value.fullName,
       borrow_datetime: new Date(transaction.borrow_datetime).toISOString(),
+      borrowed_from_personnel: transaction.borrowed_from_personnel,
+      item_borrowed: transaction.item_borrowed,
+      quantity_borrowed: transaction.quantity_borrowed,
       expected_return_date: new Date(transaction.expected_return_date).toISOString(),
+      notes: transaction.notes,
+      borrow_proof_image_base64: borrowProofImageBase64, // NEW: Include the Base64 image in the payload
     };
+
+    console.log('DEBUG (Frontend): Payload being sent:', payload); // Log the final payload
 
     const { data, error } = await useMyFetch('/api/borrowed-assets', {
       method: 'POST',

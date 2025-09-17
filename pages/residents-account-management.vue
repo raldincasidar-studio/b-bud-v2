@@ -41,6 +41,101 @@
       </v-card-text>
       <v-divider></v-divider>
 
+      <v-card-text>
+  <v-card-title class="font-size-15 text-left pb-0 pl-0 mr-0">Date Range Selection & Actions</v-card-title>
+    
+  <v-row align="center" justify="center">
+    <v-col cols="12" sm="6" md="3">
+      <v-menu
+        v-model="startDateMenu"
+        :close-on-content-click="false"
+        transition="scale-transition"
+        offset-y
+        min-width="auto"
+      >
+        <template v-slot:activator="{ props }">
+          <v-text-field
+            v-model="formattedStartDate"
+            label="Start Date"
+            prepend-inner-icon="mdi-calendar"
+            readonly
+            variant="outlined"
+            density="compact"
+            v-bind="props"
+            clearable
+            @click:clear="clearDateRange(); applyDateFilters()"
+            class="mt-5 pr-2"
+          ></v-text-field>
+        </template>
+        <v-date-picker
+          v-model="startDate"
+          @update:model-value="startDateMenu = false; applyDateFilters()"
+          show-adjacent-months
+          :max="endDate ? endDate.toISOString().split('T')[0] : undefined"
+        ></v-date-picker>
+      </v-menu>
+    </v-col>
+
+    <v-col cols="12" sm="6" md="3">
+      <v-menu
+        v-model="endDateMenu"
+        :close-on-content-click="false"
+        transition="scale-transition"
+        offset-y
+        min-width="auto"
+      >
+        <template v-slot:activator="{ props }">
+          <v-text-field
+            v-model="formattedEndDate"
+            label="End Date"
+            prepend-inner-icon="mdi-calendar"
+            readonly
+            variant="outlined"
+            density="compact"
+            v-bind="props"
+            clearable
+            @click:clear="clearDateRange(); applyDateFilters()"
+            class="mt-5 pr-2"
+          ></v-text-field>
+        </template>
+        <v-date-picker
+          v-model="endDate"
+          @update:model-value="endDateMenu = false; applyDateFilters()"
+          :min="startDate ? startDate.toISOString().split('T')[0] : undefined"
+          show-adjacent-months
+        ></v-date-picker>
+      </v-menu>
+    </v-col>
+
+    <v-col cols="12" md="6" class="d-flex align-center justify-center flex-wrap">
+      <!-- <span class="text-subtitle-2 mr-2 mb-2 mb-md-0">Quick Filters:</span> -->
+      <v-btn-toggle
+        v-model="selectedDateFilterPreset"
+        color="primary"
+        variant="outlined"
+        density="compact"
+        group
+        class="mr-4 flex-wrap mb-2 mb-md-0"
+      >
+        <v-btn value="day" @click="setDateRangePreset('day')">Day</v-btn>
+        <v-btn value="week" @click="setDateRangePreset('week')">Week</v-btn>
+        <v-btn value="month" @click="setDateRangePreset('month')">Month</v-btn>
+        <v-btn value="year" @click="setDateRangePreset('year')">Year</v-btn>
+      </v-btn-toggle>
+      <v-btn
+        color="info"
+        prepend-icon="mdi-printer"
+        @click="openPrintDialog"
+        :disabled="residents.length === 0"
+        class="mb-2 mb-md-0"
+      >
+        Print Data
+      </v-btn>
+    </v-col>
+  </v-row>
+</v-card-text>
+<v-divider></v-divider>
+
       <v-data-table-server
         v-model:items-per-page="itemsPerPage"
         :headers="headers"
@@ -131,6 +226,60 @@
       </v-card>
     </v-dialog>
 
+    <!-- Print Dialog -->
+    <v-dialog v-model="printDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dense color="primary">
+          <v-toolbar-title>Printable Resident Accounts</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="printDialog = false">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+          <v-btn icon dark @click="printContent">
+            <v-icon>mdi-printer</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="pa-8">
+          <div id="print-area">
+            <h3 class="text-h5 text-center mb-6">Household Account Management Report</h3>
+            <p class="text-center text-grey-darken-1 mb-4">
+                Report Date: {{ new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }}
+                <span v-if="startDate && endDate">
+                    (Filtered from {{ formattedStartDate }} to {{ formattedEndDate }})
+                </span>
+                <span v-else-if="startDate">
+                    (Filtered from {{ formattedStartDate }} onwards)
+                </span>
+                <span v-else-if="endDate">
+                    (Filtered up to {{ formattedEndDate }})
+                </span>
+                <span v-else>
+                    (No date filter applied)
+                </span>
+            </p>
+            <table class="print-table">
+              <thead>
+                <tr>
+                  <th v-for="header in printableHeaders" :key="header.key">{{ header.title }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in residentsForPrint" :key="item._id"> <!-- Use residentsForPrint here -->
+                  <td>#{{ item._id.slice(-4) }}</td>
+                  <td>{{ item.first_name }} {{ item.middle_name }} {{ item.last_name }} {{ item.suffix }}</td>
+                  <td>{{ item.address_house_number }}</td>
+                  <td>{{ formatDateTime(item.date_added) }}</td>
+                  <td>{{ formatDateTime(item.date_approved) }}</td>
+                  <td>{{ getDisplayStatus(item) }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <p class="text-caption text-center mt-6">Generated by B-bud System.</p>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
@@ -155,6 +304,18 @@ const actionReasonDialog = ref(false);
 const residentToAction = ref(null);
 const actionReason = ref('');
 const actionType = ref('');
+
+// Print functionality refs and methods
+const startDate = ref(null); // Will store Date objects
+const endDate = ref(null);   // Will store Date objects
+const startDateMenu = ref(false);
+const endDateMenu = ref(false);
+const selectedDateFilterPreset = ref(null); // 'day', 'week', 'month', 'year'
+const printDialog = ref(false);
+const residentsForPrint = ref([]); // Holds all data for printing
+
+const formattedStartDate = computed(() => startDate.value ? new Date(startDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
+const formattedEndDate = computed(() => endDate.value ? new Date(endDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 
 // UPDATED computed properties for dialog content
 const dialogTitle = computed(() => {
@@ -189,6 +350,11 @@ const headers = ref([
   { title: 'Account Status', key: 'status', sortable: true, align: 'center' },
   { title: 'Actions', key: 'actions', sortable: false, align: 'center', width: '150px' },
 ]);
+
+// Headers to be displayed in the print view (excluding 'Actions')
+const printableHeaders = computed(() => {
+  return headers.value.filter(header => header.key !== 'actions');
+});
 
 // NEW helper function to determine the displayed status
 const getDisplayStatus = (resident) => {
@@ -294,6 +460,15 @@ async function loadResidents(options) {
       page,
       itemsPerPage: rpp,
       status: statusFilter.value === 'All' ? undefined : statusFilter.value,
+      // Convert Date objects to ISO strings for API, ensuring start/end of day
+      // IMPORTANT: Your backend API at /api/residents MUST be updated to accept
+      // 'start_date' and 'end_date' query parameters and filter the results
+      // based on the 'date_added' (or relevant date field) of the residents.
+      // Example backend logic (Node.js/Express with Mongoose):
+      // if (req.query.start_date) query.date_added = { ...query.date_added, $gte: new Date(req.query.start_date) };
+      // if (req.query.end_date) query.date_added = { ...query.date_added, $lte: new Date(req.query.end_date) };
+      start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
+      end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
     };
 
     if (sortBy && sortBy.length > 0) {
@@ -308,7 +483,7 @@ async function loadResidents(options) {
     if (error.value) throw new Error('Failed to load residents.');
     
     residents.value = data.value.residents || [];
-    totalItems.value = data.value.total || 0;
+    totalItems.value = data.value.total || 0; // Ensure your backend returns the total count for the *filtered* data
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
     residents.value = []; 
@@ -329,6 +504,152 @@ watch(searchKey, () => {
 watch(statusFilter, () => {
   loadResidents({ ...currentTableOptions.value, page: 1 });
 });
+
+const clearDateRange = () => {
+  startDate.value = null;
+  endDate.value = null;
+  selectedDateFilterPreset.value = null; // Clear preset when dates are cleared
+};
+
+const applyDateFilters = () => {
+  // If manual dates are set or cleared, clear any active preset selection
+  if ((startDate.value !== null || endDate.value !== null) && selectedDateFilterPreset.value !== null) {
+      selectedDateFilterPreset.value = null;
+  } else if (startDate.value === null && endDate.value === null) {
+      selectedDateFilterPreset.value = null; // Also clear if both are null
+  }
+  loadResidents({ ...currentTableOptions.value, page: 1 });
+};
+
+const setDateRangePreset = (preset) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalize to start of day
+
+  let newStartDate = null;
+  let newEndDate = null;
+
+  switch (preset) {
+    case 'day':
+      newStartDate = new Date(today);
+      newEndDate = new Date(today); 
+      break;
+    case 'week':
+      // Start of the current week (Sunday)
+      newStartDate = new Date(today);
+      newStartDate.setDate(today.getDate() - today.getDay());
+      // End of the current week (Saturday)
+      newEndDate = new Date(newStartDate);
+      newEndDate.setDate(newStartDate.getDate() + 6);
+      break;
+    case 'month':
+      // Start of the current month
+      newStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
+      // End of the current month
+      newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0); // Last day of current month
+      break;
+    case 'year':
+      // Start of the current year
+      newStartDate = new Date(today.getFullYear(), 0, 1);
+      // End of the current year
+      newEndDate = new Date(today.getFullYear(), 11, 31);
+      break;
+  }
+  startDate.value = newStartDate;
+  endDate.value = newEndDate;
+  selectedDateFilterPreset.value = preset; // Keep preset active
+  loadResidents({ ...currentTableOptions.value, page: 1 });
+};
+
+
+// Function to fetch all residents matching current filters for printing
+async function fetchAllResidentsForPrint() {
+    try {
+        const queryParams = {
+            search: searchKey.value,
+            status: statusFilter.value === 'All' ? undefined : statusFilter.value,
+            start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
+            end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
+            // Request a very high number of items to get all data
+            itemsPerPage: 999999 
+        };
+        Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
+
+        const { data, error } = await useMyFetch('/api/residents', { query: queryParams });
+
+        if (error.value) throw new Error('Failed to load all residents for printing.');
+        
+        return data.value.residents || [];
+    } catch (e) {
+        $toast.fire({ title: e.message, icon: 'error' });
+        return [];
+    }
+}
+
+
+const openPrintDialog = async () => {
+  loading.value = true; // Show loading while fetching all data
+  residentsForPrint.value = await fetchAllResidentsForPrint();
+  loading.value = false;
+
+  if (residentsForPrint.value.length > 0) {
+      printDialog.value = true;
+  } else {
+      $toast.fire({ title: 'No data to print for the selected filters.', icon: 'info' });
+  }
+};
+
+const printContent = () => {
+  const printContentDiv = document.getElementById('print-area');
+  if (printContentDiv) {
+    // Open a new window for printing to isolate print styles
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Household Account Management Report</title>
+          <style>
+            /* Basic print styles */
+            body { font-family: sans-serif; margin: 20px; color: #333; }
+            h3 { text-align: center; margin-bottom: 20px; color: #333; }
+            p { text-align: center; margin-bottom: 15px; color: #555; }
+            .print-table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 20px;
+              page-break-inside: auto; /* Allow table to break across pages */
+            }
+            .print-table tr { page-break-inside: avoid; page-break-after: auto; }
+            .print-table th, .print-table td {
+              border: 1px solid #ddd;
+              padding: 8px;
+              text-align: left;
+              font-size: 0.9em;
+            }
+            .print-table th {
+              background-color: #f2f2f2;
+              font-weight: bold;
+            }
+            .text-caption {
+              font-size: 0.75em;
+              color: #777;
+              margin-top: 20px;
+            }
+          </style>
+        </head>
+        <body>
+          ${printContentDiv.innerHTML}
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+    // printWindow.close(); // You might choose to keep it open for user inspection.
+  } else {
+    $toast.fire({ title: 'Print area not found.', icon: 'error' });
+  }
+};
+
 
 const getStatusColor = (s) => ({
   'Approved': 'success',
@@ -354,4 +675,56 @@ const formatDateTime = (dateString) => {
 
 <style scoped>
 .text-truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Styles specific for printing the dialog content */
+@media print {
+  /* Hide all elements on the page except the active print dialog */
+  body > *:not(.v-overlay-container) {
+    display: none !important;
+  }
+  .v-overlay-container {
+    display: block !important;
+    position: static; /* Important for print to not be fixed */
+    top: auto !important;
+    left: auto !important;
+    width: auto !important;
+    height: auto !important;
+    transform: none !important;
+    overflow: visible !important;
+  }
+
+  /* Target the specific dialog for printing */
+  .v-dialog--fullscreen.v-overlay__content {
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    height: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: none !important;
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  .v-card {
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    height: auto !important;
+    width: auto !important;
+  }
+  
+  .v-toolbar {
+    display: none !important; /* Hide toolbar in print */
+  }
+  .v-card-text {
+    padding: 0 !important;
+  }
+  #print-area {
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+}
 </style>

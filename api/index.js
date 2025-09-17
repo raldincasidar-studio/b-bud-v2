@@ -1342,27 +1342,30 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 //     }
 // });
 
-// GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters
+// GET ALL RESIDENTS (GET) - Updated to handle all dashboard filters AND DATE RANGE
 app.get('/api/residents', async (req, res) => {
   try {
     const {
       search, status, is_voter, is_senior, is_pwd,
-      occupation, minAge, maxAge, sortBy, sortOrder
+      occupation, minAge, maxAge, sortBy, sortOrder,
+      start_date, end_date // <-- ADDED: Date range query parameters
     } = req.query;
     
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-    const skip = (page - 1) * itemsPerPage;
+    // Calculate skip only if itemsPerPage is not a very large number (like for print all functionality)
+    const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; 
 
     const dab = await db();
     const residentsCollection = dab.collection('residents');
     const filters = [];
 
-    // --- UPDATE: Handle 'On-hold' status filter ---
+    // --- Handle 'On-hold' status filter ---
     if (status) {
       if (status === 'On-hold') {
-        // 'On-hold' means the primary status is 'Approved' but the secondary account status is 'Deactivated'
         filters.push({ status: 'Approved', account_status: 'Deactivated' });
+      } else if (status === 'All') {
+        // No status filter if 'All' is selected
       } else {
         filters.push({ status: status });
       }
@@ -1386,6 +1389,21 @@ app.get('/api/residents', async (req, res) => {
       }
       filters.push({ date_of_birth: ageFilter });
     }
+
+    // --- ADDED: Date Range Filtering for 'created_at' (Date Added) ---
+    if (start_date || end_date) {
+      const dateAddedFilter = {};
+      if (start_date) {
+        dateAddedFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+      }
+      if (end_date) {
+        dateAddedFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+      }
+      if (Object.keys(dateAddedFilter).length > 0) {
+        filters.push({ created_at: dateAddedFilter });
+      }
+    }
+    // --- END ADDED Date Range Filtering ---
 
     if (search) {
       const searchRegex = new RegExp(search.trim(), 'i');
@@ -2700,6 +2718,7 @@ app.post('/api/document-requests', async (req, res) => {
     res.status(500).json({ error: 'Error adding document request.' });
   }
 });
+
 
 // GET ALL DOCUMENTS (GET)
 app.get('/api/documents', async (req, res) => {
@@ -4054,8 +4073,7 @@ const STATUS = {
 //   // Your implementation here...
 // }
 
-
-// 1. ADD NEW BORROW ASSET REQUEST (POST) - CORRECTED
+// 1. ADD NEW BORROW ASSET REQUEST (POST) - UPDATED TO EMBED BASE64 DIRECTLY
 app.post('/api/borrowed-assets', async (req, res) => {
   const dab = await db();
   const {
@@ -4067,6 +4085,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
     quantity_borrowed,
     expected_return_date,
     notes,
+    borrow_proof_image_base64, // Receives the Base64 image string (or null) from frontend
   } = req.body;
 
   // Validation
@@ -4080,6 +4099,11 @@ app.post('/api/borrowed-assets', async (req, res) => {
   if (isNaN(requestedQuantity) || requestedQuantity <= 0) {
       return res.status(400).json({ error: 'Quantity must be a number greater than 0.' });
   }
+
+  // IMPORTANT NOTE: When directly embedding Base64, consider the MongoDB document size limit (16MB).
+  // The frontend already has a 2MB file size validation rule, which helps, but doesn't guarantee against 16MB limit.
+  // No Cloudinary upload here, as per request to mimic "Filed Complaints".
+  // The 'borrow_proof_image_base64' is directly stored.
 
   try {
     // Gatekeeper: Check if the resident is allowed to borrow
@@ -4121,8 +4145,10 @@ app.post('/api/borrowed-assets', async (req, res) => {
       status: STATUS.PENDING,
       date_returned: null,
       date_resolved: null,
-      return_proof_image_url: null,
+      return_proof_image_url: null, // Keep if you intend to upload return proofs to Cloudinary later
       return_condition_notes: null,
+      // ✨ UPDATED: Directly store the Base64 string instead of a Cloudinary URL ✨
+      borrow_proof_image_base64: borrow_proof_image_base64 || null, // Store the Base64 string directly
       notes: notes ? String(notes).trim() : null,
       created_at: new Date(),
       updated_at: new Date(),
@@ -4146,9 +4172,9 @@ app.post('/api/borrowed-assets', async (req, res) => {
   } catch (error) {
     // --- CORRECTED ERROR HANDLING ---
     // Check if the error is from our account status gatekeeper
-    if (error.message.includes("On Hold/Deactivated")) {
+    if (error.message.includes("On Hold/Deactivated") || error.message.includes("pending approval") || error.message.includes("been declined")) {
       return res.status(403).json({ // 403 Forbidden is the correct HTTP status
-        error: 'Cannot borrow due to account status. On Hold/Deactivated.',
+        error: 'Cannot borrow due to account status.',
         message: error.message
       });
     }
@@ -4161,7 +4187,7 @@ app.post('/api/borrowed-assets', async (req, res) => {
   }
 });
 
-// 2. GET ALL BORROWED ASSETS (GET) - UPDATED
+// 2. GET ALL BORROWED ASSETS (GET) - UPDATED with Date Range Filtering
 app.get('/api/borrowed-assets', async (req, res) => {
   try {
     const dab = await db();
@@ -4192,7 +4218,7 @@ app.get('/api/borrowed-assets', async (req, res) => {
     }
     // --- END OF AUTOMATION ---
 
-    const { search, status, sortBy, sortOrder, byResidentId = '' } = req.query;
+    const { search, status, sortBy, sortOrder, byResidentId = '', start_date, end_date } = req.query; // ADDED start_date, end_date
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
     const skip = (page - 1) * itemsPerPage;
@@ -4207,16 +4233,32 @@ app.get('/api/borrowed-assets', async (req, res) => {
         const statusArray = status.split(',').map(s => s.trim());
         matchConditions.push({ status: { $in: statusArray } });
     }
+
+    // --- ADDED: Date Range Filtering for borrow_datetime ---
+    if (start_date || end_date) {
+      const dateRangeCondition = {};
+      if (start_date) {
+        dateRangeCondition.$gte = new Date(start_date);
+      }
+      if (end_date) {
+        dateRangeCondition.$lte = new Date(end_date);
+      }
+      matchConditions.push({ borrow_datetime: dateRangeCondition });
+    }
+    // --- END ADDED ---
     
     const mainMatchStage = matchConditions.length > 0 ? { $and: matchConditions } : {};
     let sortStage = { $sort: { borrow_datetime: -1 } };
     if (sortBy) { sortStage = { $sort: { [sortBy]: sortOrder === 'desc' ? -1 : 1 } }; }
 
     const aggregationPipeline = [
+      // 1. Initial lookup for borrower details (needed for search and display)
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      // 2. Add borrower_details as a single object
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
-      // REMOVED: No longer need to calculate 'current_status', it's now accurate in the DB
+      // 3. Match documents based on all filters (search, status, resident ID, and now date range)
       { $match: mainMatchStage },
+      // 4. Project the final output fields
       {
         $project: {
           _id: 1, ref_no: 1, borrow_datetime: 1, item_borrowed: 1, quantity_borrowed: 1, expected_return_date: 1, date_returned: 1,
@@ -4224,14 +4266,26 @@ app.get('/api/borrowed-assets', async (req, res) => {
           borrower_name: { $concat: [ { $ifNull: ["$borrower_details.first_name", "Unknown"] }, " ", { $ifNull: ["$borrower_details.last_name", "Resident"] } ] },
         }
       },
+      // 5. Sort the results
       sortStage,
+      // 6. Skip and limit for pagination
       { $skip: skip },
       { $limit: itemsPerPage }
     ];
 
     const transactions = await borrowedAssetsCollection.aggregate(aggregationPipeline).toArray();
-    // Simplified count now that the DB is accurate
-    const totalTransactions = await borrowedAssetsCollection.countDocuments(mainMatchStage); 
+    
+    // For total count, we should apply the same matching conditions but without skip/limit
+    // The count needs to happen *after* the initial lookup and match, but *before* the skip/limit
+    const countPipeline = [
+      { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
+      { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
+      { $match: mainMatchStage }, // Apply the same match conditions
+      { $count: "total" } // Count the documents that passed the match
+    ];
+    const countResult = await borrowedAssetsCollection.aggregate(countPipeline).toArray();
+    const totalTransactions = countResult.length > 0 ? countResult[0].total : 0;
+
 
     res.json({ transactions, total: totalTransactions, page, itemsPerPage, totalPages: Math.ceil(totalTransactions / itemsPerPage) });
   } catch (error) {
@@ -4250,21 +4304,25 @@ const findByRefOrId = (id) => {
   return { ref_no: id };
 };
 
-// 3. GET TRANSACTION BY ID (GET) - UPDATED
+// 3. GET TRANSACTION BY ID (GET) - UPDATED to retrieve Base64 for both proofs
 app.get('/api/borrowed-assets/:id', async (req, res) => {
   const { id } = req.params;
   const dab = await db();
   const collection = dab.collection('borrowed_assets');
   try {
     const aggregationPipeline = [
-      { $match: findByRefOrId(id) }, 
+      { $match: findByRefOrId(id) },
       { $lookup: { from: 'residents', localField: 'borrower_resident_id', foreignField: '_id', as: 'borrower_details_array' } },
       { $addFields: { borrower_details: { $arrayElemAt: ['$borrower_details_array', 0] } } },
       {
         $project: {
-          _id: 1, ref_no: 1, borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1, 
-          status: "$status", // Reads direct status
-          expected_return_date: 1, date_returned: 1, return_proof_image_url: 1, return_condition_notes: 1, notes: 1, 
+          _id: 1, ref_no: 1, borrow_datetime: 1, borrowed_from_personnel: 1, item_borrowed: 1, quantity_borrowed: 1,
+          status: "$status",
+          expected_return_date: 1, date_returned: 1,
+          // ✨ IMPORTANT: PROJECT THE CORRECT FIELD FOR RETURN PROOF ✨
+          return_proof_image_base64: 1, // Changed from return_proof_image_url
+          return_condition_notes: 1, notes: 1,
+          borrow_proof_image_base64: 1, // Already correct for borrowing proof
           created_at: 1, updated_at: 1, borrower_resident_id: 1, borrower_display_name: 1, borrower_details: 1,
         }
       }
@@ -4385,7 +4443,7 @@ app.patch('/api/borrowed-assets/:id/status', async (req, res) => {
   }
 });
 
-// 6. PROCESS ITEM RETURN (PATCH) - UPDATED
+// 6. PROCESS ITEM RETURN (PATCH) - UPDATED TO STORE BASE64
 app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
     const { id } = req.params;
     const { return_proof_image_base64, return_condition_notes } = req.body;
@@ -4398,13 +4456,20 @@ app.patch('/api/borrowed-assets/:id/return', async (req, res) => {
         if (!transaction) { return res.status(404).json({ error: 'Transaction not found.' }); }
         if (![STATUS.APPROVED, STATUS.OVERDUE].includes(transaction.status)) { return res.status(400).json({ error: `Cannot return an item with status '${transaction.status}'.` }); }
 
-        const updateFields = { status: STATUS.RETURNED, date_returned: new Date(), return_proof_image_url: return_proof_image_base64 || null, return_condition_notes: return_condition_notes || "Item returned.", updated_at: new Date() };
+        // ✨ CRITICAL CHANGE HERE: Use return_proof_image_base64 field ✨
+        const updateFields = {
+            status: STATUS.RETURNED,
+            date_returned: new Date(),
+            return_proof_image_base64: return_proof_image_base64 || null, // Store Base64 directly
+            return_condition_notes: return_condition_notes || "Item returned.",
+            updated_at: new Date()
+        };
         await borrowedAssetsCollection.updateOne(findQuery, { $set: updateFields });
-        
+
         await checkAndReactivateAccount(dab, transaction.borrower_resident_id, transaction._id);
 
         await createAuditLog({ description: `Item returned for transaction: ${transaction.quantity_borrowed}x '${transaction.item_borrowed}'...`, action: "STATUS_CHANGE", entityType: "BorrowTransaction", entityId: transaction._id.toString() }, req);
-        
+
         // --- INSERT NOTIFICATION LOGIC HERE ---
         await createNotification(dab, {
           name: `Item Returned (Ref: ${transaction.ref_no})`,
@@ -4551,13 +4616,16 @@ app.get('/api/assets', async (req, res) => {
     const categoryFilter = req.query.category || '';
     const page = parseInt(req.query.page) || 1;
     const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    // ADDED: Extract start_date and end_date from query
+    const start_date = req.query.start_date;
+    const end_date = req.query.end_date;
+
     const skip = (page - 1) * itemsPerPage;
 
     const dab = await db();
     const collection = dab.collection('assets');
 
     // --- Build the match conditions for filtering ---
-    let matchConditions = {};
     const andConditions = [];
     if (search) {
         const searchRegex = new RegExp(search, 'i');
@@ -4566,6 +4634,26 @@ app.get('/api/assets', async (req, res) => {
     if (categoryFilter) {
         andConditions.push({ category: categoryFilter });
     }
+
+    // --- ADDED: Date Range Filtering for asset creation date (created_at) ---
+    // Assuming 'created_at' is the field that stores when the asset record was created.
+    // Adjust 'created_at' if your actual field name is different (e.g., 'date_added').
+    if (start_date || end_date) {
+      const dateRangeCondition = {};
+      if (start_date) {
+        dateRangeCondition.$gte = new Date(start_date);
+      }
+      if (end_date) {
+        // Ensure end_date includes the entire day
+        const endDateObj = new Date(end_date);
+        endDateObj.setHours(23, 59, 59, 999); // Set to end of the day
+        dateRangeCondition.$lte = endDateObj;
+      }
+      andConditions.push({ created_at: dateRangeCondition }); // Push to andConditions
+    }
+    // --- END ADDED ---
+
+    let matchConditions = {};
     if (andConditions.length > 0) {
         matchConditions = { $and: andConditions };
     }
@@ -4573,7 +4661,7 @@ app.get('/api/assets', async (req, res) => {
     try {
         // --- Aggregation Pipeline ---
         const aggregationPipeline = [
-            // Stage 1: Initial filtering of assets
+            // Stage 1: Initial filtering of assets (now includes date range)
             { $match: matchConditions },
 
             // Stage 2: Lookup for CURRENTLY BORROWED / OUT-OF-INVENTORY items
@@ -4627,6 +4715,7 @@ app.get('/api/assets', async (req, res) => {
             },
             
             // Stage 6: Sort before pagination
+            // Assuming default sort by 'name' as in your original code
             { $sort: { name: 1 } },
 
             // Stage 7: Use $facet for pagination and total count in one go
@@ -4884,12 +4973,16 @@ app.post('/api/complaints', async (req, res) => {
   }
 });
 
-// GET ALL COMPLAINT REQUESTS (GET)
+// GET ALL COMPLAINT REQUESTS (GET) - UPDATED with Date Range Filtering
 app.get('/api/complaints', async (req, res) => {
   const search = req.query.search || '';
   const status = req.query.status || '';
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  // ADDED: Extract start_date and end_date from query
+  const start_date = req.query.start_date;
+  const end_date = req.query.end_date;
+
   const skip = (page - 1) * itemsPerPage;
 
   const dab = await db();
@@ -4917,13 +5010,29 @@ app.get('/api/complaints', async (req, res) => {
     ];
   }
 
+  // --- ADDED: Date Range Filtering for date_of_complaint ---
+  if (start_date || end_date) {
+    const dateRangeCondition = {};
+    if (start_date) {
+      dateRangeCondition.$gte = new Date(start_date);
+    }
+    if (end_date) {
+      // Ensure end_date includes the entire day
+      const endDateObj = new Date(end_date);
+      endDateObj.setHours(23, 59, 59, 999); // Set to end of the day
+      dateRangeCondition.$lte = endDateObj;
+    }
+    matchQuery.date_of_complaint = dateRangeCondition;
+  }
+  // --- END ADDED ---
+
   try {
     const aggregationPipeline = [
       { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
       { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } } },
       { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
       { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } } },
-      { $match: matchQuery },
+      { $match: matchQuery }, // This $match now includes date range filter
       {
         $project: {
           _id: 1,
@@ -4931,31 +5040,31 @@ app.get('/api/complaints', async (req, res) => {
           complainant_name: { 
             $ifNull: [
                 { $concat: [ "$complainant_details.first_name", " ", "$complainant_details.last_name"] }, 
-                "$complainant_display_name"
+                "$complainant_display_name" // Fallback for existing data or if resident not found
             ]
           },
           person_complained_against: {
             $ifNull: [
               { $concat: [ "$person_complained_details.first_name", " ", "$person_complained_details.last_name"] },
-              "$person_complained_against_name"
+              "$person_complained_against_name" // Fallback for existing data or if resident not found
             ]
           },
           date_of_complaint: 1, status: 1, notes_description: 1, created_at: 1, category: 1,
         }
       },
-      { $sort: { date_of_complaint: -1, created_at: -1 } },
+      { $sort: { date_of_complaint: -1, created_at: -1 } }, // Default sort
       { $skip: skip }, { $limit: itemsPerPage }
     ];
 
     const complaints = await collection.aggregate(aggregationPipeline).toArray();
     
-    // The count pipeline correctly uses the same `matchQuery`
+    // The count pipeline must also incorporate the date range filter
     const countPipeline = [
         { $lookup: { from: 'residents', localField: 'complainant_resident_id', foreignField: '_id', as: 'complainant_details_array' }},
         { $addFields: { complainant_details: { $arrayElemAt: ['$complainant_details_array', 0] } }},
         { $lookup: { from: 'residents', localField: 'person_complained_against_resident_id', foreignField: '_id', as: 'person_complained_details_array' }},
         { $addFields: { person_complained_details: { $arrayElemAt: ['$person_complained_details_array', 0] } }},
-        { $match: matchQuery },
+        { $match: matchQuery }, // This $match now includes date range filter
         { $count: 'total' }
     ];
     const countResult = await collection.aggregate(countPipeline).toArray();
@@ -5333,7 +5442,8 @@ app.post('/api/complaints/:id/notes', async (req, res) => {
 app.patch('/api/complaints/:id/status', async (req, res) => {
   const { id } = req.params;
   const { status, reason } = req.body;
-  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Resolved', 'Closed', 'Dismissed'];
+  // UPDATED: Added 'Unresolved' to the list of allowed statuses
+  const ALLOWED_STATUSES = ['New', 'Under Investigation', 'Unresolved', 'Resolved', 'Closed', 'Dismissed'];
   
   if (!status || !ALLOWED_STATUSES.includes(status)) {
     return res.status(400).json({ error: `Status must be one of: ${ALLOWED_STATUSES.join(', ')}` });
@@ -5367,9 +5477,10 @@ app.patch('/api/complaints/:id/status', async (req, res) => {
 
     const updateSet = { status: status, updated_at: new Date() };
 
-    if (reason && status === 'Dismissed') {
+    // If dismissing, set the reason. Otherwise, unset it to clear previous dismissal reasons.
+    if (status === 'Dismissed' && reason) {
         updateSet.status_reason = reason;
-    } else {
+    } else if (originalComplaint.status_reason) { // Only unset if there was a reason previously
         await complaintsCollection.updateOne(
             { _id: originalComplaint._id },
             { $unset: { status_reason: "" } }
@@ -5472,12 +5583,13 @@ app.delete('/api/complaints/:id', async (req, res) => {
 // ====================== DOCUMENT REQUESTS CRUD (REVISED FOR DYNAMIC FORMS & GENERATION) =========================== //
 
 
+// ADD NEW DOCUMENT (POST)
 // POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
 app.post('/api/document-requests', async (req, res) => {
   const dab = await db();
   const {
     requestor_resident_id,
-    processed_by_personnel, // --- 1. RECEIVE THE NEW FIELD ---
+    processed_by_personnel,
     request_type,
     purpose,
     details,
@@ -5495,6 +5607,10 @@ app.post('/api/document-requests', async (req, res) => {
     const residentsCollection = dab.collection('residents');
     const requestsCollection = dab.collection('document_requests');
 
+    // --- ADDED: Account Status Check ---
+    await checkResidentAccountStatus(requestor_resident_id, dab);
+    // --- END ADDED ---
+
     // Fetch the requestor's name for a more descriptive log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
@@ -5503,9 +5619,11 @@ app.post('/api/document-requests', async (req, res) => {
     const customRefNo = await generateUniqueReference(requestsCollection);
 
     // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
+    // MODIFIED: Added requestor_name to the newRequest object for easier retrieval
     const newRequest = {
       ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
+      requestor_name: requestorName, // Store the requestor's name directly in the document request
       processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
@@ -5523,8 +5641,6 @@ app.post('/api/document-requests', async (req, res) => {
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
-        // Assuming your createAuditLog function correctly identifies the logged-in user from the 'req' object as the actor.
-        // The 'userId' and 'userName' here can refer to the subject of the log.
         userId: requestor ? requestor._id : null,
         userName: requestorName,
     }, req);
@@ -5535,10 +5651,170 @@ app.post('/api/document-requests', async (req, res) => {
       requestId: result.insertedId,
       refNo: customRefNo
     });
-    
+
   } catch (error) {
     console.error('Error adding document request:', error);
+    // --- ADDED: Specific error handling for account status restrictions ---
+    if (error.message.includes("account is pending approval") ||
+        error.message.includes("account has been declined") ||
+        error.message.includes("account has been permanently deactivated") ||
+        error.message.includes("account is currently On Hold/Deactivated")) {
+      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
+        error: 'Action Restricted. Account status On Hold / Deactivated.',
+        message: error.message
+      });
+    }
+    // --- END ADDED ---
     res.status(500).json({ error: 'Error adding document request.' });
+  }
+});
+
+
+// NEW ENDPOINT: GET ALL DOCUMENT REQUESTS (GET)
+// Handles search, status filter, pagination, sorting, and DATE RANGE FILTERING
+app.get('/api/document-requests', async (req, res) => {
+  const dab = await db();
+  const requestsCollection = dab.collection('document_requests');
+
+  const search = req.query.search || '';
+  const page = parseInt(req.query.page) || 1;
+  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+  const statusFilter = req.query.status; // e.g., 'Pending', 'Approved', 'Declined', 'All'
+  const sortBy = req.query.sortBy;
+  const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1; // 1 for ascending, -1 for descending
+  const startDate = req.query.start_date; // ISO string from frontend
+  const endDate = req.query.end_date;     // ISO string from frontend
+
+  const matchQuery = {};
+
+  // Status filter
+  if (statusFilter && statusFilter !== 'All') {
+    matchQuery.document_status = statusFilter;
+  }
+
+  // Date range filter on `created_at` field
+  if (startDate || endDate) {
+    matchQuery.created_at = {};
+    if (startDate) {
+      matchQuery.created_at.$gte = new Date(startDate);
+    }
+    if (endDate) {
+      matchQuery.created_at.$lte = new Date(endDate);
+    }
+  }
+
+  let sortOptions = {};
+  if (sortBy) {
+    sortOptions[sortBy] = sortOrder;
+  } else {
+    // Default sort: newest requests first
+    sortOptions = { created_at: -1 };
+  }
+
+  try {
+    const pipeline = [
+      // 1. Match documents based on initial filters (status, date)
+      { $match: matchQuery },
+      
+      // 2. Lookup resident details
+      {
+        $lookup: {
+          from: 'residents', // The collection to join with
+          localField: 'requestor_resident_id', // Field from the input documents
+          foreignField: '_id', // Field from the "residents" documents
+          as: 'requestorInfo' // Output array field
+        }
+      },
+      // 3. Deconstruct the requestorInfo array (it will be an array with one resident)
+      {
+        $unwind: {
+          path: '$requestorInfo',
+          preserveNullAndEmptyArrays: true // Keep requests even if resident not found
+        }
+      },
+      // 4. Add a computed requestor_name field
+      {
+        $addFields: {
+          requestor_name_computed: {
+            $cond: {
+              if: '$requestorInfo.first_name', // Check if resident info exists
+              then: { $concat: ['$requestorInfo.first_name', ' ', '$requestorInfo.last_name'] },
+              else: { $ifNull: ['$requestor_name', 'N/A'] } // Fallback to denormalized or 'N/A'
+            }
+          }
+        }
+      },
+      // 5. Apply search filter (now includes the computed requestor_name)
+      // This $match must come after $addFields for requestor_name_computed to be available
+      {
+        $match: search
+          ? {
+              $or: [
+                { request_type: { $regex: new RegExp(search, 'i') } },
+                { purpose: { $regex: new RegExp(search, 'i') } },
+                { ref_no: { $regex: new RegExp(search, 'i') } },
+                { requestor_name_computed: { $regex: new RegExp(search, 'i') } } // Search on computed name
+              ]
+            }
+          : {}
+      },
+      // 6. Sort
+      { $sort: sortOptions },
+      // 7. Count total documents for pagination metadata
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          requests: { $push: '$$ROOT' }
+        }
+      },
+      // 8. Project the desired fields, apply skip and limit
+      {
+        $project: {
+          _id: 0,
+          total: 1,
+          requests: {
+            $slice: [
+              {
+                $map: {
+                  input: '$requests',
+                  as: 'request',
+                  in: {
+                    _id: '$$request._id',
+                    ref_no: '$$request.ref_no',
+                    requestor_resident_id: '$$request.requestor_resident_id',
+                    request_type: '$$request.request_type',
+                    purpose: '$$request.purpose',
+                    details: '$$request.details',
+                    document_status: '$$request.document_status',
+                    created_at: '$$request.created_at',
+                    updated_at: '$$request.updated_at',
+                    // Use the computed name
+                    requestor_name: '$$request.requestor_name_computed', 
+                    // Add other fields you need for the frontend
+                  }
+                }
+              },
+              (page - 1) * itemsPerPage,
+              itemsPerPage
+            ]
+          }
+        }
+      }
+    ];
+
+    const aggregationResult = await requestsCollection.aggregate(pipeline).toArray();
+    
+    // The result will be an array with one element containing 'total' and 'requests'
+    const result = aggregationResult.length > 0 ? aggregationResult[0] : { total: 0, requests: [] };
+
+    res.json({
+      requests: result.requests,
+      total: result.total,
+    });
+  } catch (error) {
+    console.error('Error fetching document requests:', error);
+    res.status(500).json({ error: 'Error fetching document requests.' });
   }
 });
 
@@ -6672,13 +6948,12 @@ app.get('/api/budgets/categories', async (req, res) => {
 
 app.get('/api/budgets', async (req, res) => {
     try {
-        const dab = await db();
+        const dab = await db(); // Get database connection
         const collection = dab.collection('budgets');
 
-        const { search, sortBy, sortOrder, filterDay, filterMonth, filterYear } = req.query; // Destructure new filter parameters
-        const page = parseInt(req.query.page) || 1;
-        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10; // Use 'let' to allow modification
-        // Ensure itemsPerPage is at least 1 if not -1
+        const { search, sortBy, sortOrder, start_date, end_date, filterYear } = req.query;
+        let page = parseInt(req.query.page) || 1;
+        let itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
         if (itemsPerPage !== -1 && itemsPerPage < 1) itemsPerPage = 10; 
 
         console.log("Backend received /api/budgets query params:", req.query);
@@ -6696,36 +6971,31 @@ app.get('/api/budgets', async (req, res) => {
             };
         }
 
-        // Date filters
-        if (filterDay) {
-            // filterDay comes as 'YYYY-MM-DD'
-            const startOfDay = new Date(filterDay);
-            startOfDay.setUTCHours(0, 0, 0, 0); // Start of the selected day in UTC
-            const endOfDay = new Date(filterDay);
-            endOfDay.setUTCHours(23, 59, 59, 999); // End of the selected day in UTC
-
-            query.date = {
-                $gte: startOfDay,
-                $lte: endOfDay,
-            };
-        } else if (filterMonth && filterYear) {
-            // filterMonth is 1-12, filterYear is YYYY
-            const startOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth) - 1, 1)); // Month is 0-indexed in JS Date
-            const endOfMonth = new Date(Date.UTC(filterYear, parseInt(filterMonth), 0)); // Last day of the month
-
-            query.date = {
-                $gte: startOfMonth,
-                $lte: endOfMonth,
-            };
-        } else if (filterYear) {
-            // filterYear is YYYY
-            const startOfYear = new Date(Date.UTC(filterYear, 0, 1));
-            const endOfYear = new Date(Date.UTC(filterYear, 11, 31, 23, 59, 59, 999));
+        // NEW: Date Range filters (start_date and end_date)
+        if (start_date || end_date) {
+            query.date = {};
+            if (start_date) {
+                // Parse ISO string to Date object
+                query.date.$gte = new Date(start_date);
+                console.log(`Filtering from start_date: ${new Date(start_date).toISOString()}`);
+            }
+            if (end_date) {
+                // Parse ISO string to Date object
+                query.date.$lte = new Date(end_date);
+                console.log(`Filtering up to end_date: ${new Date(end_date).toISOString()}`);
+            }
+        } 
+        // Existing: Filter by Year (only if no specific start/end dates are provided)
+        else if (filterYear) {
+            const year = parseInt(filterYear);
+            const startOfYear = new Date(Date.UTC(year, 0, 1, 0, 0, 0, 0));
+            const endOfYear = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999));
 
             query.date = {
                 $gte: startOfYear,
                 $lte: endOfYear,
             };
+            console.log(`Filtering by year: ${filterYear}, UTC range: ${startOfYear.toISOString()} to ${endOfYear.toISOString()}`);
         }
         
         let sortOptions = { date: -1 }; // Default sort
@@ -6733,20 +7003,17 @@ app.get('/api/budgets', async (req, res) => {
             sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
         }
 
-        console.log("Final MongoDB Query:", JSON.stringify(query));
+        console.log("Final MongoDB Query for /api/budgets:", JSON.stringify(query));
 
         let cursor = collection.find(query).sort(sortOptions);
 
-        // --- IMPORTANT FIX: Conditionally apply skip and limit ---
         if (itemsPerPage !== -1) {
             const skip = (page - 1) * itemsPerPage;
             cursor = cursor.skip(skip).limit(itemsPerPage);
         }
-        // --- END IMPORTANT FIX ---
 
         const budgets = await cursor.toArray();
-        console.log("Number of budgets fetched:", budgets.length);
-
+        console.log("Number of budgets fetched for /api/budgets:", budgets.length);
 
         const totalBudgets = await collection.countDocuments(query);
 
@@ -6758,6 +7025,52 @@ app.get('/api/budgets', async (req, res) => {
     } catch (error) {
         console.error("Error fetching budget entries:", error);
         res.status(500).json({ error: 'Failed to fetch budget entries.' });
+    }
+});
+
+// NEW ROUTE: Endpoint to fetch distinct budget years for the filter dropdown
+app.get('/api/budgets/years', async (req, res) => {
+    try {
+        const dab = await db();
+        const collection = dab.collection('budgets');
+
+        // MongoDB aggregation pipeline to extract distinct years
+        const distinctYears = await collection.aggregate([
+            {
+                $project: {
+                    // Assuming 'date' field in your MongoDB collection is stored as an ISODate (BSON Date type).
+                    // If your 'date' field is a string (e.g., "DD/MM/YYYY"), you would first need to convert it using $dateFromString:
+                    // convertedDate: { $dateFromString: { dateString: "$date", format: "%d/%m/%Y" } }
+                    // Then use: year: { $year: "$convertedDate" }
+                    year: { $year: "$date" }
+                }
+            },
+            {
+                $group: {
+                    _id: "$year" // Group by the extracted year to get unique values
+                }
+            },
+            {
+                $sort: { _id: 1 } // Sort the years in ascending order
+            },
+            {
+                $project: {
+                    _id: 0,      // Exclude the default _id field
+                    year: "$_id" // Project the grouped _id value as 'year'
+                }
+            }
+        ]).toArray();
+
+        // Convert the array of objects [{ year: 2025 }, { year: 2026 }]
+        // to a simple array of numbers [2025, 2026]
+        const yearsArray = distinctYears.map(item => item.year);
+
+        console.log("Fetched distinct budget years:", yearsArray);
+        res.status(200).json({ years: yearsArray });
+
+    } catch (error) {
+        console.error("Error fetching distinct budget years:", error);
+        res.status(500).json({ message: "Failed to fetch distinct budget years." });
     }
 });
 

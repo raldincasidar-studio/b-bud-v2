@@ -5,7 +5,7 @@
         <v-progress-circular indeterminate color="primary" size="64"></v-progress-circular>
         <p class="mt-4 text-grey-darken-1">Loading Transaction Details...</p>
     </div>
-    <v-alert v-else-if="!transactionData._id" type="error" prominent border="start">
+    <v-alert v-else-if="!transactionData || !transactionData._id" type="error" prominent border="start">
       <template v-slot:title>Transaction Not Found</template>
       The transaction you are looking for does not exist or could not be loaded. It may have been deleted.
       <template v-slot:append>
@@ -18,14 +18,52 @@
       <v-row justify="space-between" align="center" class="mb-6">
         <v-col>
           <h2 class="text-h4 font-weight-bold">Manage Transaction</h2>
-          <p class="text-grey-darken-1">Ref #: {{ transactionId }}</p>
+          <p class="text-grey-darken-1">Ref #: {{ transactionData.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
+            <!-- ADDED: Status Chip -->
+            <v-chip :color="getStatusColor(transactionData.status)" label size="large" class="font-weight-bold mr-4">{{ transactionData.status }}</v-chip>
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="isSaving" variant="flat" rounded="lg">Save</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" variant="text" rounded="lg">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" rounded="lg">Delete</v-btn>
         </v-col>
       </v-row>
+
+      <!-- ✨ STATUS TRACKER START ✨ -->
+      <div class="status-tracker-container my-12">
+        <div class="progress-bar-container">
+            <div class="progress-bar-bg"></div>
+            <div
+                class="progress-bar-fg"
+                :class="isFailureState ? 'bg-error' : 'bg-primary'"
+                :style="{ width: progressWidth }"
+            ></div>
+        </div>
+        <div class="steps-container">
+            <div v-for="(step, index) in trackerSteps" :key="step.name" class="step-item">
+                <div
+                    class="step-circle"
+                    :class="{
+                        'completed': !isFailureState && index < activeStepIndex,
+                        'current': !isFailureState && index === activeStepIndex,
+                        'declined': isFailureState && index < activeStepIndex, // Use 'declined' for steps before failure point
+                        'failure-point': isFailureState && index === activeStepIndex
+                    }"
+                >
+                    <v-icon size="large">
+                        {{ getStepIcon(index, step.icon) }}
+                    </v-icon>
+                </div>
+                <div
+                    class="step-label mt-3"
+                    :class="{ 'font-weight-bold text-primary': !isFailureState && index === activeStepIndex }"
+                >
+                    {{ step.name }}
+                </div>
+            </div>
+        </div>
+      </div>
+      <!-- ✨ STATUS TRACKER END ✨ -->
 
       <v-row>
         <!-- Left Column: Transaction Details -->
@@ -68,6 +106,24 @@
 
             </v-card-text>
           </v-card>
+
+          <!-- ✨ Borrowing Proof (Photo) Display ✨ -->
+          <v-card flat border prepend-icon="mdi-camera" title="Borrowing Proof (Photo)" class="mt-4">
+            <v-card-text>
+              <div v-if="transactionData.borrow_proof_image_base64" class="pa-2">
+                  <v-img
+                    :src="transactionData.borrow_proof_image_base64"
+                    max-height="300"
+                    class="elevation-2 rounded-lg border cursor-pointer"
+                    @click="openGallery('borrow_proof')"
+                  ></v-img>
+                  <p class="text-caption text-grey-darken-1 mt-2">Click image to enlarge</p>
+              </div>
+              <v-alert v-else type="info" variant="tonal" text="No borrowing proof was uploaded."></v-alert>
+            </v-card-text>
+          </v-card>
+          <!-- ✨ END Borrowing Proof (Photo) Display ✨ -->
+
         </v-col>
 
         <!-- Right Column: Status & Return Management -->
@@ -80,7 +136,7 @@
                     <v-list-item-subtitle>Current Status</v-list-item-subtitle>
                 </v-list-item>
                 <v-divider></v-divider>
-                
+
                 <!-- Status Management for Pending/Processing -->
                 <div v-if="['Pending', 'Processing'].includes(transactionData.status)">
                     <v-card-text>
@@ -97,6 +153,7 @@
                 <div v-if="['Approved', 'Overdue', 'Returned'].includes(transactionData.status)">
                     <v-card-text>
                         <p class="text-body-2 mb-4">Once the resident returns the item, upload proof and add notes on its condition.</p>
+                        <!-- Updated v-model to match single file behavior -->
                         <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined"  prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
                         <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3"></v-textarea>
                     </v-card-text>
@@ -115,14 +172,15 @@
                             <v-divider inset></v-divider>
                             <v-list-item title="Return Condition Notes" :subtitle="transactionData.return_condition_notes || 'No notes provided.'"></v-list-item>
                         </v-list>
-                        <div v-if="transactionData.return_proof_image_url" class="pa-2 mt-2">
+                        <!-- ✨ UPDATED: Display return_proof_image_base64 ✨ -->
+                        <div v-if="transactionData.return_proof_image_base64" class="pa-2 mt-2">
                             <p class="text-subtitle-2 mb-2">Return Proof:</p>
-                            <v-img :src="transactionData.return_proof_image_url" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
+                            <v-img :src="transactionData.return_proof_image_base64" max-height="300" class="elevation-2 rounded-lg border cursor-pointer" @click="openGallery('return_proof')"></v-img>
                         </div>
                         <v-alert v-else type="info" variant="tonal" class="mt-2" text="No return proof was uploaded."></v-alert>
                     </v-card-text>
                 </div>
-                
+
                 <!-- Problem Management (Lost/Damaged) -->
                  <div v-else-if="['Lost', 'Damaged'].includes(transactionData.status)">
                     <v-card-text>
@@ -209,7 +267,7 @@ const router = useRouter();
 const transactionId = route.params.id;
 
 // --- STATE ---
-const transactionData = ref({});
+const transactionData = ref(null); // Initialized as null for explicit "no data" state
 const form = reactive({ item_borrowed: '', quantity_borrowed: 1, borrow_datetime: '', expected_return_date: '', notes: '' });
 const returnForm = reactive({ proofImage: null, conditionNotes: '' });
 
@@ -223,25 +281,78 @@ const confirmDeleteDialog = ref(false);
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
+// ✨ UPDATED: imageGallerySource computed property to include both Base64 proofs ✨
 const imageGallerySource = computed(() => {
   const items = [];
-  if (transactionData.value.return_proof_image_url) {
-    items.push({ 
-      id: 'return_proof', 
-      src: transactionData.value.return_proof_image_url, 
-      title: 'Return Proof' 
+  if (transactionData.value?.borrow_proof_image_base64) {
+    items.push({
+      id: 'borrow_proof',
+      src: transactionData.value.borrow_proof_image_base64,
+      title: 'Borrowing Proof'
+    });
+  }
+  if (transactionData.value?.return_proof_image_base64) { // Use the new Base64 field
+    items.push({
+      id: 'return_proof',
+      src: transactionData.value.return_proof_image_base64,
+      title: 'Return Proof'
     });
   }
   return items;
 });
 
+// ✨ UPDATED: openGallery function to correctly find the image in the gallerySource ✨
 function openGallery(id) {
   const foundIndex = imageGallerySource.value.findIndex(item => item.id === id);
   if (foundIndex > -1) {
     currentGalleryIndex.value = foundIndex;
     galleryDialog.value = true;
+  } else {
+    console.warn(`Image with ID '${id}' not found in gallery source.`);
+    $toast.fire({ title: 'Image not available or corrupted.', icon: 'warning' });
   }
 }
+
+// --- STATUS TRACKER CONFIGURATION (UPDATED) ---
+const trackerSteps = ref([
+    { name: 'Pending', icon: STATUS_CONFIG.Pending.icon },
+    { name: 'Processing', icon: STATUS_CONFIG.Processing.icon },
+    { name: 'Approved', icon: STATUS_CONFIG.Approved.icon },
+    { name: 'Returned', icon: STATUS_CONFIG.Returned.icon },
+    { name: 'Resolved', icon: STATUS_CONFIG.Resolved.icon }
+]);
+
+const isRejected = computed(() => transactionData.value?.status === 'Rejected');
+const isLostOrDamaged = computed(() => transactionData.value?.status === 'Lost' || transactionData.value?.status === 'Damaged');
+const isFailureState = computed(() => isRejected.value || isLostOrDamaged.value);
+
+const activeStepIndex = computed(() => {
+  if (!transactionData.value) return -1;
+
+  const currentStatus = transactionData.value.status;
+  const stepNames = trackerSteps.value.map(step => step.name);
+
+  if (isRejected.value) {
+    return stepNames.indexOf('Processing');
+  }
+  if (isLostOrDamaged.value) {
+    return stepNames.indexOf('Approved');
+  }
+
+  let index = stepNames.indexOf(currentStatus);
+  if (currentStatus === 'Overdue') {
+      index = stepNames.indexOf('Approved');
+  }
+  return index;
+});
+
+const progressWidth = computed(() => {
+  if (activeStepIndex.value < 0) return '0%';
+  const totalStepsForProgressBar = trackerSteps.value.length > 1 ? (trackerSteps.value.length - 1) : 1;
+  const percentage = (activeStepIndex.value / totalStepsForProgressBar) * 100;
+  return `${percentage}%`;
+});
+
 
 // --- LIFECYCLE & DATA FETCHING ---
 onMounted(async () => {
@@ -252,10 +363,14 @@ async function fetchTransaction() {
   loading.value = true;
   try {
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`);
-    if (error.value || !data.value?.transaction) throw new Error('Transaction not found or could not be loaded.');
-    
+    if (error.value || !data.value?.transaction) {
+      transactionData.value = null; // Explicitly set to null on error or no data
+      throw new Error('Transaction not found or could not be loaded.');
+    }
+
     let currentTransaction = data.value.transaction;
 
+    // Auto-update 'Pending' to 'Processing'
     if (currentTransaction.status === 'Pending') {
       const { data: updateData, error: updateError } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
         method: 'PATCH', body: { status: 'Processing' }
@@ -263,23 +378,30 @@ async function fetchTransaction() {
 
       if (updateError.value) {
         console.warn('Could not auto-update status to Processing.', updateError.value);
-      } else {
+      } else if (updateData.value?.transaction) {
         currentTransaction = updateData.value.transaction;
       }
     }
-    
+
     transactionData.value = currentTransaction;
     resetForm();
 
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
+    transactionData.value = null; // Ensure it's null when an error occurs
   } finally {
     loading.value = false;
   }
 }
 
 // --- FORM & UI LOGIC ---
+// ✨ UPDATED: resetForm to be robust against null transactionData.value ✨
 function resetForm() {
+    if (!transactionData.value) {
+        Object.assign(form, { item_borrowed: '', quantity_borrowed: 0, borrow_datetime: '', expected_return_date: '', notes: '' });
+        return;
+    }
+
     Object.assign(form, {
         item_borrowed: transactionData.value.item_borrowed,
         quantity_borrowed: transactionData.value.quantity_borrowed,
@@ -291,10 +413,21 @@ function resetForm() {
 
 const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) resetForm(); };
 const cancelEdit = () => toggleEditMode(false);
+
+// ✨ UPDATED: fileSizeRule to handle single File object for v-file-input consistently ✨
 const fileSizeRule = (value) => {
-    if (!value || !value.length) return true;
-    const file = value[0];
-    return file.size < 2000000 || 'Image size should be less than 2 MB!';
+    if (!value) return true;
+
+    let fileToValidate = null;
+    if (value instanceof File) {
+      fileToValidate = value;
+    } else if (Array.isArray(value) && value.length > 0) {
+      fileToValidate = value[0];
+    }
+
+    if (!fileToValidate) return true;
+
+    return fileToValidate.size < 2000000 || 'Image size should be less than 2 MB!';
 };
 
 // --- API ACTIONS ---
@@ -304,9 +437,9 @@ async function saveChanges() {
     const payload = { ...form, borrow_datetime: new Date(form.borrow_datetime).toISOString(), expected_return_date: new Date(form.expected_return_date).toISOString() };
     const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}`, { method: 'PUT', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update.');
-    
+
     $toast.fire({ title: 'Transaction updated!', icon: 'success' });
-    await fetchTransaction(); 
+    await fetchTransaction();
     toggleEditMode(false);
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
   finally { isSaving.value = false; }
@@ -333,23 +466,21 @@ async function updateStatus(newStatus, promptForReason = false) {
             }
         });
 
-        if (!isConfirmed) return; // Exit if the user clicks "Cancel"
-        
-        // Add the provided reason to the API payload
+        if (!isConfirmed) return;
+
         apiPayload.notes = reason;
     }
 
-    // Call the API to update the status
     try {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/status`, {
-            method: 'PATCH', 
+            method: 'PATCH',
             body: apiPayload,
         });
         if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
-        
+
         $toast.fire({ title: data.value.message, icon: 'success' });
-        
-        await fetchTransaction(); // Refresh data from the server
+
+        await fetchTransaction();
 
     } catch (e) {
         $toast.fire({ title: e.message, icon: 'error' });
@@ -359,7 +490,14 @@ async function updateStatus(newStatus, promptForReason = false) {
 async function processReturn() {
     isReturning.value = true;
     let imageBase64 = null;
-    const file = returnForm.proofImage ? returnForm.proofImage[0] : null;
+    let file = null; // Initialize file
+
+    // ✨ UPDATED: Corrected file extraction for v-file-input ✨
+    if (returnForm.proofImage instanceof File) {
+      file = returnForm.proofImage;
+    } else if (Array.isArray(returnForm.proofImage) && returnForm.proofImage.length > 0) {
+      file = returnForm.proofImage[0];
+    }
 
     if (file) {
         if (file.size > 2000000) {
@@ -381,7 +519,7 @@ async function processReturn() {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/return`, {
             method: 'PATCH',
             body: {
-                return_proof_image_base64: imageBase64,
+                return_proof_image_base64: imageBase64, // Send Base64 string to backend
                 return_condition_notes: returnForm.conditionNotes,
             },
         });
@@ -406,6 +544,18 @@ async function deleteTransaction() {
 }
 
 // --- HELPER FUNCTIONS ---
+function getStepIcon(index, defaultIcon) {
+    if (isFailureState.value) {
+        if (index < activeStepIndex.value) return 'mdi-check';
+        if (index === activeStepIndex.value) return 'mdi-close';
+        return defaultIcon;
+    }
+    if (index < activeStepIndex.value) {
+        return 'mdi-check';
+    }
+    return defaultIcon;
+}
+
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.readAsDataURL(file);
@@ -436,5 +586,100 @@ const formatDateTime = (dateString) => {
 .ga-2 { gap: 8px; }
 .cursor-pointer {
     cursor: pointer;
+}
+
+/* Status Tracker Styles (Copied from document requests [id].vue) */
+.status-tracker-container {
+  position: relative;
+  width: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+.steps-container {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+}
+.progress-bar-container {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  padding: 0 40px;
+  box-sizing: border-box;
+  z-index: 1;
+}
+.progress-bar-bg, .progress-bar-fg {
+  height: 4px;
+  border-radius: 2px;
+  position: absolute;
+  top: 50%;
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  transform: translateY(-50%);
+}
+.progress-bar-bg {
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  background-color: #e0e0e0;
+}
+.progress-bar-fg {
+  background-color: rgb(var(--v-theme-primary));
+  transition: width 0.4s ease-in-out;
+}
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100px; /* Adjust width as needed for spacing */
+}
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: white;
+  border: 3px solid #e0e0e0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background-color 0.4s, border-color 0.4s;
+}
+.step-circle .v-icon {
+  color: #9e9e9e;
+  transition: color 0.4s;
+}
+.step-circle.current {
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.current .v-icon {
+  color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed {
+  background-color: rgb(var(--v-theme-primary));
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed .v-icon {
+  color: white;
+}
+.step-circle.declined { /* Used for steps before a failure point */
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+}
+.step-circle.declined .v-icon {
+  color: white;
+}
+.step-circle.failure-point {
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+  box-shadow: 0 0 10px 2px rgba(var(--v-theme-error-rgb), 0.5);
+}
+.step-circle.failure-point .v-icon {
+  color: white;
+}
+.step-label {
+  font-size: 0.875rem;
+  color: #757575;
+  transition: color 0.4s, font-weight 0.4s;
 }
 </style>

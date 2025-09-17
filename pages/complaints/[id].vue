@@ -1,3 +1,4 @@
+// filed complaints [id].vue
 <template>
   <v-container class="my-10">
     <!-- Loading and Error States -->
@@ -19,11 +20,49 @@
           <p class="text-grey-darken-1">Reference #: {{ form.ref_no }}</p>
         </v-col>
         <v-col class="text-right">
+          <!-- Status chip now moved up for consistency -->
+          <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold mr-4">{{ form.status }}</v-chip>
           <v-btn v-if="editMode" color="success" @click="saveChanges" prepend-icon="mdi-content-save" class="mr-2" :loading="saving" :disabled="isComplainantDeactivated">Save Changes</v-btn>
           <v-btn v-if="editMode" color="grey" @click="cancelEdit" prepend-icon="mdi-close-circle-outline" variant="text" class="mr-2" :disabled="isComplainantDeactivated">Cancel</v-btn>
           <v-btn color="error" @click="confirmDeleteDialog = true" prepend-icon="mdi-delete" variant="outlined" :loading="deleting">Delete</v-btn>
         </v-col>
       </v-row>
+
+      <!-- ✨ STATUS TRACKER START ✨ -->
+      <div class="status-tracker-container my-12">
+        <div class="progress-bar-container">
+            <div class="progress-bar-bg"></div>
+            <div
+                class="progress-bar-fg"
+                :class="isFailureState ? 'bg-error' : 'bg-primary'"
+                :style="{ width: progressWidth }"
+            ></div>
+        </div>
+        <div class="steps-container">
+            <div v-for="(step, index) in trackerSteps" :key="step.name" class="step-item">
+                <div
+                    class="step-circle"
+                    :class="{
+                        'completed': !isFailureState && index < activeStepIndex,
+                        'current': !isFailureState && index === activeStepIndex,
+                        'declined': isFailureState && index < activeStepIndex,
+                        'failure-point': isFailureState && index === activeStepIndex
+                    }"
+                >
+                    <v-icon size="large">
+                        {{ getStepIcon(index, step.icon) }}
+                    </v-icon>
+                </div>
+                <div
+                    class="step-label mt-3"
+                    :class="{ 'font-weight-bold text-primary': !isFailureState && index === activeStepIndex }"
+                >
+                    {{ step.name }}
+                </div>
+            </div>
+        </div>
+      </div>
+      <!-- ✨ STATUS TRACKER END ✨ -->
 
       <!-- UPDATED ALERT LOGIC: Prioritize displaying reason if complainant deactivated and reason exists -->
       <v-alert
@@ -112,8 +151,9 @@
               </v-col>
               <v-col cols="12" md="6">
                 <label class="v-label mb-1">Status</label>
+                <!-- This text field is now less critical for status display as the chip and tracker do it -->
                 <v-text-field :model-value="form.status" variant="outlined" readonly messages="The status is managed via actions on this page.">
-                  <template v-slot:prepend-inner><v-chip :color="getStatusColor(form.status)" label size="small">{{ form.status }}</v-chip></template>
+                  <template v-slot:prepend-inner><v-chip :color="getStatusColor(form.status)" label size="small" :prepend-icon="getStatusIcon(form.status)">{{ form.status }}</v-chip></template>
                 </v-text-field>
               </v-col>
             </v-row>
@@ -194,7 +234,7 @@
       </v-card>
 
       <!-- Investigation Notes Section -->
-      <v-card v-if="form.status === 'Under Investigation' || form.status === 'Resolved' || form.status === 'Dismissed'" class="mt-4" flat border>
+      <v-card v-if="['Under Investigation', 'Resolved', 'Dismissed', 'Unresolved'].includes(form.status)" class="mt-4" flat border>
         <v-card-title>Investigation Notes</v-card-title>
         <v-divider></v-divider>
         <v-card-text>
@@ -257,13 +297,25 @@
         <v-card-text>
             <div class="d-flex align-center mb-3">
               <span class="text-subtitle-1 mr-4">Current Status:</span>
-              <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold">{{ form.status }}</v-chip>
+              <v-chip :color="getStatusColor(form.status)" label size="large" class="font-weight-bold" :prepend-icon="getStatusIcon(form.status)">{{ form.status }}</v-chip>
             </div>
              <p class="text-caption text-grey-darken-1 mb-3">Select an action to change the complaint's status.</p>
              <v-btn v-if="form.status === 'New'" color="yellow-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify" :disabled="isComplainantDeactivated">Start Investigation</v-btn>
-             <v-btn v-if="form.status === 'Under Investigation'" color="green-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle" :disabled="isComplainantDeactivated">Mark as Resolved</v-btn>
-             <v-btn v-if="form.status === 'Under Investigation'" color="error" size="large" class="ma-2" @click="declineComplaintDialog = true" prepend-icon="mdi-cancel" :disabled="isComplainantDeactivated">Dismiss Complaint</v-btn>
-             <v-btn v-if="form.status === 'Resolved' || form.status === 'New' || form.status === 'Dismissed'" color="grey-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline" :disabled="isComplainantDeactivated">Close Complaint</v-btn>
+             
+             <!-- NEW: Mark as Unresolved button -->
+             <v-btn v-if="form.status === 'Under Investigation'" color="blue-grey-darken-3" size="large" class="ma-2" @click="updateComplaintStatus('Unresolved')" prepend-icon="mdi-alert-circle-outline" :disabled="isComplainantDeactivated">Mark as Unresolved</v-btn>
+
+             <!-- MODIFIED: Mark as Resolved available from Under Investigation or Unresolved -->
+             <v-btn v-if="form.status === 'Under Investigation' || form.status === 'Unresolved'" color="green-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Resolved')" prepend-icon="mdi-check-circle" :disabled="isComplainantDeactivated">Mark as Resolved</v-btn>
+             
+             <!-- MODIFIED: Dismiss Complaint available from Under Investigation or Unresolved -->
+             <v-btn v-if="form.status === 'Under Investigation' || form.status === 'Unresolved'" color="error" size="large" class="ma-2" @click="declineComplaintDialog = true" prepend-icon="mdi-cancel" :disabled="isComplainantDeactivated">Dismiss Complaint</v-btn>
+             
+             <!-- NEW: Revert to Investigation button when Unresolved -->
+             <v-btn v-if="form.status === 'Unresolved'" color="yellow-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Under Investigation')" prepend-icon="mdi-magnify" :disabled="isComplainantDeactivated">Revert to Investigation</v-btn>
+
+             <!-- MODIFIED: Close Complaint available from Resolved, New, Dismissed, or Unresolved -->
+             <v-btn v-if="form.status === 'Resolved' || form.status === 'New' || form.status === 'Dismissed' || form.status === 'Unresolved'" color="grey-darken-1" size="large" class="ma-2" @click="updateComplaintStatus('Closed')" prepend-icon="mdi-archive-outline" :disabled="isComplainantDeactivated">Close Complaint</v-btn>
              
              <v-alert v-if="form.status === 'Closed'" type="info" variant="tonal" class="mt-4">
                This complaint is closed and no further actions can be taken.
@@ -452,6 +504,67 @@ const rules = {
 };
 const v$ = useVuelidate(rules, form);
 
+// --- STATUS TRACKER CONFIGURATION (NEW) ---
+const STATUS_CONFIG = {
+  'New':                 { color: 'info', icon: 'mdi-bell-ring-outline' },
+  'Under Investigation': { color: 'warning', icon: 'mdi-magnify-scan' },
+  'Unresolved':          { color: 'blue-grey-darken-3', icon: 'mdi-alert-circle-outline' },
+  'Resolved':            { color: 'success', icon: 'mdi-check-circle-outline' },
+  'Closed':              { color: 'grey-darken-1', icon: 'mdi-archive-outline' },
+  'Dismissed':           { color: 'error', icon: 'mdi-cancel' },
+};
+const getStatusColor = (status) => STATUS_CONFIG[status]?.color || 'grey';
+const getStatusIcon = (status) => STATUS_CONFIG[status]?.icon || 'mdi-help-circle-outline';
+
+const trackerSteps = ref([
+    { name: 'New', icon: STATUS_CONFIG.New.icon },
+    { name: 'Under Investigation', icon: STATUS_CONFIG['Under Investigation'].icon },
+    { name: 'Unresolved', icon: STATUS_CONFIG.Unresolved.icon }, // Added as a distinct step
+    { name: 'Resolved', icon: STATUS_CONFIG.Resolved.icon },
+    { name: 'Closed', icon: STATUS_CONFIG.Closed.icon }
+]);
+
+const isDismissed = computed(() => form.status === 'Dismissed');
+const isFailureState = computed(() => isDismissed.value);
+
+const activeStepIndex = computed(() => {
+  if (!form.status) return -1;
+
+  const currentStatus = form.status;
+  const stepNames = trackerSteps.value.map(step => step.name);
+
+  // Handle failure state (Dismissed)
+  if (isDismissed.value) {
+    // If dismissed, mark 'Under Investigation' as the failure point (index 1)
+    return stepNames.indexOf('Under Investigation');
+  }
+
+  // Handle normal progression, including 'Unresolved'
+  return stepNames.indexOf(currentStatus);
+});
+
+const progressWidth = computed(() => {
+  if (activeStepIndex.value < 0) return '0%';
+  const totalStepsForProgressBar = trackerSteps.value.length > 1 ? (trackerSteps.value.length - 1) : 1;
+  const percentage = (activeStepIndex.value / totalStepsForProgressBar) * 100;
+  return `${percentage}%`;
+});
+
+// Helper function for step icons (copied from document requests)
+function getStepIcon(index, defaultIcon) {
+    if (isFailureState.value) {
+        if (index < activeStepIndex.value) return 'mdi-check';
+        if (index === activeStepIndex.value) return 'mdi-close';
+        return defaultIcon;
+    }
+    if (index < activeStepIndex.value) {
+        return 'mdi-check';
+    }
+    return defaultIcon;
+}
+// --- END STATUS TRACKER CONFIGURATION ---
+
+
 // --- COMPUTED PROPERTIES ---
 const imageStyle = computed(() => ({
   transform: `scale(${zoomLevel.value})`,
@@ -533,7 +646,8 @@ async function fetchComplaint(){
         originalFormState.value = JSON.parse(JSON.stringify(form));
         complainantSearchQuery.value = form.complainant_display_name;
         personComplainedSearchQuery.value = form.person_complained_against_name;
-        if (['Under Investigation', 'Resolved', 'Dismissed'].includes(form.status)) {
+        // UPDATED: Include 'Unresolved' for fetching notes
+        if (['Under Investigation', 'Resolved', 'Dismissed', 'Unresolved'].includes(form.status)) {
           await fetchNotes();
         } else {
           investigationNotes.value = [];
@@ -588,8 +702,9 @@ watch(personComplainedSearchQuery, (nq) => {
     }
 });
 
+// UPDATED: Include 'Unresolved' for fetching notes
 watch(() => form.status, (newStatus, oldStatus) => {
-  if (newStatus !== oldStatus && (newStatus === 'Under Investigation' || newStatus === 'Resolved' || newStatus === 'Dismissed')) {
+  if (newStatus !== oldStatus && ['Under Investigation', 'Resolved', 'Dismissed', 'Unresolved'].includes(newStatus)) {
     fetchNotes();
   } else if (newStatus === 'New' || newStatus === 'Closed') {
     investigationNotes.value = [];
@@ -696,7 +811,6 @@ const formatDateTime = (iso) => {
     hour: 'numeric', minute: '2-digit', hour12: true
   });
 };
-const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'warning', 'Resolved': 'success', 'Closed': 'grey-darken-1', 'Dismissed': 'error' }[status] || 'default');
 </script>
 
 <style scoped>
@@ -751,5 +865,100 @@ const getStatusColor = (status) => ({ 'New': 'info', 'Under Investigation': 'war
 }
 .image-video-preview-wrapper:hover .video-play-icon {
   opacity: 1;
+}
+
+/* Status Tracker Styles (Copied from document requests [id].vue) */
+.status-tracker-container {
+  position: relative;
+  width: 100%;
+  padding: 0 20px;
+  box-sizing: border-box;
+}
+.steps-container {
+  display: flex;
+  justify-content: space-between;
+  position: relative;
+  z-index: 2;
+}
+.progress-bar-container {
+  position: absolute;
+  top: 20px;
+  left: 0;
+  right: 0;
+  width: 100%;
+  padding: 0 40px;
+  box-sizing: border-box;
+  z-index: 1;
+}
+.progress-bar-bg, .progress-bar-fg {
+  height: 4px;
+  border-radius: 2px;
+  position: absolute;
+  top: 50%;
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  transform: translateY(-50%);
+}
+.progress-bar-bg {
+  width: 90%; /* Adjust if needed to fit tracker steps */
+  background-color: #e0e0e0;
+}
+.progress-bar-fg {
+  background-color: rgb(var(--v-theme-primary));
+  transition: width 0.4s ease-in-out;
+}
+.step-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  width: 100px; /* Adjust width as needed for spacing */
+}
+.step-circle {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: white;
+  border: 3px solid #e0e0e0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  transition: background-color 0.4s, border-color 0.4s;
+}
+.step-circle .v-icon {
+  color: #9e9e9e;
+  transition: color 0.4s;
+}
+.step-circle.current {
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.current .v-icon {
+  color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed {
+  background-color: rgb(var(--v-theme-primary));
+  border-color: rgb(var(--v-theme-primary));
+}
+.step-circle.completed .v-icon {
+  color: white;
+}
+.step-circle.declined { /* Used for steps before a failure point */
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+}
+.step-circle.declined .v-icon {
+  color: white;
+}
+.step-circle.failure-point {
+  background-color: rgb(var(--v-theme-error));
+  border-color: rgb(var(--v-theme-error));
+  box-shadow: 0 0 10px 2px rgba(var(--v-theme-error-rgb), 0.5);
+}
+.step-circle.failure-point .v-icon {
+  color: white;
+}
+.step-label {
+  font-size: 0.875rem;
+  color: #757575;
+  transition: color 0.4s, font-weight 0.4s;
 }
 </style>

@@ -362,16 +362,30 @@
         <div v-else-if="request.document_status === 'Ready for Pickup'">
           <v-card-text>
             <p class="mb-4">The document is ready. To release it to the requestor, please upload a proof of release (e.g., a photo of the signed acknowledgement receipt).</p>
-            <v-file-input
-              v-model="proofOfReleaseFile"
-              label="Upload Proof of Release Photo"
-              accept="image/*"
-              variant="outlined"
-              prepend-icon="mdi-camera"
+            
+            <!-- Replaced v-file-input with a button to open options -->
+            <v-btn
+              block
+              size="large"
+              color="primary"
+              variant="tonal"
+              @click="uploadOptionsDialog = true"
               :disabled="isActing"
-              clearable
-              show-size
-            ></v-file-input>
+              prepend-icon="mdi-camera"
+              class="mb-4"
+            >
+              Upload or Capture Proof of Release
+            </v-btn>
+
+            <!-- Hidden file input for "Upload from Device" option -->
+            <input
+              type="file"
+              ref="fileInput"
+              accept="image/*"
+              style="display: none;"
+              @change="handleFileChange"
+            />
+
             <v-img
               v-if="proofOfReleaseBase64"
               :src="proofOfReleaseBase64"
@@ -474,11 +488,82 @@
         </v-card-actions>
       </v-card>
     </v-dialog>
+
+    <!-- NEW: DIALOG FOR UPLOAD OPTIONS (File or Camera) -->
+    <v-dialog v-model="uploadOptionsDialog" max-width="400px">
+      <v-card>
+        <v-card-title class="text-h5">Upload Proof of Release</v-card-title>
+        <v-card-text>
+          <v-list density="comfortable">
+            <v-list-item link @click="triggerFileInput">
+              <template v-slot:prepend>
+                <v-icon>mdi-file-upload-outline</v-icon>
+              </template>
+              <v-list-item-title>Upload from Device</v-list-item-title>
+            </v-list-item>
+            <v-list-item link @click="openCameraDialog">
+              <template v-slot:prepend>
+                <v-icon>mdi-camera-outline</v-icon>
+              </template>
+              <v-list-item-title>Capture Photo</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="uploadOptionsDialog = false">Cancel</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- NEW: DIALOG FOR CAMERA CAPTURE -->
+    <v-dialog v-model="cameraDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Capture Proof Photo</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="closeCamera">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="d-flex flex-column justify-center align-center camera-card-content">
+          <div v-if="cameraPermissionError" class="text-center pa-4">
+            <v-icon size="64" color="red-lighten-1">mdi-camera-off</v-icon>
+            <p class="text-h6 mt-2 text-white">Camera access denied.</p>
+            <p class="text-caption text-grey-lighten-1">
+              Please enable camera permissions for this site in your browser settings (e.g., Chrome Settings > Privacy and security > Site settings > Camera)
+              and then try again.
+            </p>
+            <v-btn color="primary" class="mt-4" @click="startCamera">Retry Camera</v-btn>
+          </div>
+          <div v-else-if="!isCameraActive && !capturedImage" class="text-center pa-4">
+            <v-progress-circular indeterminate color="primary"></v-progress-circular>
+            <p class="mt-2 text-white">Starting camera...</p>
+            <p class="text-caption text-grey-lighten-1">
+              If the camera doesn't start, please ensure you've granted permission.
+            </p>
+          </div>
+          <div v-else class="camera-display-wrapper">
+            <video ref="videoElement" autoplay playsinline class="camera-feed" v-show="!capturedImage"></video>
+            <canvas ref="canvasElement" class="captured-preview" v-show="capturedImage"></canvas>
+
+            <div class="camera-controls">
+              <v-btn v-if="!capturedImage" color="primary" icon="mdi-camera" size="x-large" @click="takePhoto"></v-btn>
+              <template v-else>
+                <v-btn color="error" class="mr-2" prepend-icon="mdi-refresh" @click="retakePhoto">Retake</v-btn>
+                <v-btn color="success" prepend-icon="mdi-check-circle" @click="saveCapturedPhoto">Save Photo</v-btn>
+              </template>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch } from 'vue';
+import { ref, onMounted, computed, watch, onBeforeUnmount } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
@@ -492,12 +577,26 @@ const request = ref(null);
 const loading = ref(true);
 const isActing = ref(false);
 const isAutoProcessing = ref(false);
-const proofOfReleaseFile = ref(null);
 const proofOfReleaseBase64 = ref('');
 
 // NEW: State for decline dialog
 const declineDialog = ref(false);
 const declineReason = ref('');
+
+// NEW: State for upload options dialog
+const uploadOptionsDialog = ref(false);
+
+// NEW: State for camera dialog
+const cameraDialog = ref(false);
+const videoElement = ref(null); // Ref for the video element
+const canvasElement = ref(null); // Ref for the canvas element
+let mediaStream = null; // To hold the camera stream
+const capturedImage = ref(''); // To hold the base64 of the captured image
+const isCameraActive = ref(false); // To track if camera is actively streaming
+const cameraPermissionError = ref(false); // NEW: To track if camera permission was denied
+
+// Ref for the hidden file input
+const fileInput = ref(null);
 
 // --- STATUS TRACKER CONFIGURATION ---
 const trackerSteps = ref([
@@ -546,6 +645,10 @@ onMounted(async () => {
   await fetchRequest();
 });
 
+onBeforeUnmount(() => {
+  stopCameraStream(); // Ensure camera is stopped if component is unmounted
+});
+
 async function fetchRequest(showLoading = true) {
     if (showLoading) loading.value = true;
     try {
@@ -574,29 +677,37 @@ async function fetchRequest(showLoading = true) {
     }
 }
 
-// --- FILE HANDLING ---
-watch(proofOfReleaseFile, (file) => {
+// --- FILE HANDLING (Unified) ---
+async function handleFileChange(event) {
+  uploadOptionsDialog.value = false; // Close upload options dialog
+  const file = event.target.files[0]; // Access the first file
   if (!file) {
     proofOfReleaseBase64.value = '';
     return;
   }
-  if (file.size > 5 * 1024 * 1024) {
+  
+  if (file.size > 5 * 1024 * 1024) { // 5MB limit
     $toast.fire({ title: 'File size should not exceed 5MB.', icon: 'warning' });
-    proofOfReleaseFile.value = null;
+    if (fileInput.value) fileInput.value.value = ''; // Clear the file input value
+    proofOfReleaseBase64.value = '';
     return;
   }
+
   const reader = new FileReader();
-  reader.onload = (e) => { proofOfReleaseBase64.value = e.target.result; };
+  reader.onload = (e) => {
+    proofOfReleaseBase64.value = e.target.result;
+    if (fileInput.value) fileInput.value.value = ''; // Clear the file input value after reading
+  };
   reader.onerror = (e) => {
     console.error("FileReader error:", e);
     $toast.fire({ title: 'Could not read the file.', icon: 'error' });
     proofOfReleaseBase64.value = '';
+    if (fileInput.value) fileInput.value.value = ''; // Clear input on error
   };
   reader.readAsDataURL(file);
-});
+}
 
 // --- ACTION HANDLERS ---
-// UPDATED: Centralized function to update status, now accepts a body
 async function _updateStatusOnBackend(newStatus, body = {}) {
     const { data, error } = await useMyFetch(`/api/document-requests/${requestId}/status`, {
       method: 'PATCH',
@@ -619,7 +730,6 @@ async function approveRequest() {
   }
 }
 
-// NEW: Function to handle the decline API call with reason
 async function confirmDecline() {
     if (!declineReason.value) {
         $toast.fire({ title: 'A reason is required to decline.', icon: 'warning' });
@@ -630,7 +740,7 @@ async function confirmDecline() {
         const response = await _updateStatusOnBackend('Declined', { reason: declineReason.value });
         $toast.fire({ title: response.message || 'Request declined.', icon: 'info' });
         declineDialog.value = false;
-        await fetchRequest(false); // Refresh data from server
+        await fetchRequest(false);
     } catch (e) { 
         $toast.fire({ title: e.message, icon: 'error' });
     } finally { 
@@ -641,16 +751,12 @@ async function confirmDecline() {
 async function generateAndSetToPickup() {
   isActing.value = true;
   try {
-    // ONLY update status to 'Ready for Pickup' if it's currently 'Approved'.
-    // If it's already 'Ready for Pickup' or 'Released', just proceed to download
-    // without changing the status.
-    if (request.value.document_status === 'Approved') { // <-- MODIFIED THIS LINE
+    if (request.value.document_status === 'Approved') {
       const response = await _updateStatusOnBackend('Ready for Pickup');
       $toast.fire({ title: 'Status set to "Ready for Pickup"!', icon: 'success' });
-      await fetchRequest(false); // Refresh data to update UI with new status
+      await fetchRequest(false);
     }
 
-    // Always attempt to open the document for viewing/downloading
     const refNo = request.value.ref_no;
     const baseUrl = process.env.NODE_ENV === 'production' ? window.location.origin : 'http://localhost:3001';
     const downloadUrl = `${baseUrl}/api/document-requests/${refNo}/generate`;
@@ -666,10 +772,9 @@ async function generateAndSetToPickup() {
   }
 }
 
-
 async function releaseRequest() {
   if (!proofOfReleaseBase64.value) {
-    $toast.fire({ title: 'Please upload a proof of release photo.', icon: 'warning' });
+    $toast.fire({ title: 'Please upload or capture a proof of release photo.', icon: 'warning' });
     return;
   }
   isActing.value = true;
@@ -682,11 +787,9 @@ async function releaseRequest() {
     $toast.fire({ title: data.value.message || 'Document Released!', icon: 'success' });
     await fetchRequest(false);
     proofOfReleaseBase64.value = '';
-    proofOfReleaseFile.value = null;
   } catch (e) { $toast.fire({ title: e.message, icon: 'error' });
   } finally { isActing.value = false; }
 }
-
 
 // --- HELPER FUNCTIONS ---
 function getStepIcon(index, defaultIcon) {
@@ -722,12 +825,11 @@ const formatTimestamp = (dateString) => {
 
 const formatDetailLabel = (key) => {
   if (!key) return '';
-  // Convert snake_case or camelCase to "Title Case" and replace underscores with spaces
   return key
-    .replace(/([A-Z])/g, ' $1') // Add space before capital letters
-    .replace(/_/g, ' ')         // Replace underscores with spaces
-    .split(' ')                 // Split into words
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1)) // Capitalize first letter of each word
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
 };
 
@@ -750,6 +852,115 @@ const openProofViewer = (url) => {
 const zoomIn = () => { zoomLevel.value += 0.2; };
 const zoomOut = () => { zoomLevel.value = Math.max(0.2, zoomLevel.value - 0.2); };
 const resetZoom = () => { zoomLevel.value = 1; };
+
+
+// --- NEW UPLOAD/CAMERA FUNCTIONS ---
+function triggerFileInput() {
+  uploadOptionsDialog.value = false; // Close current dialog
+  // Programmatically click the hidden file input
+  fileInput.value.click();
+}
+
+function openCameraDialog() {
+  uploadOptionsDialog.value = false; // Close current dialog
+  cameraDialog.value = true;
+  startCamera();
+}
+
+async function startCamera() {
+  isCameraActive.value = false;
+  cameraPermissionError.value = false; // Reset permission error
+  capturedImage.value = ''; // Reset captured image
+  if (mediaStream) {
+    stopCameraStream();
+  }
+
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); // Prefer rear camera on mobile
+    if (videoElement.value) {
+      videoElement.value.srcObject = mediaStream;
+      // Wait for video to load metadata to ensure dimensions are available
+      await new Promise(resolve => {
+        videoElement.value.onloadedmetadata = () => resolve();
+      });
+      isCameraActive.value = true;
+    }
+  } catch (err) {
+    console.error("Error accessing camera:", err);
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      cameraPermissionError.value = true;
+      // Do not close cameraDialog, let the user see the permission error message
+    } else {
+      $toast.fire({
+        title: 'Could not access camera. Please check your device settings.',
+        icon: 'error',
+        timer: 5000
+      });
+      cameraDialog.value = false; // Close for other errors
+    }
+    isCameraActive.value = false;
+  }
+}
+
+function stopCameraStream() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+    if (videoElement.value) {
+      videoElement.value.srcObject = null;
+    }
+  }
+  isCameraActive.value = false;
+}
+
+function takePhoto() {
+  if (!videoElement.value || !canvasElement.value) return;
+
+  const video = videoElement.value;
+  const canvas = canvasElement.value;
+  
+  // Set canvas dimensions to match video feed
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const context = canvas.getContext('2d');
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  
+  capturedImage.value = canvas.toDataURL('image/jpeg', 0.9); // Get base64 JPEG image
+  stopCameraStream(); // Stop camera after taking photo
+}
+
+function retakePhoto() {
+  capturedImage.value = '';
+  startCamera(); // Restart camera for a new photo
+}
+
+function saveCapturedPhoto() {
+  if (capturedImage.value) {
+    proofOfReleaseBase64.value = capturedImage.value;
+    cameraDialog.value = false;
+    capturedImage.value = ''; // Clear captured image from camera dialog state
+  } else {
+    $toast.fire({ title: 'No photo captured yet.', icon: 'warning' });
+  }
+}
+
+function closeCamera() {
+  stopCameraStream();
+  cameraDialog.value = false;
+  capturedImage.value = ''; // Clear any pending captured image
+  cameraPermissionError.value = false; // Reset permission error on close
+}
+
+// Watch for camera dialog opening to start camera
+watch(cameraDialog, (newValue) => {
+  if (newValue) {
+    // startCamera() is now called directly by openCameraDialog
+  } else {
+    stopCameraStream();
+    cameraPermissionError.value = false; // Reset permission error when dialog closes
+  }
+});
 </script>
 
 <style scoped>
@@ -860,5 +1071,47 @@ const resetZoom = () => { zoomLevel.value = 1; };
   z-index: 10;
   display: flex;
   gap: 8px;
+}
+
+/* Camera Dialog Specific Styles */
+.camera-card-content {
+  background-color: #333; /* Dark background for camera feed */
+  height: 100%;
+  flex-grow: 1;
+  position: relative;
+  overflow: hidden; /* Ensure video/canvas don't overflow */
+}
+
+.camera-display-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 100%; /* Limit width on larger screens */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.camera-feed, .captured-preview {
+  width: 100%;
+  height: auto;
+  max-height: 80vh; /* Adjust as needed */
+  object-fit: contain; /* Ensure entire video/image is visible */
+  background-color: black;
+  border-radius: 8px;
+}
+
+.camera-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 16px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 12px 20px;
+  border-radius: 30px;
 }
 </style>
