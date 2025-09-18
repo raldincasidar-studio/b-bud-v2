@@ -722,13 +722,12 @@ app.post('/api/residents', async (req, res) => {
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
-            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
-                throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
+            // Ensure date_of_birth is present and type_of_household is optional as per frontend
+            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password || !headData.date_of_birth) {
+                throw new Error('Validation failed: Head requires first name, last_name, email, password, and date of birth.');
             }
-            // NEW FIELD: Validate type_of_household for the head
-            if (!headData.type_of_household) {
-                throw new Error('Validation failed: Type of household is required for the Household Head.');
-            }
+            // Removed: The explicit backend validation for `type_of_household` as it's now optional on the frontend
+            // and the AI validation can still process it if present.
 
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
             if (existingEmail) {
@@ -751,12 +750,13 @@ app.post('/api/residents', async (req, res) => {
                 middle_name: headData.middle_name,
                 last_name: headData.last_name,
                 suffix: headData.suffix,
+                date_of_birth: headData.date_of_birth, // <--- ADDED date_of_birth for AI validation
                 address_house_number: headData.address_house_number,
-                address_unit_room_apt_number: headData.address_unit_room_apt_number, // NEW FIELD
+                address_unit_room_apt_number: headData.address_unit_room_apt_number,
                 address_street: headData.address_street,
                 address_subdivision_zone: headData.address_subdivision_zone,
                 address_city_municipality: headData.address_city_municipality,
-                type_of_household: headData.type_of_household // NEW FIELD
+                type_of_household: headData.type_of_household // Keep this as AI can still use it if present
               },
               headData.proof_of_residency_base64, // Array of base64 strings
               headData.authorization_letter_base64 || null // Optional authorization letter
@@ -792,8 +792,9 @@ app.post('/api/residents', async (req, res) => {
             // const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []); // This was unused
 
             for (const memberData of membersToCreate) {
-                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
-                    throw new Error(`Validation failed for member: Missing required fields.`);
+                // Ensure date_of_birth is required for members too
+                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head || !memberData.date_of_birth) {
+                    throw new Error(`Validation failed for member: Missing required fields (first_name, last_name, relationship_to_head, date_of_birth).`);
                 }
                 // const memberAge = calculateAge(memberData.date_of_birth); // Unused here
 
@@ -1040,6 +1041,8 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 }
             }
 
+            // createResidentDocument will copy address and type_of_household from householdHead
+            // Ensure createResidentDocument also handles initial date_created, date_updated if it's not passed
             const newMemberDoc = createResidentDocument(memberData, false, householdHead);
             newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
             newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
@@ -1047,7 +1050,6 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 newMemberDoc.pending_password_hash = md5(memberData.password);
             }
             
-            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
             newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
             
             if (memberData.is_voter) {
@@ -1063,29 +1065,37 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 }
             }
             // Add validation for senior citizen if needed
+            // Also add handling for senior_citizen_id and senior_citizen_card_file if coming from memberData
+            if (memberData.is_senior_citizen && (memberData.senior_citizen_id || memberData.senior_citizen_card_file)) {
+                // Add validation similar to PWD/Voter if applicable
+                newMemberDoc.senior_citizen_id = memberData.senior_citizen_id || null;
+                newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
+            }
+
 
             newMemberDoc.status = 'Pending';
             newMemberDoc.date_approved = null;
-            newMemberDoc.created_at = new Date();
-            newMemberDoc.updated_at = new Date();
+            // Changed from created_at/updated_at to date_created/date_updated for consistency
+            newMemberDoc.date_created = new Date();
+            newMemberDoc.date_updated = new Date();
 
             const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
             newMemberId = memberInsertResult.insertedId;
-            // Removed account_number assignment here.
 
             await residentsCollection.updateOne(
                 { _id: new ObjectId(householdHeadId) },
-                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
+                { $push: { household_member_ids: newMemberId }, 
+                  $set: { date_updated: new Date() } // IMPORTANT: Changed from updated_at to date_updated
+                },
                 { session }
             );
         });
 
         const headDetails = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) });
-        // The audit log description below will need to be adjusted as 'account_number' is not directly available
         await createAuditLog({
           userId: householdHeadId,
           userName: `${headDetails.first_name} ${headDetails.last_name}`,
-          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`, // Simplified description
+          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`,
           action: "ADD_MEMBER",
           entityType: "Resident",
           entityId: newMemberId.toString(),
@@ -2496,6 +2506,10 @@ app.get('/api/households', async (req, res) => {
   // Search (optional, can search by head's name or household number)
   const search = req.query.search || '';
 
+  // Sorting
+  const sortBy = req.query.sortBy || 'last_name'; // Default sort by last name
+  const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1; // Default ascending
+
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
@@ -2509,33 +2523,66 @@ app.get('/api/households', async (req, res) => {
       query.$or = [
         { last_name: { $regex: searchRegex } },          // Search by head's last name
         { first_name: { $regex: searchRegex } },         // Search by head's first name
-        { address_house_number: { $regex: searchRegex } } // Search by household number
+        { address_house_number: { $regex: searchRegex } }, // Search by household number
+        { address_unit_room_apt_number: { $regex: searchRegex } }, // Search by unit number
+        { type_of_household: { $regex: searchRegex } } // Search by type of household
       ];
     }
+
+    // Define sort object dynamically
+    const sort = {};
+    if (sortBy) {
+        // Map frontend sort keys to backend field names if they differ
+        const backendSortKey = {
+            'head_date_approved': 'date_approved',
+            'head_date_updated': 'date_updated',
+            'head_full_name': 'last_name', // Sort by last name for full name column
+            'household_name': 'last_name' // Sort by last name for household name column
+            // Add other mappings if necessary, otherwise use sortBy directly
+        }[sortBy] || sortBy;
+        sort[backendSortKey] = sortOrder;
+        // If sorting by name-related fields, add a secondary sort for consistency
+        if (['last_name', 'first_name'].includes(backendSortKey)) {
+            sort['first_name'] = sortOrder; // Secondary sort for first name
+        }
+    } else {
+        // Default sort if no sortBy is provided
+        sort['last_name'] = 1;
+        sort['first_name'] = 1;
+    }
+
 
     // Fetch household heads with necessary fields for transformation
     const householdHeads = await residentsCollection
       .find(query)
       .project({ // Select only the fields needed
-        _id: 1, // ID of the household head (can be useful)
+        _id: 1,
         last_name: 1,
-        first_name: 1, // In case last_name is not unique for display
+        first_name: 1,
         address_house_number: 1,
-        household_member_ids: 1 // For counting members
+        household_member_ids: 1,
+        address_unit_room_apt_number: 1, // NEW FIELD
+        type_of_household: 1,            // NEW FIELD
+        date_approved: 1,                // NEW FIELD (from frontend code)
+        date_updated: 1,                 // NEW FIELD (from frontend code)
       })
       .skip(skip)
       .limit(itemsPerPage)
-      .sort({ last_name: 1, first_name: 1 }) // Sort by head's name
+      .sort(sort) // Apply dynamic sorting
       .toArray();
 
     // Transform the data
     const formattedHouseholds = householdHeads.map(head => ({
-      household_id: head._id, // The ID of the resident who is the head
+      household_id: head._id,
       household_name: `${head.last_name}'s Household`,
-      household_number: head.address_house_number || 'N/A', // Use 'N/A' if not available
+      household_number: head.address_house_number || 'N/A',
       number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
-      head_first_name: head.first_name, // Include for clarity if needed
-      head_last_name: head.last_name,   // Include for clarity if needed
+      head_first_name: head.first_name,
+      head_last_name: head.last_name,
+      head_address_unit_room_apt_number: head.address_unit_room_apt_number || 'N/A', // NEW
+      head_type_of_household: head.type_of_household || 'N/A',                         // NEW
+      head_date_approved: head.date_approved || null,                                 // NEW
+      head_date_updated: head.date_updated || null,                                   // NEW
     }));
 
     const totalHouseholds = await residentsCollection.countDocuments(query);
@@ -7749,7 +7796,7 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
     // 1. Add the main prompt as a text part
     contents.push({
       text: `
-      Your task is to validate one or more proof of residency documents and, optionally, an authorization letter, against provided JSON user data.
+      Your task is to validate one or more documents, which may include proof of residency documents and/or a birth certificate, and optionally an authorization letter, against provided JSON user data.
 
       **Instructions:**
       1.  **Proof of Residency Validation:** For each provided 'proof of residency' image:
@@ -7758,22 +7805,30 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
           *   Compare these extracted details with the 'first_name', 'middle_name', 'last_name', 'suffix', 'address_house_number', 'address_street', 'address_subdivision_zone', 'address_city_municipality' from the provided JSON data.
           *   Note any discrepancies in names or addresses.
 
-      2.  **Authorization Letter (Optional):** If an 'authorization letter' image is provided:
+      2.  **Birth Certificate Validation (if provided):** If a document is identified as a birth certificate among the provided proofs:
+          *   Confirm it appears to be a genuine birth certificate.
+          *   Extract the date of birth from the document.
+          *   Compare this extracted date of birth with the 'date_of_birth' field from the provided JSON data. The expected format for 'date_of_birth' in userJSON is YYYY-MM-DD.
+          *   Note any discrepancies in the date of birth.
+
+      3.  **Authorization Letter (Optional):** If an 'authorization letter' image is provided:
           *   Confirm it appears to be a genuine letter.
           *   Extract its content, specifically looking for statements that authorize the applicant (whose details are in the JSON) to use the provided proof of residency documents, especially if the names on the proofs do not match the applicant's name. It should clearly state that the bill is under a different name (e.g., a family member or landlord) but that the applicant resides at the address.
 
-      3.  **Final Verdict:**
+      4.  **Final Verdict:**
           *   Set "isValid" to \`true\` if:
               *   All proof of residency documents are legitimate and their details (name, address) match the JSON data **OR**
-              *   There are name discrepancies on the proof documents, but the 'authorization letter' (if provided) is legitimate and clearly explains/authorizes the use of the documents by the applicant at the specified address.
+              *   There are name discrepancies on the proof documents, but the 'authorization letter' (if provided) is legitimate and clearly explains/authoFrizes the use of the documents by the applicant at the specified address.
+              *   **AND**, if a birth certificate was provided, its extracted date of birth matches the 'date_of_birth' in the user JSON data.
           *   Set "isValid" to \`false\` if:
               *   Any proof of residency document is deemed illegitimate or forged.
               *   Details on the proof documents do not match the JSON, AND no valid authorization letter is provided to explain the discrepancy.
               *   The authorization letter (if provided) is illegitimate or does not clearly authorize the use of the proof documents.
+              *   **OR**, if a birth certificate was provided, and its extracted date of birth does not match the 'date_of_birth' in the user JSON data.
 
       **Return a JSON object with "isValid" (boolean) and "message" (string).**
       *   Keep the message concise but comprehensive, explaining the outcome.
-      *   For example: 'All documents validated successfully.', 'Name on [Document Type] does not match. Authorization letter is required.', 'Proof of residency [Document Type] is invalid.', 'Name on [Document Type] does not match, but authorization letter clarifies residency at the address.', etc.
+      *   For example: 'All documents validated successfully.', 'Name on [Document Type] does not match. Authorization letter is required.', 'Proof of residency [Document Type] is invalid.', 'Name on [Document Type] does not match, but authorization letter clarifies residency at the address.', **'Date of birth on birth certificate does not match user data.'**, 'Birth certificate provided but date of birth does not match.' etc.
       `
     });
     
@@ -7783,7 +7838,7 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
     // 3. Add multiple proof images (each with its own preceding text label part)
     for (const [index, proofBase64] of proofsInBase64.entries()) {
         // Text label part for the proof document
-        contents.push({ text: `Proof of Residency Document ${index + 1}:` });
+        contents.push({ text: `Proof of Residency Document or Other Proof ${index + 1}:` });
         contents.push({
             inlineData: {
                 mimeType: getMimeTypeFromBase64(proofBase64),

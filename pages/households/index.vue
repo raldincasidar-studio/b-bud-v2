@@ -74,6 +74,26 @@
             {{ item.head_first_name }} {{ item.head_last_name }}
           </template>
 
+          <!-- Slot for Unit/Room/Apartment Number -->
+          <template v-slot:item.head_address_unit_room_apt_number="{ item }">
+            {{ item.head_address_unit_room_apt_number || 'N/A' }}
+          </template>
+
+          <!-- Slot for Type of Household -->
+          <template v-slot:item.head_type_of_household="{ item }">
+            {{ item.head_type_of_household || 'N/A' }}
+          </template>
+
+          <!-- Slot for Date Approved -->
+          <template v-slot:item.head_date_approved="{ item }">
+            {{ formatDate(item.head_date_approved) }}
+          </template>
+
+          <!-- Slot for Date Updated -->
+          <template v-slot:item.head_date_updated="{ item }">
+            {{ formatDate(item.head_date_updated) }}
+          </template>
+
           <!-- Slot for Actions -->
           <template v-slot:item.action="{ item }">
             <v-btn
@@ -138,6 +158,10 @@
                   <td>{{ item.household_number }}</td>
                   <td>{{ item.head_first_name }} {{ item.head_last_name }}</td>
                   <td>{{ item.number_of_members }}</td>
+                  <td>{{ item.head_address_unit_room_apt_number || 'N/A' }}</td>
+                  <td>{{ item.head_type_of_household || 'N/A' }}</td>
+                  <td>{{ formatDate(item.head_date_approved) }}</td>
+                  <td>{{ formatDate(item.head_date_updated) }}</td>
                 </tr>
               </tbody>
             </table>
@@ -150,8 +174,8 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, onMounted } from 'vue'; // Added computed, onMounted
-import { useMyFetch } from '../composables/useMyFetch'; // Ensure this path is correct
+import { ref, watch, computed, onMounted } from 'vue';
+import { useMyFetch } from '../composables/useMyFetch';
 import { useNuxtApp } from '#app';
 import logoImage from '~/assets/img/logo.png'; // Make sure this path is correct for your project
 
@@ -175,8 +199,25 @@ const headers = ref([
   { title: 'Household No.', key: 'household_number', sortable: false },
   { title: 'Head of Household', key: 'head_full_name', sortable: false, value: item => `${item.head_first_name || ''} ${item.head_last_name || ''}`.trim() },
   { title: 'No. of Members', key: 'number_of_members', sortable: false, align: 'center' },
+  // New fields
+  { title: 'Unit/Room/Apt No.', key: 'head_address_unit_room_apt_number', sortable: false },
+  { title: 'Type of Household', key: 'head_type_of_household', sortable: false },
+  { title: 'Date Approved', key: 'head_date_approved', sortable: true, value: item => formatDate(item.head_date_approved) },
+  { title: 'Date Updated', key: 'head_date_updated', sortable: true, value: item => formatDate(item.head_date_updated) },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
+
+// Helper function to format dates
+const formatDate = (dateString) => {
+  if (!dateString) return 'N/A';
+  try {
+    const options = { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' };
+    return new Date(dateString).toLocaleDateString('en-US', options);
+  } catch (e) {
+    console.error("Error formatting date:", e);
+    return 'Invalid Date';
+  }
+};
 
 // Headers to be displayed in the print view (excluding 'Actions')
 const printableHeaders = computed(() => {
