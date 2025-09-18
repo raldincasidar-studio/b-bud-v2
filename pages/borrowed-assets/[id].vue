@@ -150,17 +150,51 @@
                 </div>
 
                 <!-- Return Management -->
-                <div v-if="['Approved', 'Overdue', 'Returned'].includes(transactionData.status)">
+                <div v-if="['Approved', 'Overdue'].includes(transactionData.status)">
                     <v-card-text>
                         <p class="text-body-2 mb-4">Once the resident returns the item, upload proof and add notes on its condition.</p>
-                        <!-- Updated v-model to match single file behavior -->
-                        <v-file-input v-model="returnForm.proofImage" label="Upload Return Proof (Photo)" variant="outlined"  prepend-icon="mdi-camera" accept="image/*" :rules="[fileSizeRule]"></v-file-input>
-                        <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3"></v-textarea>
+                        
+                        <!-- NEW: Button to open upload options for return proof -->
+                        <v-btn
+                          block
+                          size="large"
+                          color="primary"
+                          variant="tonal"
+                          @click="uploadReturnOptionsDialog = true"
+                          prepend-icon="mdi-camera"
+                          class="mb-4"
+                        >
+                          Upload or Capture Return Proof
+                        </v-btn>
+
+                        <!-- Hidden file input for "Upload from Device" option for return proof -->
+                        <input
+                          type="file"
+                          ref="returnFileInput"
+                          accept="image/*"
+                          style="display: none;"
+                          @change="handleReturnFileChange"
+                        />
+
+                        <v-img
+                          v-if="finalReturnProofBase64"
+                          :src="finalReturnProofBase64"
+                          max-height="200"
+                          contain
+                          class="mt-2 border rounded"
+                          alt="Return proof preview"
+                        ></v-img>
+                        <p v-else class="text-caption text-grey-darken-1 mt-2">
+                          No return proof photo selected.
+                        </p>
+
+
+                        <v-textarea v-model="returnForm.conditionNotes" label="Notes on Return Condition" placeholder="e.g., 'Returned in good condition'" variant="outlined" rows="3" class="mt-4"></v-textarea>
                     </v-card-text>
                     <v-card-actions class="pa-4 flex-wrap">
-                        <v-btn color="success" variant="flat" v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
-                        <v-btn v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-alert-octagon-outline" size="large">Mark as Damaged</v-btn>
-                        <v-btn v-if="transactionData.status === 'Approved' || transactionData.status === 'Overdue'" color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
+                        <v-btn color="success" variant="flat" @click="processReturn" :loading="isReturning" prepend-icon="mdi-keyboard-return" size="large">Mark as Returned</v-btn>
+                        <v-btn color="error" variant="flat" @click="updateStatus('Damaged')" prepend-icon="mdi-alert-octagon-outline" size="large">Mark as Damaged</v-btn>
+                        <v-btn color="error" variant="flat" @click="updateStatus('Lost')" prepend-icon="mdi-delete-forever" size="large">Mark as Lost</v-btn>
                     </v-card-actions>
                 </div>
 
@@ -236,11 +270,83 @@
           </v-card-actions>
         </v-card>
     </v-dialog>
+
+    <!-- NEW: DIALOG FOR UPLOAD OPTIONS (File or Camera) for Return Proof -->
+    <v-dialog v-model="uploadReturnOptionsDialog" max-width="400px">
+      <v-card>
+        <v-card-title class="text-h5">Upload Return Proof</v-card-title>
+        <v-card-text>
+          <v-list density="comfortable">
+            <v-list-item link @click="triggerReturnFileInput">
+              <template v-slot:prepend>
+                <v-icon>mdi-file-upload-outline</v-icon>
+              </template>
+              <v-list-item-title>Upload from Device</v-list-item-title>
+            </v-list-item>
+            <v-list-item link @click="openReturnCameraDialog">
+              <template v-slot:prepend>
+                <v-icon>mdi-camera-outline</v-icon>
+              </template>
+              <v-list-item-title>Capture Photo</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="uploadReturnOptionsDialog = false">Cancel</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- NEW: DIALOG FOR CAMERA CAPTURE for Return Proof -->
+    <v-dialog v-model="returnCameraDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Capture Return Proof Photo</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="closeReturnCamera">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="d-flex flex-column justify-center align-center camera-card-content">
+          <div v-if="returnCameraPermissionError" class="text-center pa-4">
+            <v-icon size="64" color="red-lighten-1">mdi-camera-off</v-icon>
+            <p class="text-h6 mt-2 text-white">Camera access denied.</p>
+            <p class="text-caption text-grey-lighten-1">
+              Please enable camera permissions for this site in your browser settings (e.g., Chrome Settings > Privacy and security > Site settings > Camera)
+              and then try again.
+            </p>
+            <v-btn color="primary" class="mt-4" @click="startReturnCamera">Retry Camera</v-btn>
+          </div>
+          <div v-else class="camera-display-wrapper">
+            <video ref="returnVideoElement" autoplay playsinline class="camera-feed" v-show="!capturedReturnImage"></video>
+            <canvas ref="returnCanvasElement" class="captured-preview" v-show="capturedReturnImage"></canvas>
+
+            <div v-if="!isReturnCameraActive && !capturedReturnImage" class="camera-status-overlay">
+              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+              <p class="mt-2 text-white">Starting camera...</p>
+              <p class="text-caption text-grey-lighten-1">
+                If the camera doesn't start, please ensure you've granted permission.
+              </p>
+            </div>
+
+            <div class="camera-controls" v-if="isReturnCameraActive || capturedReturnImage">
+              <v-btn v-if="!capturedReturnImage" color="primary" icon="mdi-camera" size="x-large" @click="takeReturnPhoto"></v-btn>
+              <template v-else>
+                <v-btn color="error" class="mr-2" prepend-icon="mdi-refresh" @click="retakeReturnPhoto">Retake</v-btn>
+                <v-btn color="success" prepend-icon="mdi-check-circle" @click="saveCapturedReturnPhoto">Save Photo</v-btn>
+              </template>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
 <script setup>
-import { reactive, ref, onMounted, computed } from 'vue';
+import { reactive, ref, onMounted, computed, onBeforeUnmount, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
@@ -269,7 +375,7 @@ const transactionId = route.params.id;
 // --- STATE ---
 const transactionData = ref(null); // Initialized as null for explicit "no data" state
 const form = reactive({ item_borrowed: '', quantity_borrowed: 1, borrow_datetime: '', expected_return_date: '', notes: '' });
-const returnForm = reactive({ proofImage: null, conditionNotes: '' });
+const returnForm = reactive({ uploadedReturnProofFile: null, conditionNotes: '' }); // Changed `proofImage` to `uploadedReturnProofFile`
 
 const loading = ref(true);
 const editMode = ref(false);
@@ -281,6 +387,21 @@ const confirmDeleteDialog = ref(false);
 const galleryDialog = ref(false);
 const currentGalleryIndex = ref(0);
 
+// NEW: State for return proof upload/capture
+const uploadReturnOptionsDialog = ref(false);
+const returnCameraDialog = ref(false);
+const returnVideoElement = ref(null);
+const returnCanvasElement = ref(null);
+let returnMediaStream = null;
+const capturedReturnImage = ref('');
+const isReturnCameraActive = ref(false);
+const returnCameraPermissionError = ref(false);
+const returnFileInput = ref(null);
+
+// Centralized ref for the final return proof image (Base64)
+const finalReturnProofBase64 = ref('');
+
+
 // ✨ UPDATED: imageGallerySource computed property to include both Base64 proofs ✨
 const imageGallerySource = computed(() => {
   const items = [];
@@ -291,7 +412,8 @@ const imageGallerySource = computed(() => {
       title: 'Borrowing Proof'
     });
   }
-  if (transactionData.value?.return_proof_image_base64) { // Use the new Base64 field
+  // Use `transactionData.value.return_proof_image_base64` directly from fetched data
+  if (transactionData.value?.return_proof_image_base64) {
     items.push({
       id: 'return_proof',
       src: transactionData.value.return_proof_image_base64,
@@ -359,6 +481,10 @@ onMounted(async () => {
     await fetchTransaction();
 });
 
+onBeforeUnmount(() => {
+  stopReturnCameraStream(); // Ensure camera is stopped if component is unmounted
+});
+
 async function fetchTransaction() {
   loading.value = true;
   try {
@@ -409,6 +535,10 @@ function resetForm() {
         expected_return_date: formatDateTimeForInput(transactionData.value.expected_return_date, false),
         notes: transactionData.value.notes || ''
     });
+    // Clear return form fields and image when transaction data is loaded/reset
+    returnForm.uploadedReturnProofFile = null;
+    returnForm.conditionNotes = '';
+    finalReturnProofBase64.value = '';
 }
 
 const toggleEditMode = (enable) => { editMode.value = enable; if (!enable) resetForm(); };
@@ -416,17 +546,9 @@ const cancelEdit = () => toggleEditMode(false);
 
 // ✨ UPDATED: fileSizeRule to handle single File object for v-file-input consistently ✨
 const fileSizeRule = (value) => {
-    if (!value) return true;
+    if (!returnForm.uploadedReturnProofFile) return true; // No file selected via input is valid
 
-    let fileToValidate = null;
-    if (value instanceof File) {
-      fileToValidate = value;
-    } else if (Array.isArray(value) && value.length > 0) {
-      fileToValidate = value[0];
-    }
-
-    if (!fileToValidate) return true;
-
+    const fileToValidate = returnForm.uploadedReturnProofFile;
     return fileToValidate.size < 2000000 || 'Image size should be less than 2 MB!';
 };
 
@@ -489,27 +611,11 @@ async function updateStatus(newStatus, promptForReason = false) {
 
 async function processReturn() {
     isReturning.value = true;
-    let imageBase64 = null;
-    let file = null; // Initialize file
 
-    // ✨ UPDATED: Corrected file extraction for v-file-input ✨
-    if (returnForm.proofImage instanceof File) {
-      file = returnForm.proofImage;
-    } else if (Array.isArray(returnForm.proofImage) && returnForm.proofImage.length > 0) {
-      file = returnForm.proofImage[0];
-    }
-
-    if (file) {
-        if (file.size > 2000000) {
-            $toast.fire({ title: 'File is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
-            isReturning.value = false;
-            return;
-        }
-        try {
-            imageBase64 = await fileToBase64(file);
-        } catch (e) {
-            console.error("Error converting file to Base64:", e);
-            $toast.fire({ title: 'Could not process image file.', icon: 'error' });
+    // Client-side validation for image size for uploaded files
+    if (returnForm.uploadedReturnProofFile) {
+        if (returnForm.uploadedReturnProofFile.size > 2 * 1024 * 1024) { // 2MB limit
+            $toast.fire({ title: 'Uploaded return proof file is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
             isReturning.value = false;
             return;
         }
@@ -519,15 +625,17 @@ async function processReturn() {
         const { data, error } = await useMyFetch(`/api/borrowed-assets/${transactionId}/return`, {
             method: 'PATCH',
             body: {
-                return_proof_image_base64: imageBase64, // Send Base64 string to backend
+                return_proof_image_base64: finalReturnProofBase64.value, // Use the unified finalReturnProofBase64
                 return_condition_notes: returnForm.conditionNotes,
             },
         });
         if (error.value) throw new Error(error.value.data?.message || 'Failed to process return.');
         $toast.fire({ title: 'Item successfully marked as Returned!', icon: 'success' });
         await fetchTransaction();
-        returnForm.proofImage = null;
+        // Reset return-related state after successful return
+        returnForm.uploadedReturnProofFile = null;
         returnForm.conditionNotes = '';
+        finalReturnProofBase64.value = '';
     } catch (e) { $toast.fire({ title: e.message, icon: 'error' }); }
     finally { isReturning.value = false; }
 }
@@ -576,6 +684,207 @@ const formatDateTime = (dateString) => {
   if (!dateString) return 'N/A';
   return new Date(dateString).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' });
 }
+
+// --- NEW RETURN PROOF UPLOAD/CAMERA FUNCTIONS ---
+function triggerReturnFileInput() {
+  uploadReturnOptionsDialog.value = false;
+  returnFileInput.value.click();
+}
+
+async function handleReturnFileChange(event) {
+  uploadReturnOptionsDialog.value = false;
+  const file = event.target.files[0];
+  if (!file) {
+    finalReturnProofBase64.value = '';
+    returnForm.uploadedReturnProofFile = null;
+    return;
+  }
+  
+  if (file.size > 2 * 1024 * 1024) { // 2MB limit
+    $toast.fire({ title: 'File size should not exceed 2MB.', icon: 'warning' });
+    if (returnFileInput.value) returnFileInput.value.value = '';
+    finalReturnProofBase64.value = '';
+    returnForm.uploadedReturnProofFile = null;
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    finalReturnProofBase64.value = e.target.result;
+    returnForm.uploadedReturnProofFile = file; // Store the File object for validation
+    if (returnFileInput.value) returnFileInput.value.value = '';
+  };
+  reader.onerror = (e) => {
+    console.error("FileReader error:", e);
+    $toast.fire({ title: 'Could not read the file.', icon: 'error' });
+    finalReturnProofBase64.value = '';
+    returnForm.uploadedReturnProofFile = null;
+    if (returnFileInput.value) returnFileInput.value.value = '';
+  };
+  reader.readAsDataURL(file);
+}
+
+function openReturnCameraDialog() {
+  uploadReturnOptionsDialog.value = false;
+  returnCameraDialog.value = true;
+  startReturnCamera();
+}
+
+async function startReturnCamera() {
+  isReturnCameraActive.value = false;
+  returnCameraPermissionError.value = false;
+  capturedReturnImage.value = '';
+  stopReturnCameraStream();
+
+  await nextTick();
+  if (!returnVideoElement.value) {
+    console.error("Return video element not found in DOM after nextTick.");
+    $toast.fire({
+        title: 'Camera initialization failed: video element not ready.',
+        icon: 'error',
+        timer: 3000
+    });
+    returnCameraDialog.value = false;
+    return;
+  }
+  
+  try {
+    returnMediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    returnVideoElement.value.srcObject = returnMediaStream;
+
+    const videoLoadedPromise = new Promise((resolve, reject) => {
+      returnVideoElement.value.onloadedmetadata = () => {
+        resolve();
+      };
+      returnVideoElement.value.onerror = (e) => {
+        reject(new Error(`Video element error: ${e.message || 'Unknown'}`));
+      };
+
+      setTimeout(() => {
+        if (!isReturnCameraActive.value) {
+          reject(new Error("Camera stream metadata load timed out (5s)."));
+        }
+      }, 5000);
+    });
+
+    await videoLoadedPromise;
+    isReturnCameraActive.value = true;
+  } catch (err) {
+    console.error("Error accessing return camera:", err);
+    isReturnCameraActive.value = false;
+    stopReturnCameraStream();
+
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      returnCameraPermissionError.value = true;
+      $toast.fire({
+        title: 'Camera access denied. Please enable camera permissions for this site in your browser settings and try again.',
+        icon: 'error',
+        timer: 6000
+      });
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      $toast.fire({
+        title: 'No camera found on your device.',
+        icon: 'error',
+        timer: 5000
+      });
+      returnCameraDialog.value = false;
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      $toast.fire({
+        title: 'Camera is already in use or could not be started. Try closing other apps using the camera.',
+        icon: 'error',
+        timer: 6000
+      });
+      returnCameraDialog.value = false;
+    } else if (err.name === 'OverconstrainedError') {
+       $toast.fire({
+        title: 'Camera not available with requested settings (e.g., no rear camera).',
+        icon: 'warning',
+        timer: 5000
+      });
+      returnCameraDialog.value = false;
+    } else if (err.message.includes("Camera stream metadata load timed out")) {
+        $toast.fire({
+            title: 'Camera failed to initialize within expected time. Please try again.',
+            icon: 'error',
+            timer: 5000
+        });
+        returnCameraDialog.value = false;
+    }
+    else {
+      $toast.fire({
+        title: `Could not access camera: ${err.message || 'Unknown error.'}`,
+        icon: 'error',
+        timer: 5000
+      });
+      returnCameraDialog.value = false;
+    }
+  }
+}
+
+function stopReturnCameraStream() {
+  if (returnMediaStream) {
+    returnMediaStream.getTracks().forEach(track => track.stop());
+    returnMediaStream = null;
+    if (returnVideoElement.value) {
+      returnVideoElement.value.srcObject = null;
+    }
+  }
+  isReturnCameraActive.value = false;
+}
+
+function takeReturnPhoto() {
+  if (!returnVideoElement.value || !returnCanvasElement.value) return;
+
+  const video = returnVideoElement.value;
+  const canvas = returnCanvasElement.value;
+  
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const context = canvas.getContext('2d');
+  context.save();
+  if (getComputedStyle(video).transform.includes('scaleX(-1)')) {
+    context.translate(canvas.width, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  context.restore();
+  
+  capturedReturnImage.value = canvas.toDataURL('image/jpeg', 0.9);
+  stopReturnCameraStream();
+}
+
+function retakeReturnPhoto() {
+  capturedReturnImage.value = '';
+  startReturnCamera();
+}
+
+function saveCapturedReturnPhoto() {
+  if (capturedReturnImage.value) {
+    finalReturnProofBase64.value = capturedReturnImage.value; // Set the unified base64
+    returnForm.uploadedReturnProofFile = null; // Clear any explicitly uploaded file
+    returnCameraDialog.value = false;
+    capturedReturnImage.value = '';
+  } else {
+    $toast.fire({ title: 'No photo captured yet.', icon: 'warning' });
+  }
+}
+
+function closeReturnCamera() {
+  stopReturnCameraStream();
+  returnCameraDialog.value = false;
+  capturedReturnImage.value = '';
+  returnCameraPermissionError.value = false;
+}
+
+watch(returnCameraDialog, (newValue) => {
+  if (!newValue) {
+    stopReturnCameraStream();
+    capturedReturnImage.value = '';
+    returnCameraPermissionError.value = false;
+  }
+});
+
 </script>
 
 <style scoped>
@@ -681,5 +990,65 @@ const formatDateTime = (dateString) => {
   font-size: 0.875rem;
   color: #757575;
   transition: color 0.4s, font-weight 0.4s;
+}
+
+/* Camera Dialog Specific Styles */
+.camera-card-content {
+  background-color: #333; /* Dark background for camera feed */
+  height: 100%;
+  flex-grow: 1;
+  position: relative;
+  overflow: hidden; /* Ensure video/canvas don't overflow */
+}
+
+.camera-display-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 100%; /* Limit width on larger screens */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.camera-feed, .captured-preview {
+  width: 100%;
+  height: auto;
+  max-height: 80vh; /* Adjust as needed */
+  object-fit: contain; /* Ensure entire video/image is visible */
+  background-color: black;
+  border-radius: 8px;
+  /* Add this line to un-mirror the horizontally "inverted" camera feed */
+  transform: scaleX(-1);
+}
+
+.camera-status-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent overlay */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  text-align: center;
+  border-radius: 8px; /* Matches camera-feed border-radius */
+}
+
+.camera-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 16px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 12px 20px;
+  border-radius: 30px;
 }
 </style>

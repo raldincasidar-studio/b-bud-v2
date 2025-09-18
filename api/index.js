@@ -5235,11 +5235,11 @@ app.get('/api/complaints', async (req, res) => {
   }
 });
 
-// GET COMPLAINTS FOR A SPECIFIC RESIDENT
+// backend: // GET COMPLAINTS FOR A SPECIFIC RESIDENT
 app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
   const { residentId } = req.params;
   const search = req.query.search || '';
-  const status = req.query.status || ''; // <-- ADDED: Read the status query parameter
+  const status = req.query.status || ''; // Status will be '' if frontend sends no status (for 'All')
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -5253,46 +5253,43 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('complaints');
 
-    // Build the initial match query for the complainant's resident ID
-    let finalMatchQuery = { complainant_resident_id: residentObjectId };
+    // Start with the mandatory condition for the complainant's resident ID
+    let matchConditions = [{ complainant_resident_id: residentObjectId }];
 
-    // Add status filter if a status is provided (and it's not 'All' which results in undefined on frontend)
-    if (status) {
-        finalMatchQuery.status = status;
+    // Add status filter if a specific status is provided AND it's not 'All'
+    if (status && status !== 'All') { 
+        // --- FIX STARTS HERE ---
+        // Change from $regex to exact match for status
+        matchConditions.push({ status: status }); 
+        // --- FIX ENDS HERE ---
     }
 
     // Add search filter if a search term is provided
     if (search) {
-        const searchRegex = new RegExp(search.trim(), 'i');
+        const searchRegex = new RegExp(search.trim(), 'i'); // Case-insensitive search
         const searchCriteria = [
             { ref_no: { $regex: searchRegex } },
             { person_complained_against_name: { $regex: searchRegex } },
             { "person_complained_details.first_name": { $regex: searchRegex } },
             { "person_complained_details.last_name": { $regex: searchRegex } },
-            { status: { $regex: searchRegex } }, // Also search within status for flexibility
+            { status: { $regex: searchRegex } }, // Allow searching within status text
             { notes_description: { $regex: searchRegex } },
-            { category: { $regex: searchRegex } }, // Added category to search
+            { category: { $regex: searchRegex } },
         ];
-        
-        // If we already have filters (like status), combine with $and
-        if (finalMatchQuery.status) {
-            finalMatchQuery = {
-                $and: [
-                    { complainant_resident_id: residentObjectId },
-                    { status: finalMatchQuery.status },
-                    { $or: searchCriteria }
-                ]
-            };
-        } else {
-            // No specific status filter, just combine resident ID and search
-            finalMatchQuery = {
-                $and: [
-                    { complainant_resident_id: residentObjectId },
-                    { $or: searchCriteria }
-                ]
-            };
-        }
+        matchConditions.push({ $or: searchCriteria });
     }
+
+    // Construct the final $match query
+    let finalMatchQuery = {};
+    if (matchConditions.length === 1) {
+        // If only the resident ID condition exists
+        finalMatchQuery = matchConditions[0];
+    } else if (matchConditions.length > 1) {
+        // If multiple conditions exist (resident ID + status, or resident ID + search, or all three)
+        finalMatchQuery = { $and: matchConditions };
+    }
+    // Note: matchConditions will always have at least one element (complainant_resident_id),
+    // so finalMatchQuery will always be correctly constructed.
 
     const aggregationPipeline = [
       { $match: finalMatchQuery }, // Use the correctly constructed finalMatchQuery
@@ -5359,7 +5356,6 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch complaints for this resident." });
   }
 });
-
 
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {

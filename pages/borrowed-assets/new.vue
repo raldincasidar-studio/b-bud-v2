@@ -192,26 +192,127 @@
           <v-row>
             <v-col cols="12">
               <label class="v-label mb-1">Upload Proof of Borrowing (Photo) (Optional)</label>
-              <v-file-input
-                v-model="transaction.borrowProofImage"
-                label="Choose a photo for proof of borrowing"
-                variant="outlined"
+              
+              <!-- Button to open upload options -->
+              <v-btn
+                block
+                size="large"
+                color="primary"
+                variant="tonal"
+                @click="uploadOptionsDialog = true"
                 prepend-icon="mdi-camera"
+                class="mb-4"
+              >
+                Upload or Capture Proof of Borrowing
+              </v-btn>
+
+              <!-- Hidden file input for "Upload from Device" option -->
+              <input
+                type="file"
+                ref="fileInput"
                 accept="image/*"
-                :rules="[rules.fileSizeRule]"
-                hint="Max 2MB. This photo will be recorded as proof when the item was borrowed."
-                persistent-hint
-              ></v-file-input>
+                style="display: none;"
+                @change="handleUploadedFileChange"
+              />
+
+              <v-img
+                v-if="finalBorrowProofBase64"
+                :src="finalBorrowProofBase64"
+                max-height="300"
+                contain
+                class="mt-4 border rounded"
+                alt="Proof of borrowing preview"
+              ></v-img>
+
+              <p v-else class="text-caption text-grey-darken-1 mt-2">
+                No photo selected. Click the button above to add one.
+              </p>
             </v-col>
           </v-row>
         </v-form>
       </v-card-text>
     </v-card>
+
+    <!-- NEW: DIALOG FOR UPLOAD OPTIONS (File or Camera) -->
+    <v-dialog v-model="uploadOptionsDialog" max-width="400px">
+      <v-card>
+        <v-card-title class="text-h5">Upload Proof of Borrowing</v-card-title>
+        <v-card-text>
+          <v-list density="comfortable">
+            <v-list-item link @click="triggerFileInput">
+              <template v-slot:prepend>
+                <v-icon>mdi-file-upload-outline</v-icon>
+              </template>
+              <v-list-item-title>Upload from Device</v-list-item-title>
+            </v-list-item>
+            <v-list-item link @click="openCameraDialog">
+              <template v-slot:prepend>
+                <v-icon>mdi-camera-outline</v-icon>
+              </template>
+              <v-list-item-title>Capture Photo</v-list-item-title>
+            </v-list-item>
+          </v-list>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn text @click="uploadOptionsDialog = false">Cancel</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
+
+    <!-- NEW: DIALOG FOR CAMERA CAPTURE -->
+    <v-dialog v-model="cameraDialog" fullscreen hide-overlay transition="dialog-bottom-transition">
+      <v-card>
+        <v-toolbar dark color="primary">
+          <v-toolbar-title>Capture Proof Photo</v-toolbar-title>
+          <v-spacer></v-spacer>
+          <v-btn icon dark @click="closeCamera">
+            <v-icon>mdi-close</v-icon>
+          </v-btn>
+        </v-toolbar>
+        <v-card-text class="d-flex flex-column justify-center align-center camera-card-content">
+          <div v-if="cameraPermissionError" class="text-center pa-4">
+            <v-icon size="64" color="red-lighten-1">mdi-camera-off</v-icon>
+            <p class="text-h6 mt-2 text-white">Camera access denied.</p>
+            <p class="text-caption text-grey-lighten-1">
+              Please enable camera permissions for this site in your browser settings (e.g., Chrome Settings > Privacy and security > Site settings > Camera)
+              and then try again.
+            </p>
+            <v-btn color="primary" class="mt-4" @click="startCamera">Retry Camera</v-btn>
+          </div>
+          <div v-else class="camera-display-wrapper">
+            <!-- The video element is always present here when not in permission error state -->
+            <video ref="videoElement" autoplay playsinline class="camera-feed" v-show="!capturedImage"></video>
+            <canvas ref="canvasElement" class="captured-preview" v-show="capturedImage"></canvas>
+
+            <!-- Loading overlay when camera is not active and no image captured -->
+            <div v-if="!isCameraActive && !capturedImage" class="camera-status-overlay">
+              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+              <p class="mt-2 text-white">Starting camera...</p>
+              <p class="text-caption text-grey-lighten-1">
+                If the camera doesn't start, please ensure you've granted permission.
+              </p>
+            </div>
+
+            <!-- Controls (only show if camera is active or an image is captured) -->
+            <div class="camera-controls" v-if="isCameraActive || capturedImage">
+              <!-- FIX: Changed @end to @click for the takePhoto button -->
+              <v-btn v-if="!capturedImage" color="primary" icon="mdi-camera" size="x-large" @click="takePhoto"></v-btn>
+              <template v-else>
+                <v-btn color="error" class="mr-2" prepend-icon="mdi-refresh" @click="retakePhoto">Retake</v-btn>
+                <v-btn color="success" prepend-icon="mdi-check-circle" @click="saveCapturedPhoto">Save Photo</v-btn>
+              </template>
+            </div>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
   </v-container>
 </template>
 
 <script setup>
-import { ref, reactive, watch, onMounted } from 'vue';
+import { ref, reactive, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp, useCookie } from '#app';
@@ -228,7 +329,7 @@ const transaction = reactive({
   quantity_borrowed: 0,
   expected_return_date: '',
   notes: '',
-  borrowProofImage: null, // Initialized as null for a single file input
+  uploadedBorrowProofFile: null, // This will temporarily hold a File object for direct uploads
 });
 
 // Resident search state
@@ -240,6 +341,22 @@ const selectedBorrower = ref(null);
 // Inventory state
 const inventoryItems = ref([]);
 const isLoadingInventory = ref(true);
+
+// NEW: Camera and Upload specific state
+const uploadOptionsDialog = ref(false);
+const cameraDialog = ref(false);
+const videoElement = ref(null); // Ref for the video element
+const canvasElement = ref(null); // Ref for the canvas element
+let mediaStream = null; // To hold the camera stream
+const capturedImage = ref(''); // To hold the base64 of the captured image within the camera dialog
+const isCameraActive = ref(false); // To track if camera is actively streaming
+const cameraPermissionError = ref(false); // To track if camera permission was denied
+
+const fileInput = ref(null); // Ref for the hidden file input for device upload
+
+// This will store the final base64 string for the proof image, whether from upload or camera
+const finalBorrowProofBase64 = ref('');
+
 
 // --- Simple Debounce Utility ---
 const useDebounce = (fn, delay = 500) => {
@@ -280,19 +397,11 @@ const rules = {
     if (!item) return true;
     return value <= item.available || `Not enough stock. Only ${item.available} available.`;
   },
-  // NEW: Rule for file size validation - UPDATED to handle single File object
-  fileSizeRule: value => {
-    if (!value) return true; // No file selected is valid
+  // Rule for file size validation - only for explicitly uploaded files (not camera capture as its handled separately)
+  fileSizeRule: () => {
+    if (!transaction.uploadedBorrowProofFile) return true; // No file selected is valid for this rule
 
-    let fileToValidate = null;
-    if (value instanceof File) { // It's a single File object (common for v-file-input without 'multiple')
-      fileToValidate = value;
-    } else if (Array.isArray(value) && value.length > 0) { // It's an array of files (if 'multiple' was used)
-      fileToValidate = value[0];
-    }
-
-    if (!fileToValidate) return true; // Still no valid file to validate
-
+    const fileToValidate = transaction.uploadedBorrowProofFile;
     return fileToValidate.size < 2000000 || 'Image size should be less than 2 MB!';
   },
 };
@@ -352,8 +461,10 @@ onMounted(() => {
   if (userData.value) {
     transaction.borrowed_from_personnel = userData.value.name;
   }
-  // No need to defensively convert borrowProofImage to an array here.
-  // v-file-input without 'multiple' will bind a single File object or null.
+});
+
+onBeforeUnmount(() => {
+  stopCameraStream(); // Ensure camera is stopped if component is unmounted
 });
 
 const onItemSelect = () => {
@@ -376,41 +487,15 @@ async function saveTransaction() {
   }
 
   saving.value = true;
-  let borrowProofImageBase64 = null;
-  let file = null;
 
-  // ✨ REVISED LOGIC FOR FILE EXTRACTION AND DEBUGGING ✨
-  console.log('DEBUG (Frontend): transaction.borrowProofImage before processing:', transaction.borrowProofImage);
-
-  // Check if it's a single File object (when 'multiple' prop is NOT used on v-file-input)
-  if (transaction.borrowProofImage instanceof File) {
-    file = transaction.borrowProofImage;
-  }
-  // Keep the array check for robustness, in case the prop changes, or for multiple file inputs
-  else if (Array.isArray(transaction.borrowProofImage) && transaction.borrowProofImage.length > 0) {
-    file = transaction.borrowProofImage[0];
-  }
-
-  console.log('DEBUG (Frontend): Extracted file for upload:', file);
-
-
-  if (file) {
-    if (file.size > 2000000) { // Client-side check for safety, though rules should catch it
-        $toast.fire({ title: 'File is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
-        saving.value = false;
-        return;
-    }
-    try {
-        borrowProofImageBase64 = await fileToBase64(file);
-        console.log('DEBUG (Frontend): Base64 string generated (first 50 chars):', borrowProofImageBase64 ? borrowProofImageBase64.substring(0, 50) + '...' : 'null');
-    } catch (e) {
-        console.error("DEBUG (Frontend): Error converting borrowing proof image to Base64:", e);
-        $toast.fire({ title: 'Could not process borrowing proof image file.', icon: 'error' });
-        saving.value = false;
-        return;
-    }
-  } else {
-      console.log('DEBUG (Frontend): No file selected or valid file object found for upload. borrow_proof_image_base64 will be null.');
+  // Perform client-side file size check for uploaded file (camera image size implicitly handled)
+  // This check is primarily for files chosen via the "Upload from Device" option
+  if (transaction.uploadedBorrowProofFile) {
+      if (transaction.uploadedBorrowProofFile.size > 2 * 1024 * 1024) { // 2MB limit
+          $toast.fire({ title: 'Uploaded file is too large!', text: 'Please upload an image smaller than 2MB.', icon: 'error' });
+          saving.value = false;
+          return;
+      }
   }
 
   try {
@@ -423,10 +508,8 @@ async function saveTransaction() {
       quantity_borrowed: transaction.quantity_borrowed,
       expected_return_date: new Date(transaction.expected_return_date).toISOString(),
       notes: transaction.notes,
-      borrow_proof_image_base64: borrowProofImageBase64, // NEW: Include the Base64 image in the payload
+      borrow_proof_image_base64: finalBorrowProofBase64.value, // Use the unified base64 ref
     };
-
-    console.log('DEBUG (Frontend): Payload being sent:', payload); // Log the final payload
 
     const { data, error } = await useMyFetch('/api/borrowed-assets', {
       method: 'POST',
@@ -446,6 +529,212 @@ async function saveTransaction() {
     saving.value = false;
   }
 }
+
+// --- NEW UPLOAD/CAMERA FUNCTIONS ---
+function triggerFileInput() {
+  uploadOptionsDialog.value = false; // Close current dialog
+  // Programmatically click the hidden file input
+  fileInput.value.click();
+}
+
+async function handleUploadedFileChange(event) {
+  uploadOptionsDialog.value = false; // Close upload options dialog
+  const file = event.target.files[0]; // Access the first file
+  if (!file) {
+    finalBorrowProofBase64.value = ''; // Clear previous image
+    transaction.uploadedBorrowProofFile = null; // Clear file object
+    return;
+  }
+  
+  if (file.size > 2 * 1024 * 1024) { // 2MB limit
+    $toast.fire({ title: 'File size should not exceed 2MB.', icon: 'warning' });
+    if (fileInput.value) fileInput.value.value = ''; // Clear the file input value
+    finalBorrowProofBase64.value = ''; // Clear previous image
+    transaction.uploadedBorrowProofFile = null; // Clear file object
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    finalBorrowProofBase64.value = e.target.result;
+    transaction.uploadedBorrowProofFile = file; // Keep the actual File object if needed later
+    if (fileInput.value) fileInput.value.value = ''; // Clear the file input value after reading
+  };
+  reader.onerror = (e) => {
+    console.error("FileReader error:", e);
+    $toast.fire({ title: 'Could not read the file.', icon: 'error' });
+    finalBorrowProofBase64.value = ''; // Clear previous image
+    transaction.uploadedBorrowProofFile = null; // Clear file object
+    if (fileInput.value) fileInput.value.value = ''; // Clear input on error
+  };
+  reader.readAsDataURL(file);
+}
+
+function openCameraDialog() {
+  uploadOptionsDialog.value = false; // Close current dialog
+  cameraDialog.value = true;
+  startCamera();
+}
+
+async function startCamera() {
+  isCameraActive.value = false;
+  cameraPermissionError.value = false; // Reset permission error
+  capturedImage.value = ''; // Reset captured image (in case retrying)
+
+  // Stop any existing stream before starting a new one
+  stopCameraStream();
+
+  // Ensure the video element is rendered and available in the DOM
+  await nextTick();
+  if (!videoElement.value) {
+    console.error("Video element not found in DOM after nextTick.");
+    $toast.fire({
+        title: 'Camera initialization failed: video element not ready.',
+        icon: 'error',
+        timer: 3000
+    });
+    cameraDialog.value = false; // Close dialog if video element isn't there
+    return;
+  }
+  
+  try {
+    // Request camera access, preferring the environment (rear) camera
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    videoElement.value.srcObject = mediaStream;
+
+    const videoLoadedPromise = new Promise((resolve, reject) => {
+      videoElement.value.onloadedmetadata = () => {
+        resolve();
+      };
+      videoElement.value.onerror = (e) => {
+        reject(new Error(`Video element error: ${e.message || 'Unknown'}`));
+      };
+
+      setTimeout(() => {
+        if (!isCameraActive.value) {
+          reject(new Error("Camera stream metadata load timed out (5s)."));
+        }
+      }, 5000);
+    });
+
+    await videoLoadedPromise;
+    isCameraActive.value = true;
+  } catch (err) {
+    console.error("Error accessing camera:", err);
+    isCameraActive.value = false;
+    stopCameraStream();
+
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      cameraPermissionError.value = true;
+      $toast.fire({
+        title: 'Camera access denied. Please enable camera permissions for this site in your browser settings and try again.',
+        icon: 'error',
+        timer: 6000
+      });
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      $toast.fire({
+        title: 'No camera found on your device.',
+        icon: 'error',
+        timer: 5000
+      });
+      cameraDialog.value = false;
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      $toast.fire({
+        title: 'Camera is already in use or could not be started. Try closing other apps using the camera.',
+        icon: 'error',
+        timer: 6000
+      });
+      cameraDialog.value = false;
+    } else if (err.name === 'OverconstrainedError') {
+       $toast.fire({
+        title: 'Camera not available with requested settings (e.g., no rear camera).',
+        icon: 'warning',
+        timer: 5000
+      });
+      cameraDialog.value = false;
+    } else if (err.message.includes("Camera stream metadata load timed out")) {
+        $toast.fire({
+            title: 'Camera failed to initialize within expected time. Please try again.',
+            icon: 'error',
+            timer: 5000
+        });
+        cameraDialog.value = false;
+    }
+    else {
+      $toast.fire({
+        title: `Could not access camera: ${err.message || 'Unknown error.'}`,
+        icon: 'error',
+        timer: 5000
+      });
+      cameraDialog.value = false;
+    }
+  }
+}
+
+function stopCameraStream() {
+  if (mediaStream) {
+    mediaStream.getTracks().forEach(track => track.stop());
+    mediaStream = null;
+    if (videoElement.value) {
+      videoElement.value.srcObject = null;
+    }
+  }
+  isCameraActive.value = false;
+}
+
+function takePhoto() {
+  if (!videoElement.value || !canvasElement.value) return;
+
+  const video = videoElement.value;
+  const canvas = canvasElement.value;
+  
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  const context = canvas.getContext('2d');
+  context.save();
+  if (getComputedStyle(video).transform.includes('scaleX(-1)')) {
+    context.translate(canvas.width, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(video, 0, 0, canvas.width, canvas.height);
+  context.restore();
+  
+  capturedImage.value = canvas.toDataURL('image/jpeg', 0.9);
+  stopCameraStream();
+}
+
+function retakePhoto() {
+  capturedImage.value = '';
+  startCamera();
+}
+
+function saveCapturedPhoto() {
+  if (capturedImage.value) {
+    finalBorrowProofBase64.value = capturedImage.value; // Set the final base64 value
+    transaction.uploadedBorrowProofFile = null; // Clear any previously uploaded file
+    cameraDialog.value = false;
+    capturedImage.value = ''; // Clear captured image from camera dialog state
+  } else {
+    $toast.fire({ title: 'No photo captured yet.', icon: 'warning' });
+  }
+}
+
+function closeCamera() {
+  stopCameraStream();
+  cameraDialog.value = false;
+  capturedImage.value = ''; // Clear any pending captured image
+  cameraPermissionError.value = false; // Reset permission error on close
+}
+
+// Watch for camera dialog opening/closing to manage stream
+watch(cameraDialog, (newValue) => {
+  if (!newValue) { // When camera dialog closes, ensure stream is stopped and states are reset
+    stopCameraStream();
+    capturedImage.value = '';
+    cameraPermissionError.value = false;
+  }
+});
 </script>
 
 <style scoped>
@@ -456,5 +745,65 @@ async function saveTransaction() {
   display: block;
   margin-bottom: 4px;
   font-weight: 500;
+}
+
+/* Camera Dialog Specific Styles */
+.camera-card-content {
+  background-color: #333; /* Dark background for camera feed */
+  height: 100%;
+  flex-grow: 1;
+  position: relative;
+  overflow: hidden; /* Ensure video/canvas don't overflow */
+}
+
+.camera-display-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 100%; /* Limit width on larger screens */
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+.camera-feed, .captured-preview {
+  width: 100%;
+  height: auto;
+  max-height: 80vh; /* Adjust as needed */
+  object-fit: contain; /* Ensure entire video/image is visible */
+  background-color: black;
+  border-radius: 8px;
+  /* Add this line to un-mirror the horizontally "inverted" camera feed */
+  transform: scaleX(-1);
+}
+
+.camera-status-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent overlay */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  text-align: center;
+  border-radius: 8px; /* Matches camera-feed border-radius */
+}
+
+.camera-controls {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  gap: 16px;
+  background-color: rgba(0, 0, 0, 0.5);
+  padding: 12px 20px;
+  border-radius: 30px;
 }
 </style>
