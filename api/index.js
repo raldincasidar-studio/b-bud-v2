@@ -2686,24 +2686,215 @@ app.post('/api/residents/:id/members', async (req, res) => {
 
 
 
+// Ensure 'Type' is imported from your Google Generative AI setup if it's not globally available.
+// For example: const { GoogleGenerativeAI, Part, GenerativeModel, ChatSession, HarmBlockThreshold, HarmCategory } = require("@google/generative-ai");
+// const { Type } = require('@google/generative-ai'); // This is how you'd typically import Type.
+
+async function validateDocumentRequestDetails(ai, requestType, documentDetails, purpose) {
+  try {
+    const responseSchema = {
+        type: Type.OBJECT, // Assuming 'Type' is defined/imported from a schema library like @google/generative-ai
+        properties: {
+            isValid: {
+            type: Type.BOOLEAN,
+            description: "True if the document details and purpose are valid and consistent for the given request type, otherwise false.",
+            },
+            message: {
+            type: Type.STRING,
+            description: "A message explaining whether the details are valid or not, and the reason for the validation result.",
+            },
+        },
+        required: ["isValid", "message"],
+    };
+
+    const contents = [];
+
+    let promptText = `
+    Your task is to validate the provided document details (JSON payload) and purpose (string) against the specified request type.
+    Carefully analyze the 'details' object and the 'purpose' to ensure they are complete, consistent, and plausible *based on the specific requirements for the '${requestType}' document type*.
+
+    **Request Type:** ${requestType}
+    `;
+
+    // Add specific validation instructions based on requestType
+    if (requestType === 'Certificate of Cohabitation') {
+        promptText += `
+        **Specific Instructions for Certificate of Cohabitation:**
+        *   The 'details' object *must* contain 'male_partner_id', 'male_partner_name', 'male_partner_birthdate', 'female_partner_id', 'female_partner_name', 'female_partner_birthdate', and 'year_started_cohabiting'.
+        *   'male_partner_id' and 'female_partner_id' should be non-empty strings (e.g., MongoDB ObjectId strings).
+        *   'male_partner_name' and 'female_partner_name' should be non-empty strings representing full names.
+        *   'male_partner_birthdate' and 'female_partner_birthdate' should be valid dates in YYYY-MM-DD format (e.g., '1990-01-15'). They should represent a plausible age (e.g., at least 18 years old and not older than 120 years). Dates should not be in the future.
+        *   'year_started_cohabiting' should be a valid 4-digit year (e.g., '2010'). It must be numeric, not in the future, and not earlier than the birth year of both partners.
+        *   The 'purpose' should clearly relate to cohabitation (e.g., 'for legal purposes', 'for housing application', 'for SSS benefits', 'for school registration of child'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Clearance') {
+        promptText += `
+        **Specific Instructions for Barangay Clearance:**
+        *   The 'details' object *must* contain 'type_of_work', 'number_of_storeys', and 'purpose_of_clearance'. 'other_work' is optional.
+        *   'type_of_work' should be a descriptive string (e.g., 'sidewalk repair', 'drainage tapping', 'fence construction').
+        *   'number_of_storeys' should be a positive numeric value (e.g., '1', '2', '3') or '0' if it's a lot with no building.
+        *   'purpose_of_clearance' should be a descriptive string (e.g., 'for job application', 'for business registration', 'for school requirement').
+        *   'other_work' if present, should be a descriptive string.
+        *   The main 'purpose' field should be consistent with or an elaboration of 'purpose_of_clearance'. Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Business Clearance') {
+        promptText += `
+        **Specific Instructions for Barangay Business Clearance:**
+        *   The 'details' object *must* contain 'business_name' and 'nature_of_business'.
+        *   'business_name' should be the legitimate trade name of the business (e.g., 'JM Sari-Sari Store', 'Online Gadgets Hub').
+        *   'nature_of_business' should describe the type of business activity (e.g., 'retail', 'food service', 'online selling').
+        *   The 'purpose' should clearly state the reason for needing the business clearance (e.g., 'for DTI registration', 'for renewal of business permit', 'for mayor’s permit application'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Business Permit') {
+        promptText += `
+        **Specific Instructions for Barangay Business Permit:**
+        *   The 'details' object *must* contain 'business_name' and 'business_address'.
+        *   'business_name' should be the legitimate trade name.
+        *   'business_address' should be a valid, specific, and complete address within the barangay (e.g., '123 Main St, Zone 4, Barangay San Jose').
+        *   The 'purpose' should clearly state the reason for needing the business permit (e.g., 'for new business operation', 'for business expansion', 'to comply with local regulations'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Certification (First Time Jobseeker)') {
+        promptText += `
+        **Specific Instructions for Barangay Certification (First Time Jobseeker):**
+        *   The 'details' object *must* contain 'years_lived' and 'months_lived'.
+        *   'years_lived' and 'months_lived' should be non-negative numeric values (e.g., '5', '10', '0') representing the duration of residency.
+        *   The 'purpose' should clearly state its relevance to job seeking (e.g., 'for employment', 'for first job application', 'to avail of DOLE benefits'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Certificate of Indigency') {
+        promptText += `
+        **Specific Instructions for Certificate of Indigency:**
+        *   The 'details' object *must* contain 'medical_educational_financial'.
+        *   'medical_educational_financial' must be one of 'Medical', 'Educational', or 'Financial'.
+        *   The 'purpose' should specifically elaborate on the selected category (e.g., 'for medical assistance for child' if 'Medical' is chosen, 'for school enrollment of sibling' if 'Educational' is chosen, 'for financial aid due to unemployment' if 'Financial' is chosen). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay BADAC Certificate') {
+        promptText += `
+        **Specific Instructions for Barangay BADAC Certificate:**
+        *   The 'details' object *must* contain 'badac_certificate'.
+        *   'badac_certificate' must be one of 'PNP Application', 'School Requirement', 'Job Application', 'Board Exam', 'Others'.
+        *   The 'purpose' should specifically elaborate on the selected category (e.g., 'for PNP entrance exam application' if 'PNP Application' is chosen, 'for school admission' if 'School Requirement' is chosen). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Permit (for installations)') {
+        promptText += `
+        **Specific Instructions for Barangay Permit (for installations):**
+        *   The 'details' object *must* contain 'installation_construction_repair' and 'project_site'.
+        *   'installation_construction_repair' should specify the type of activity (e.g., 'septic tank installation', 'house renovation', 'electrical wiring repair').
+        *   'project_site' should describe the specific location of the project (e.g., 'Lot 1, Block 2, Phase 3, Greenview Subdivision').
+        *   The 'purpose' should clearly state the reason for the permit (e.g., 'for house construction', 'for water line repair', 'to install new internet connection'). Ensure it's not gibberish.
+        `;
+    }
+    // NEW & UPDATED: Explicit instructions for documents with minimal 'details'
+    else if (requestType === 'Certificate of Oneness' || requestType === 'Certificate of Good Moral' ||
+             requestType === 'Certificate of Solo Parent' || requestType === 'Certificate of Residency') {
+        promptText += `
+        **Specific Instructions for '${requestType}':**
+        *   The 'details' object is expected to be *empty or contain no relevant fields* for this request type. If the 'details' object contains any unexpected fields, it should be considered invalid.
+        *   The 'purpose' is the primary field for validation. It should be a non-empty, descriptive string that clearly states the reason for needing the '${requestType}'.
+        *   For example:
+            *   **Certificate of Oneness:** 'For records purposes' or 'Proof of singleness for legal documents'.
+            *   **Certificate of Good Moral:** 'For job application requirements', 'For school admission', 'For a character reference'.
+            *   **Certificate of Solo Parent:** 'To avail solo parent benefits', 'For legal recognition as solo parent'.
+            *   **Certificate of Residency:** 'Proof of address for utility application', 'For school enrollment', 'For local government assistance'.
+        *   Ensure the 'purpose' does not contain gibberish or nonsensical input.
+        `;
+    }
+    // General fallback for any other/unknown request type
+    else {
+        promptText += `
+        **General Instructions for Other/Unknown Request Type:**
+        *   The 'details' object should be carefully examined. If it contains fields, they should appear logical and consistent with a generic document request, and should not be empty if present.
+        *   The 'purpose' must be a non-empty, descriptive string that makes general sense for a document request. It should not contain gibberish.
+        `;
+    }
+
+    promptText += `
+    **General Validation Rules (Applicable to all types, in conjunction with specific instructions):**
+    *   **Field Presence and Relevance:** Only validate fields that are explicitly required by the 'request_type's specific instructions, or fields that are *present* in the 'documentDetails' payload and are logically relevant to the 'request_type'. Do not flag missing fields if the specific instructions state the 'details' object is expected to be empty or minimal.
+    *   **Non-empty Check:** All required fields (as per specific instructions) and any provided fields in 'documentDetails' (if relevant) must not be empty (empty string, null, or undefined).
+    *   **Numeric Fields:** Numeric fields (like years, months, storeys) should contain valid non-negative integer numbers.
+    *   **Date Fields:** Date fields should strictly adhere to the YYYY-MM-DD format, represent a plausible real-world date, and should not be in the future.
+    *   **ID/Name Fields:** ID fields (like male_partner_id) and name fields should be non-empty strings.
+    *   **Purpose Quality:** The 'purpose' field should be descriptive, coherent, and logically consistent with the 'request_type'. It must not be gibberish, random characters, or extremely short non-descriptive text.
+
+    Return a JSON object with "isValid" (boolean) and "message" (string).
+    *   Keep the message concise but comprehensive, explaining the outcome.
+    *   Example valid response: \`{"isValid": true, "message": "All details validated successfully for Certificate of Good Moral. Purpose is descriptive."}\`
+    *   Example invalid response: \`{"isValid": false, "message": "For Certificate of Good Moral, the 'details' object should be empty, but it contains unexpected fields. Also, the purpose is gibberish."}\`
+    *   Example invalid response: \`{"isValid": false, "message": "Missing 'male_partner_birthdate' for Certificate of Cohabitation. Birthdate must be in YYYY-MM-DD format."}\`
+    `;
+
+    contents.push({ text: promptText });
+    contents.push({ text: `Provided Document Details JSON Payload: ${JSON.stringify(documentDetails)}` });
+    contents.push({ text: `Provided Purpose Text: ${purpose}` });
+
+    console.log("Generating content from the model for Document Request Details validation using 'gemini-2.5-flash'...");
+    const result = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: contents,
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema
+        }
+    });
+
+    console.log("Full Gemini AI result object (Document Details):", JSON.stringify(result, null, 2));
+
+    let rawResponseTextFromAI;
+    let finalParsedJSON;
+
+    if (result && result.candidates && result.candidates.length > 0) {
+        const firstCandidate = result.candidates[0];
+        if (firstCandidate.content && firstCandidate.content.parts && firstCandidate.content.parts.length > 0) {
+            rawResponseTextFromAI = firstCandidate.content.parts[0].text;
+        }
+    }
+
+    if (!rawResponseTextFromAI) {
+        console.error("Gemini AI did not return expected text content for document details validation.");
+        return { isValid: false, message: 'AI validation service received an incomplete or malformed response from Gemini for document details. Please check API key, model availability, and network.' };
+    }
+
+    console.log("Raw response text from Gemini (Document Details):", rawResponseTextFromAI);
+
+    // Attempt to extract JSON from markdown code block, or parse as-is
+    const jsonMatch = rawResponseTextFromAI.match(/```json\n([\s\S]*?)\n```/);
+    if (jsonMatch && jsonMatch[1]) {
+        finalParsedJSON = JSON.parse(jsonMatch[1]);
+    } else {
+        console.warn("Gemini AI response for document details was not wrapped in ```json```. Attempting to parse as-is.");
+        finalParsedJSON = JSON.parse(rawResponseTextFromAI);
+    }
+
+    console.log("Parsed JSON from Gemini for Document Request Details validation:", finalParsedJSON);
+
+    return finalParsedJSON;
+
+  } catch (error) {
+    console.error("An error occurred during document request details validation by AI:", error);
+    return { isValid: false, message: 'AI validation service encountered an error during document details validation. Please try again. Details: ' + error.message };
+  }
+}
+
+
 
 // ======================= DOCUMENT REQUEST ======================= //
 
 // ADD NEW DOCUMENT (POST)
-// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST
 app.post('/api/document-requests', async (req, res) => {
-  const dab = await db();
+  const dab = await db(); // Assuming db() connects to your database
   const {
     requestor_resident_id,
-    processed_by_personnel,
+    processed_by_personnel, // This might be provided by the frontend or defaulted in backend
     request_type,
     purpose,
-    details,
+    details, // This is the JSON format payload from the user
   } = req.body;
 
-  // --- 2. UPDATE VALIDATION ---
-  if (!requestor_resident_id || !request_type ) {
-    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
+  // --- 2. Initial Basic Validation ---
+  // Added 'purpose' as a generally required field, unless specifically handled by AI for 'Certificate of Oneness'
+  if (!requestor_resident_id || !request_type || (request_type !== 'Certificate of Oneness' && !purpose)) {
+    return res.status(400).json({ error: 'Missing required fields: requestor, document type, and purpose (if applicable).' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
@@ -2713,25 +2904,38 @@ app.post('/api/document-requests', async (req, res) => {
     const residentsCollection = dab.collection('residents');
     const requestsCollection = dab.collection('document_requests');
 
-    // --- ADDED: Account Status Check ---
+    // --- Account Status Check (Existing) ---
     await checkResidentAccountStatus(requestor_resident_id, dab);
-    // --- END ADDED ---
 
-    // Fetch the requestor's name for a more descriptive log
+    // Fetch the requestor's name for a more descriptive audit log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
+
+    // --- NEW: AI Validation for Document Request Details ---
+    console.log(`[AI PRE-ASSESSMENT] Performing AI validation for document request details for type: '${request_type}'`);
+    const aiValidationResult = await validateDocumentRequestDetails(ai, request_type, details || {}, purpose || ''); // Pass 'ai' instance and ensure details/purpose are not null
+
+    if (!aiValidationResult.isValid) {
+      console.warn(`[AI PRE-ASSESSMENT] AI validation failed for document request type '${request_type}': ${aiValidationResult.message}`);
+      return res.status(400).json({ // Use 400 Bad Request or 422 Unprocessable Entity
+        error: 'Document details failed AI pre-assessment.',
+        message: aiValidationResult.message
+      });
+    }
+    console.log(`[AI PRE-ASSESSMENT] AI validation successful for document request type '${request_type}'. Message: ${aiValidationResult.message}`);
+    // --- END NEW AI Validation ---
 
     // Generate a unique, user-friendly reference number
     const customRefNo = await generateUniqueReference(requestsCollection);
 
-    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newRequest = {
       ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
-      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
+      // Default to 'Self-Requested' or 'System' if processed_by_personnel is not explicitly provided by an admin/personnel context
+      processed_by_personnel: String(processed_by_personnel || 'Self-Requested').trim(),
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
-      details: details || {},
+      details: details || {}, // Ensure details is an object
       document_status: "Pending",
       created_at: new Date(),
       updated_at: new Date(),
@@ -2739,37 +2943,36 @@ app.post('/api/document-requests', async (req, res) => {
 
     const result = await requestsCollection.insertOne(newRequest);
 
-    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
+    // --- Audit Log Update ---
     await createAuditLog({
-        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was processed by ${processed_by_personnel}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was submitted. AI pre-assessment result: ${aiValidationResult.message}`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
-        userId: requestor ? requestor._id : null,
+        userId: requestor ? requestor._id.toString() : null, // Ensure userId is string
         userName: requestorName,
     }, req);
 
-    // Update the response to the frontend
     res.status(201).json({
       message: 'Document request added successfully',
       requestId: result.insertedId,
-      refNo: customRefNo
+      refNo: customRefNo,
+      aiValidationMessage: aiValidationResult.message // Optionally send AI message to frontend
     });
 
   } catch (error) {
     console.error('Error adding document request:', error);
-    // --- ADDED: Specific error handling for account status restrictions ---
+    // Specific error handling for account status restrictions (Existing)
     if (error.message.includes("account is pending approval") ||
         error.message.includes("account has been declined") ||
         error.message.includes("account has been permanently deactivated") ||
         error.message.includes("account is currently On Hold/Deactivated")) {
-      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
-        error: 'Action Restricted. Account status On Hold / Deactivated.',
+      return res.status(403).json({
+        error: 'Action Restricted.',
         message: error.message
       });
     }
-    // --- END ADDED ---
-    res.status(500).json({ error: 'Error adding document request.' });
+    res.status(500).json({ error: 'Error adding document request.', message: error.message || 'An internal server error occurred.' });
   }
 });
 
@@ -2807,7 +3010,8 @@ app.get('/api/documents', async (req, res) => {
         description: 1,
         PurposeOfDocument: 1,
         ContactNumber: 1,
-        action: { $ifNull: [ "$action", "" ] }
+        action: { $ifNull: [ "$action", "" ] },
+        date_added: 1
       }
     })
     .sort({ date_added: -1 })
