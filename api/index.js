@@ -12,7 +12,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const { GoogleGenAI, createUserContent, createPartFromUri, Type } = require('@google/genai');
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
-const GEMINI_API_KEY = 'AIzaSyAH0ZrwBAzmxZItNI0i6HA90s3Cauju5VM'
+const GEMINI_API_KEY = 'AIzaSyALqIrMfrfpDN7CP7bp682FVKbdWUUeMcU'
 // --- SMTP Configuration ---
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
@@ -708,7 +708,7 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
     };
 };
 
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED (birth_date not included for primary user)
 app.post('/api/residents', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
@@ -722,25 +722,104 @@ app.post('/api/residents', async (req, res) => {
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
-            // Ensure date_of_birth is present and type_of_household is optional as per frontend
             if (!headData.first_name || !headData.last_name || !headData.email || !headData.password || !headData.date_of_birth) {
                 throw new Error('Validation failed: Head requires first name, last_name, email, password, and date of birth.');
             }
-            // Removed: The explicit backend validation for `type_of_household` as it's now optional on the frontend
-            // and the AI validation can still process it if present.
 
+            // Existing Email Check (already case-insensitive due to .toLowerCase())
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
             if (existingEmail) {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
             }
 
+            // --- CURRENT DUPLICATE PRIMARY USER CHECK: Based on Name and MAIN Address Components ---
+            // Normalizing all relevant fields from incoming headData for consistent comparison.
+            const normalizedFirstName = headData.first_name.trim().toLowerCase();
+            const normalizedMiddleName = headData.middle_name ? headData.middle_name.trim().toLowerCase() : null;
+            const normalizedLastName = headData.last_name.trim().toLowerCase();
+            const normalizedSuffix = headData.suffix ? headData.suffix.trim().toLowerCase() : null;
+
+            const normalizedAddressHouseNumber = headData.address_house_number ? String(headData.address_house_number).trim().toLowerCase() : null;
+            const normalizedAddressStreet = headData.address_street.trim().toLowerCase();
+            const normalizedAddressSubdivisionZone = headData.address_subdivision_zone ? headData.address_subdivision_zone.trim().toLowerCase() : null;
+
+            let inputCityMunicipalityForComparison = headData.address_city_municipality.trim().toLowerCase();
+            const cityMatchCandidates = new Set([inputCityMunicipalityForComparison]);
+            if (inputCityMunicipalityForComparison.endsWith(' city')) {
+                cityMatchCandidates.add(inputCityMunicipalityForComparison.replace(/ city$/, ''));
+            } else {
+                cityMatchCandidates.add(inputCityMunicipalityForComparison + ' city');
+            }
+            if (inputCityMunicipalityForComparison === 'manila') {
+                cityMatchCandidates.add('manila city');
+            }
+
+            const queryConditions = {
+                first_name: { $regex: normalizedFirstName, $options: 'i' },
+                last_name: { $regex: normalizedLastName, $options: 'i' },
+                middle_name: normalizedMiddleName !== null
+                    ? { $regex: normalizedMiddleName, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                suffix: normalizedSuffix !== null
+                    ? { $regex: normalizedSuffix, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+
+                address_house_number: normalizedAddressHouseNumber !== null
+                    ? { $regex: normalizedAddressHouseNumber, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                address_street: { $regex: normalizedAddressStreet, $options: 'i' },
+                address_subdivision_zone: normalizedAddressSubdivisionZone !== null
+                    ? { $regex: normalizedAddressSubdivisionZone, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                address_city_municipality: {
+                    $in: Array.from(cityMatchCandidates).map(city => new RegExp(`^${city}$`, 'i'))
+                },
+
+                is_household_head: true,
+            };
+
+            const duplicatePrimaryUser = await residentsCollection.findOne(queryConditions, { session });
+
+            if (duplicatePrimaryUser) {
+                console.warn("Duplicate primary user found:", duplicatePrimaryUser);
+                throw new Error('Conflict: A primary household head with this name and main address already exists in the system.');
+            }
+            // --- END DUPLICATE PRIMARY USER CHECK ---
+
             const headResidentDocument = createResidentDocument(headData, true);
-            // Store head's email, contact_number, and password as pending
+
+            // --- Store Original Casing for Display ---
+            headResidentDocument.display_first_name = headData.first_name.trim();
+            headResidentDocument.display_middle_name = headData.middle_name ? headData.middle_name.trim() : null;
+            headResidentDocument.display_last_name = headData.last_name.trim();
+            headResidentDocument.display_suffix = headData.suffix ? headData.suffix.trim() : null;
+            // Also for address components that might be displayed with original casing
+            headResidentDocument.display_address_house_number = headData.address_house_number ? String(headData.address_house_number).trim() : null;
+            headResidentDocument.display_address_unit_room_apt_number = headData.address_unit_room_apt_number ? headData.address_unit_room_apt_number.trim() : null;
+            headResidentDocument.display_address_street = headData.address_street.trim();
+            headResidentDocument.display_address_subdivision_zone = headData.address_subdivision_zone ? headData.address_subdivision_zone.trim() : null;
+            headResidentDocument.display_address_city_municipality = headData.address_city_municipality.trim();
+            headResidentDocument.display_type_of_household = headData.type_of_household ? headData.type_of_household.trim() : null;
+
+
+            // --- Normalize fields for INSERTION (existing logic, for search/comparison) ---
+            headResidentDocument.first_name = normalizedFirstName; // Already normalized above
+            headResidentDocument.middle_name = normalizedMiddleName; // Already normalized above
+            headResidentDocument.last_name = normalizedLastName; // Already normalized above
+            headResidentDocument.suffix = normalizedSuffix; // Already normalized above
+
+            headResidentDocument.address_house_number = normalizedAddressHouseNumber; // Already normalized above
+            headResidentDocument.address_unit_room_apt_number = headData.address_unit_room_apt_number ? headData.address_unit_room_apt_number.trim().toLowerCase() : null; // Keep lowercase for consistency if unit number is searchable
+            headResidentDocument.address_street = normalizedAddressStreet; // Already normalized above
+            headResidentDocument.address_subdivision_zone = normalizedAddressSubdivisionZone; // Already normalized above
+            headResidentDocument.address_city_municipality = inputCityMunicipalityForComparison; // Already normalized above
+            headResidentDocument.type_of_household = headData.type_of_household ? headData.type_of_household.trim() : null; // Keep as is for internal use
+
             headResidentDocument.email = headData.email.toLowerCase();
             headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null;
-            headResidentDocument.pending_password_hash = md5(headData.password); // Store new password temporarily for the head's own activation
+            headResidentDocument.pending_password_hash = md5(headData.password);
 
-            // --- AI Validation for Proof of Residency (multiple files + authorization letter) ---
+            // AI Validation expects original casing, so pass headData directly
             if (!Array.isArray(headData.proof_of_residency_base64) || headData.proof_of_residency_base64.length === 0) {
               throw new Error('Validation failed: At least one proof of residency document is required.');
             }
@@ -750,22 +829,21 @@ app.post('/api/residents', async (req, res) => {
                 middle_name: headData.middle_name,
                 last_name: headData.last_name,
                 suffix: headData.suffix,
-                date_of_birth: headData.date_of_birth, // <--- ADDED date_of_birth for AI validation
+                date_of_birth: headData.date_of_birth,
                 address_house_number: headData.address_house_number,
                 address_unit_room_apt_number: headData.address_unit_room_apt_number,
                 address_street: headData.address_street,
                 address_subdivision_zone: headData.address_subdivision_zone,
                 address_city_municipality: headData.address_city_municipality,
-                type_of_household: headData.type_of_household // Keep this as AI can still use it if present
+                type_of_household: headData.type_of_household
               },
-              headData.proof_of_residency_base64, // Array of base64 strings
-              headData.authorization_letter_base64 || null // Optional authorization letter
+              headData.proof_of_residency_base64,
+              headData.authorization_letter_base64 || null
             );
 
             if (!aiResidencyValidation.isValid) {
               throw new Error(`Proof of Residency AI validation failed: ${aiResidencyValidation.message}`);
             }
-
 
             // ... (validation for voter, PWD, Senior as existing, remains the same) ...
             if (headData.is_voter) {
@@ -780,32 +858,48 @@ app.post('/api/residents', async (req, res) => {
                     throw new Error(proofOfPWDResult.message);
                 }
             }
-            
+
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
-            // Removed account_number assignment here.
 
-            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+            // Include display names in the returned object
+            newHouseholdHead = {
+                _id: insertedHeadId,
+                ...headResidentDocument,
+                first_name: headResidentDocument.display_first_name, // Override with display name for immediate response
+                middle_name: headResidentDocument.display_middle_name,
+                last_name: headResidentDocument.display_last_name,
+                suffix: headResidentDocument.display_suffix
+            };
 
             // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
-            // const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []); // This was unused
 
             for (const memberData of membersToCreate) {
-                // Ensure date_of_birth is required for members too
                 if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head || !memberData.date_of_birth) {
                     throw new Error(`Validation failed for member: Missing required fields (first_name, last_name, relationship_to_head, date_of_birth).`);
                 }
-                // const memberAge = calculateAge(memberData.date_of_birth); // Unused here
 
-                // When creating a member, createResidentDocument will copy address/household type from headData
-                const newMemberDoc = createResidentDocument(memberData, false, headData); // headData is passed here
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
+
+                // --- Store Original Casing for Display for Members ---
+                newMemberDoc.display_first_name = memberData.first_name.trim();
+                newMemberDoc.display_middle_name = memberData.middle_name ? memberData.middle_name.trim() : null;
+                newMemberDoc.display_last_name = memberData.last_name.trim();
+                newMemberDoc.display_suffix = memberData.suffix ? memberData.suffix.trim() : null;
+
+                // Normalize member fields (existing logic for search/comparison)
+                newMemberDoc.first_name = memberData.first_name.trim().toLowerCase();
+                newMemberDoc.middle_name = memberData.middle_name ? memberData.middle_name.trim().toLowerCase() : null;
+                newMemberDoc.last_name = memberData.last_name.trim().toLowerCase();
+                newMemberDoc.suffix = memberData.suffix ? memberData.suffix.trim().toLowerCase() : null;
                 newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
                 newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+
                 if (memberData.password) {
                     newMemberDoc.pending_password_hash = md5(memberData.password);
                 }
-                
+
                 // ... (validation for voter, PWD as existing, remains the same) ...
                 if (memberData.is_voter) {
                     const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
@@ -822,7 +916,6 @@ app.post('/api/residents', async (req, res) => {
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 const insertedMemberId = memberInsertResult.insertedId;
-                // Removed account_number assignment here.
 
                 createdMemberIds.push(insertedMemberId);
             }
@@ -838,11 +931,10 @@ app.post('/api/residents', async (req, res) => {
             }
         }); // End of the transaction
 
-        // The audit log description below will also need to be adjusted as 'account_number' is not available in newHouseholdHead
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
-          userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
-          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`, // Simplified description
+          userName: `${newHouseholdHead.display_first_name} ${newHouseholdHead.display_last_name}`, // Use display name for audit log
+          description: `Resident '${newHouseholdHead.display_first_name} ${newHouseholdHead.display_last_name}' created a new household.`,
           action: "REGISTER",
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
@@ -850,19 +942,21 @@ app.post('/api/residents', async (req, res) => {
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending activation.',
-            resident: newHouseholdHead // The frontend will need to derive the account number from _id
+            resident: newHouseholdHead
         });
 
     } catch (error) {
         console.error("Error during household registration transaction:", error);
-        if (error.message.startsWith('Conflict:')) {
+        if (error.message.startsWith('Conflict: The email address')) {
             return res.status(409).json({ error: 'The email is already been registered.', message: error.message });
+        }
+        if (error.message.startsWith('Conflict: A primary household head with this name')) {
+            return res.status(409).json({ error: 'Duplicate Primary User', message: error.message });
         }
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         if (error.message.startsWith('Proof of Residency AI validation failed:')) {
-          // Special handling for AI validation errors
           return res.status(400).json({ error: 'AI Validation Error', message: error.message });
         }
         console.error('Mobile Registration error: ', error);
