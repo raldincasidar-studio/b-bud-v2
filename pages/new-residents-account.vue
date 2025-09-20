@@ -113,7 +113,7 @@
             <v-text-field v-model="form.years_at_current_address" label="Years at Current Address *" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field>
           </v-col>
 
-          <!-- UPDATED: Proof of Residency for multiple attachments -->
+          <!-- UPDATED: Proof of Residency for multiple attachments with limit -->
           <v-col cols="12" md="6">
             <label class="v-label">Upload Proof of Residency *</label>
             <v-file-input 
@@ -125,6 +125,8 @@
               show-size 
               clearable 
               multiple 
+              counter
+              :max="5"
               @blur="vHead$.proof_of_residency_file.$touch()">
             </v-file-input>
             <div class="d-flex flex-wrap gap-2 mt-2">
@@ -440,10 +442,10 @@
 </template>
 
 <script setup>
-import { reactive, ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'; // Import onBeforeUnmount
+import { reactive, ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { useVuelidate } from '@vuelidate/core';
-import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alphaNum } from '@vuelidate/validators'; // Added alphaNum
+import { required, email, minLength, sameAs, requiredIf, helpers, numeric, alphaNum } from '@vuelidate/validators';
 import { useMyFetch } from '~/composables/useMyFetch';
 import { useNuxtApp } from '#app';
 
@@ -454,39 +456,35 @@ const showHeadPassword = ref(false);
 const showHeadConfirmPassword = ref(false);
 const showMemberPassword = ref(false);
 
-const suffixOptions = ['Jr.', 'Sr.', 'I', 'II', 'III', 'IV', 'V', 'VI']; // Define suffix options
+const suffixOptions = ['Jr.', 'Sr.', 'I', 'II', 'III', 'IV', 'V', 'VI'];
 
 const form = reactive({
-  first_name: '', middle_name: '', last_name: '', suffix: null, // Added suffix
+  first_name: '', middle_name: '', last_name: '', suffix: null,
   sex: null, date_of_birth: '',
   civil_status: null, citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '',
   password: '', confirmPassword: '',
   address_house_number: '', 
-  address_unit_room_apt_number: '', // NEW: Unit/Room/Apartment number
+  address_unit_room_apt_number: '',
   address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
-  type_of_household: null, // NEW: Type of Household
+  type_of_household: null,
   years_at_current_address: null, 
-  proof_of_residency_file: [], // Changed to array for multiple File objects
-  authorization_letter_file: null, // NEW: Authorization Letter file object
+  proof_of_residency_file: [],
+  authorization_letter_file: null,
   is_voter: false, voter_id_number: '', voter_id_file: null,
   is_pwd: false, pwd_id: '', pwd_card_file: null,
   is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null,
   household_members_to_create: [],
 });
 
-// NEW: Temporary ref for new file selection in proof of residency
 const newProofResidencyFiles = ref([]); 
 
-// Refs to store generated object URLs for single file previews
 const voterIdPreviewUrl = ref(null);
 const pwdCardPreviewUrl = ref(null);
 const seniorCardPreviewUrl = ref(null);
 const authorizationLetterPreviewUrl = ref(null); 
 
-// Ref to store { file: File, url: string, id: number } for multiple proof of residency previews
-// We use 'id' for stable keys in v-for and easier revocation
 const proofResidencyPreviews = ref([]); 
-let proofResidencyIdCounter = 0; // To generate unique IDs for previews
+let proofResidencyIdCounter = 0;
 
 const calculateAge = (dob) => {
   if (!dob) return null;
@@ -515,7 +513,6 @@ const dateOfBirthValidation = {
   })
 };
 
-// Computed properties for real-time password validation UI
 const hasEightCharacters = computed(() => form.password.length >= 8);
 const hasLowercase = computed(() => /(?=.*[a-z])/.test(form.password));
 const hasUppercase = computed(() => /(?=.*[A-Z])/.test(form.password));
@@ -544,16 +541,16 @@ last_name: {
   required, 
   alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
 },
-suffix: {}, // Suffix is optional, so no validation rule needed by default
+suffix: {},
   sex: { required }, date_of_birth: dateOfBirthValidation,
   civil_status: { required }, citizenship: { required }, occupation_status: { required },
   email: { required, email }, contact_number: { required },
   password: { 
     required, 
     minLength: helpers.withMessage('Must be at least 8 characters long.', minLength(8)),
-    hasLowercase: helpers.withMessage('Must contain at least one lowercase letter.', helpers.regex(/(?=.*[a-z])/)), // NEW
+    hasLowercase: helpers.withMessage('Must contain at least one lowercase letter.', helpers.regex(/(?=.*[a-z])/)),
     hasUppercase: helpers.withMessage('Must contain at least one uppercase letter.', helpers.regex(/(?=.*[A-Z])/)),
-    hasNumber: helpers.withMessage('Must contain at least one number (0-9).', helpers.regex(/(?=.*\d)/)), // NEW
+    hasNumber: helpers.withMessage('Must contain at least one number (0-9).', helpers.regex(/(?=.*\d)/)),
     hasSpecial: helpers.withMessage('Must contain at least one special character (e.g., !@#$%^&*).', helpers.regex(/(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?])/)),
     atLeastThreeTypes: helpers.withMessage('Must contain at least 3 of the 4 types (lowercase, uppercase, numbers, special characters).', (value) => {
         let count = 0;
@@ -566,15 +563,18 @@ suffix: {}, // Suffix is optional, so no validation rule needed by default
   },
   confirmPassword: { required, sameAs: helpers.withMessage('Passwords do not match.', sameAs(computed(() => form.password))) },
   address_house_number: { required, numeric }, 
-  address_unit_room_apt_number: { }, // NEW: Unit/Room/Apartment number (optional for now)
+  address_unit_room_apt_number: { },
   address_street: { required }, 
   address_subdivision_zone: { required },
-  type_of_household: { required: helpers.withMessage('Type of Household is required.', required) }, // NEW: Type of Household (required)
+  type_of_household: { required: helpers.withMessage('Type of Household is required.', required) },
   years_at_current_address: { required, numeric }, 
   proof_of_residency_file: { 
-    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0) 
-  }, // Updated validation for array of File objects
-  authorization_letter_file: {}, // NEW: Optional file
+    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0),
+    maxLength: helpers.withMessage('You can upload a maximum of 5 proof of residency files.', (value) => {
+      return value.length <= 5;
+    })
+  },
+  authorization_letter_file: {},
   voter_id_number: { requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf(() => form.is_voter && !form.voter_id_file)) },
   voter_id_file: { requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf(() => form.is_voter && !form.voter_id_number)) },
   pwd_id: { requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf(() => form.is_pwd && !form.pwd_card_file)) },
@@ -594,7 +594,7 @@ const relationshipOptions = [
 ];
 
 const getInitialMemberForm = () => ({
-  first_name: '', middle_name: '', last_name: '', suffix: null, // Added suffix
+  first_name: '', middle_name: '', last_name: '', suffix: null,
   relationship_to_head: null, other_relationship: '',
   sex: null, date_of_birth: '', civil_status: null, citizenship: 'Filipino',
   occupation_status: null, contact_number: '', email: '', password: '',
@@ -616,7 +616,7 @@ const isMemberSenior = computed(() => memberAge.value !== null && memberAge.valu
 
 const memberRules = {
   first_name: { required }, last_name: { required },
-  suffix: {}, // Suffix is optional for members too
+  suffix: {},
   relationship_to_head: { required },
   other_relationship: { requiredIf: helpers.withMessage('Please specify the relationship.', requiredIf(() => memberForm.relationship_to_head === 'Other')) },
   sex: { required }, date_of_birth: dateOfBirthValidation, civil_status: { required },
@@ -633,26 +633,20 @@ const memberRules = {
 };
 const vMember$ = useVuelidate(memberRules, memberForm);
 
-// Helper function to create/revoke object URLs
 const urlCreator = (file) => file ? URL.createObjectURL(file) : null;
 const urlRevoker = (url) => { if (url) URL.revokeObjectURL(url); };
 
-// Watch for changes in the temporary input for Proof of Residency
-// This watches the v-file-input's model-value (new files selected)
 watch(newProofResidencyFiles, (newFiles) => {
   if (newFiles && newFiles.length > 0) {
-    // Add new files to the main form array
-    form.proof_of_residency_file.push(...newFiles);
-    // Clear the temporary input so the v-file-input itself visually resets
+    const currentCount = form.proof_of_residency_file.length;
+    const filesToAdd = newFiles.slice(0, 5 - currentCount);
+    form.proof_of_residency_file.push(...filesToAdd);
     newProofResidencyFiles.value = [];
-    vHead$.value.proof_of_residency_file.$touch(); // Re-trigger validation for the main array
+    vHead$.value.proof_of_residency_file.$touch();
   }
 });
 
-// Watch the actual form.proof_of_residency_file array for changes
-// This is where we manage the creation and revocation of object URLs for previews
 watch(() => form.proof_of_residency_file, (currentFiles, oldFiles) => {
-  // Revoke URLs for files that are no longer in the list
   if (oldFiles) {
     const oldFileUrls = new Map(oldFiles.map((f, i) => [f, proofResidencyPreviews.value[i]?.url]));
     const currentFileSet = new Set(currentFiles);
@@ -663,26 +657,23 @@ watch(() => form.proof_of_residency_file, (currentFiles, oldFiles) => {
     });
   }
 
-  // Generate new previews for current files, re-using existing ones if possible
   const newPreviews = [];
-  currentFiles.forEach(file => {
-    // Find if this file already has a preview
+  const filesToPreview = currentFiles.slice(0, 5);
+  filesToPreview.forEach(file => {
     const existingPreview = proofResidencyPreviews.value.find(p => p.file === file);
     if (existingPreview) {
       newPreviews.push(existingPreview);
     } else {
-      // Create new preview
       newPreviews.push({
         file: file,
         url: urlCreator(file),
-        id: proofResidencyIdCounter++ // Assign a unique ID
+        id: proofResidencyIdCounter++
       });
     }
   });
   proofResidencyPreviews.value = newPreviews;
-}, { deep: true, immediate: true }); // Deep watch for array content, immediate for initial load
+}, { deep: true, immediate: true });
 
-// Watchers for single file previews (ensure old URLs are revoked)
 watch(() => form.voter_id_file, (newFile, oldFile) => { 
   urlRevoker(voterIdPreviewUrl.value); 
   voterIdPreviewUrl.value = urlCreator(newFile); 
@@ -719,26 +710,23 @@ watch(() => memberForm.proof_of_relationship_file, (newFile, oldFile) => {
 
 
 const removeProofOfResidencyImage = (indexToRemove) => {
-  // Revoke the specific URL for the item being removed
   urlRevoker(proofResidencyPreviews.value[indexToRemove]?.url);
-  // Remove from both form data and preview data
   form.proof_of_residency_file.splice(indexToRemove, 1);
-  proofResidencyPreviews.value.splice(indexToRemove, 1); // Keep previews in sync
-  vHead$.value.proof_of_residency_file.$touch(); // Re-trigger validation
+  proofResidencyPreviews.value.splice(indexToRemove, 1);
+  vHead$.value.proof_of_residency_file.$touch();
 };
 
 const openMemberDialog = (index = null) => { 
   if (index !== null) {
     editingMemberIndex.value = index;
     Object.assign(memberForm, form.household_members_to_create[index]);
-    // Set previews for existing member files if they exist
     memberVoterIdPreviewUrl.value = urlCreator(memberForm.voter_id_file);
     memberPwdCardPreviewUrl.value = urlCreator(memberForm.pwd_card_file);
     memberSeniorCardPreviewUrl.value = urlCreator(memberForm.senior_citizen_card_file);
     memberRelationshipProofPreviewUrl.value = urlCreator(memberForm.proof_of_relationship_file);
   } else {
     editingMemberIndex.value = null;
-    Object.assign(memberForm, getInitialMemberForm()); // Reset form for new member
+    Object.assign(memberForm, getInitialMemberForm());
     urlRevoker(memberVoterIdPreviewUrl.value); memberVoterIdPreviewUrl.value = null;
     urlRevoker(memberPwdCardPreviewUrl.value); memberPwdCardPreviewUrl.value = null;
     urlRevoker(memberSeniorCardPreviewUrl.value); memberSeniorCardPreviewUrl.value = null;
@@ -751,7 +739,6 @@ const closeMemberDialog = () => {
     showMemberDialog.value = false;
     editingMemberIndex.value = null;
     vMember$.value.$reset();
-    // Revoke object URLs for memberForm files before resetting
     urlRevoker(memberVoterIdPreviewUrl.value);
     urlRevoker(memberPwdCardPreviewUrl.value);
     urlRevoker(memberSeniorCardPreviewUrl.value);
@@ -777,8 +764,8 @@ const saveMember = async () => {
   closeMemberDialog();
 };
 
+
 const removeMember = (index) => { 
-  // For robustness, revoke URLs associated with the member's files if they exist
   const memberToRemove = form.household_members_to_create[index];
   urlRevoker(urlCreator(memberToRemove.voter_id_file));
   urlRevoker(urlCreator(memberToRemove.pwd_card_file));
@@ -791,18 +778,16 @@ const removeMember = (index) => {
 
 const convertFileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
-    if (!file) { // Handle null or undefined file
+    if (!file) {
       resolve(null);
       return;
     }
 
-    // If it's already a base64 string (e.g., from an existing record), resolve it as is.
     if (typeof file === 'string' && file.startsWith('data:')) {
       resolve(file);
       return;
     }
 
-    // Ensure it's a File object or something that FileReader can handle
     if (!(file instanceof File || file instanceof Blob)) {
         console.warn('Attempted to convert non-File/Blob object to base64:', file);
         resolve(null);
@@ -831,43 +816,44 @@ async function saveResidentAndHousehold() {
 
   saving.value = true;
   try {
-    const payload = { ...form }; // 'form' already includes 'suffix', address_unit_room_apt_number, type_of_household
+    const payload = { ...form };
     
-    // Assign calculated and head-specific properties
-    payload.age = headCalculatedAge.value; // Send age for head, backend also calculates it
+    payload.age = headCalculatedAge.value;
     payload.is_household_head = true;
-    payload.status = 'Pending'; // New registrations are pending for approval
-    // payload.date_approved is set on approval, not here
+    payload.status = 'Approved'; // Assuming admin registration means immediate approval
+    payload.date_approved = new Date(); // Set approval date on creation
+    payload.date_updated = new Date(); // Set updated date on creation
 
-    // Convert all files for the HEAD to base64
     const [
       voter_registration_proof_base64,
       pwd_card_base64,
       senior_citizen_card_base64,
-      proof_of_residency_base64_array, // This will be an array of base64 strings
-      authorization_letter_base64 // NEW: Authorization Letter base64
+      proof_of_residency_base64_array,
+      authorization_letter_base64
     ] = await Promise.all([
       convertFileToBase64(form.voter_id_file),
       convertFileToBase64(form.pwd_card_file),
       convertFileToBase64(form.senior_citizen_card_file),
-      // Map and convert each proof of residency file to base64
-      Promise.all(form.proof_of_residency_file.map(file => convertFileToBase64(file))),
-      convertFileToBase64(form.authorization_letter_file) // NEW
+      Promise.all(form.proof_of_residency_file.slice(0, 5).map(file => convertFileToBase64(file))),
+      convertFileToBase64(form.authorization_letter_file)
     ]);
 
     payload.voter_registration_proof_base64 = voter_registration_proof_base64;
     payload.pwd_card_base64 = pwd_card_base64;
     payload.senior_citizen_card_base64 = senior_citizen_card_base64;
-    payload.proof_of_residency_base64 = proof_of_residency_base64_array.filter(Boolean); // Filter out any nulls
-    payload.authorization_letter_base64 = authorization_letter_base64; // NEW
+    payload.proof_of_residency_base64 = proof_of_residency_base64_array.filter(Boolean);
+    payload.authorization_letter_base64 = authorization_letter_base64;
     
-    // Process all members: convert their files and prepare them for the payload
     payload.household_members_to_create = await Promise.all(
       form.household_members_to_create.map(async (member) => {
-        const newMemberPayload = { ...member }; // 'member' object already includes 'suffix'
+        const newMemberPayload = { ...member };
         
-        newMemberPayload.status = 'Pending'; // New member registrations are also pending
-        // newMemberPayload.date_approved is set on approval
+        newMemberPayload.status = 'Pending';
+        // Note: Individual members might have their own date_approved/date_updated if tracked separately.
+        // For simplicity, we assume the household's date_updated reflects changes to its members.
+        newMemberPayload.date_created = new Date(); // Added date_created for members
+        newMemberPayload.date_updated = new Date(); // Added date_updated for members
+
 
         const [
             member_voter_registration_proof_base64,
@@ -886,7 +872,6 @@ async function saveResidentAndHousehold() {
         newMemberPayload.senior_citizen_card_base64 = member_senior_citizen_card_base64;
         newMemberPayload.proof_of_relationship_base64 = member_proof_of_relationship_base64;
 
-        // Clean up original file properties from the payload
         delete newMemberPayload.voter_id_file;
         delete newMemberPayload.pwd_card_file;
         delete newMemberPayload.senior_citizen_card_file;
@@ -896,13 +881,12 @@ async function saveResidentAndHousehold() {
       })
     );
     
-    // Clean up original file properties and confirmPassword from the top-level payload
     delete payload.voter_id_file;
     delete payload.pwd_card_file;
     delete payload.senior_citizen_card_file;
-    delete payload.proof_of_residency_file; // Remove the array of File objects
-    delete payload.authorization_letter_file; // NEW
-    delete payload.confirmPassword; // confirmPassword is only for frontend validation
+    delete payload.proof_of_residency_file;
+    delete payload.authorization_letter_file;
+    delete payload.confirmPassword;
     
     const { data, error } = await useMyFetch("/api/admin/residents", { method: 'post', body: payload });
     if (error.value) throw new Error(error.value.data?.message || 'Error registering household.');
@@ -919,7 +903,6 @@ async function saveResidentAndHousehold() {
   }
 }
 
-// Ensure all object URLs are revoked when the component is unmounted to prevent memory leaks
 onBeforeUnmount(() => {
   urlRevoker(voterIdPreviewUrl.value);
   urlRevoker(pwdCardPreviewUrl.value);
@@ -932,22 +915,17 @@ onBeforeUnmount(() => {
   urlRevoker(memberPwdCardPreviewUrl.value);
   urlRevoker(memberSeniorCardPreviewUrl.value);
   urlRevoker(memberRelationshipProofPreviewUrl.value);
-
-  // Note: For household members that might still be in the `form.household_members_to_create`
-  // when the component unmounts, their file URLs would also need explicit revocation
-  // if they were not already handled (e.g., if a member dialog was closed).
-  // This is a more complex cleanup scenario, but important for long-lived components.
 });
 
 </script>
 
 <style scoped>
 .v-label { opacity: 1; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity)); display: block; margin-bottom: 4px; font-weight: 500; }
-.gap-2 { gap: 8px; } /* Added utility class for spacing */
+.gap-2 { gap: 8px; }
 .position-relative { position: relative; }
 .position-absolute { position: absolute; }
 .v-list-item-title {
-  font-size: 0.875rem !important; /* Adjust font size to fit */
-  line-height: 1.2; /* Adjust line height for better spacing */
+  font-size: 0.875rem !important;
+  line-height: 1.2;
 }
 </style>

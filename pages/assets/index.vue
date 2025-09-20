@@ -223,6 +223,9 @@
                     (No date filter applied)
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ assetsForPrint.length }} Assets/Inventory
+            </p>
             <table class="print-table">
               <thead>
                 <tr>
@@ -248,13 +251,14 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, computed } from 'vue'; // Added 'computed'
+import { ref, watch, onMounted, computed } from 'vue';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
-import { useRoute } from 'vue-router'; // Added useRoute
+import { useRoute } from 'vue-router';
+import logoImage from '~/assets/img/logo.png'; // Import the logo image
 
 const { $toast } = useNuxtApp();
-const route = useRoute(); // Initialize useRoute
+const route = useRoute();
 
 const searchKey = ref('');
 const categoryFilter = ref('All');
@@ -262,42 +266,37 @@ const totalAssets = ref(0);
 const assets = ref([]);
 const loading = ref(true);
 const itemsPerPage = ref(10);
-const currentTableOptions = ref({}); // To store current table options for reloading
+const currentTableOptions = ref({});
 
-// --- NEW for Dynamic Categories ---
 const categories = ref([]);
 const loadingCategories = ref(true);
-// ---
 
-// Print functionality refs and methods
-const startDate = ref(null); // Will store Date objects
-const endDate = ref(null);   // Will store Date objects
+const startDate = ref(null);
+const endDate = ref(null);
 const startDateMenu = ref(false);
 const endDateMenu = ref(false);
-const selectedDateFilterPreset = ref(null); // 'day', 'week', 'month', 'year'
+const selectedDateFilterPreset = ref(null);
 const printDialog = ref(false);
-const assetsForPrint = ref([]); // Holds all data for printing
+const assetsForPrint = ref([]);
 
 const formattedStartDate = computed(() => startDate.value ? new Date(startDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 const formattedEndDate = computed(() => endDate.value ? new Date(endDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 
 
 const headers = ref([
-  { title: 'Item Name / Description', key: 'name', sortable: true, width: '35%' }, // Adjusted width
+  { title: 'Item Name / Description', key: 'name', sortable: true, width: '35%' },
   { title: 'Available', key: 'available', sortable: false, align: 'center' },
-  { title: 'Pending', key: 'pending', sortable: false, align: 'center' }, // New Header
+  { title: 'Pending', key: 'pending', sortable: false, align: 'center' },
   { title: 'Borrowed', key: 'borrowed', sortable: false, align: 'center' },
   { title: 'Total Quantity', key: 'total_quantity', sortable: false, align: 'center' },
   { title: 'Actions', key: 'action', sortable: false, align: 'center' },
 ]);
 
-// Headers to be displayed in the print view (excluding 'Actions')
 const printableHeaders = computed(() => {
   return headers.value.filter(header => header.key !== 'action');
 });
 
 
-// --- WATCHERS for Search and Filter ---
 let searchDebounceTimer = null;
 watch(searchKey, () => {
   clearTimeout(searchDebounceTimer);
@@ -310,7 +309,6 @@ watch(categoryFilter, () => {
   loadAssets({ ...currentTableOptions.value, page: 1 });
 });
 
-// Watch for route changes (if category might come from URL, though not explicitly in prompt)
 watch(() => route.fullPath, (newPath, oldPath) => {
     if (newPath === oldPath) return; 
     const newCategory = route.query.category || 'All';
@@ -322,11 +320,9 @@ watch(() => route.fullPath, (newPath, oldPath) => {
 }, { deep: true });
 
 
-// --- NEW Function to load categories ---
 async function loadCategories() {
   loadingCategories.value = true;
   try {
-    // This assumes an endpoint /api/assets/categories that returns { categories: ['Furniture', 'Medical', ...] }
     const { data, error } = await useMyFetch('/api/assets/categories');
     if (error.value) {
       throw new Error('Failed to load asset categories.');
@@ -334,27 +330,23 @@ async function loadCategories() {
     categories.value = data.value?.categories || [];
   } catch (e) {
     console.error("Category loading error:", e);
-    // Optionally show a toast, but gracefully hide the filter on error anyway
     $toast.fire({ title: e.message || 'Could not fetch categories.', icon: 'warning' });
-    categories.value = []; // Ensure it's an empty array on failure
+    categories.value = [];
   } finally {
     loadingCategories.value = false;
   }
 }
 
-// --- DATA LOADING (REVISED FOR SIMPLICITY) ---
 async function loadAssets(options) {
   loading.value = true;
-  currentTableOptions.value = options; // Store current options
-  const { page, itemsPerPage: rpp, sortBy } = options; // Added sortBy for completeness, though not explicitly used in current headers
+  currentTableOptions.value = options;
+  const { page, itemsPerPage: rpp, sortBy } = options;
 
-  // Only one set of query parameters is needed now
   const queryParams = {
     search: searchKey.value,
     page: page,
     itemsPerPage: rpp,
     category: categoryFilter.value === 'All' ? '' : categoryFilter.value,
-    // Add date filters
     start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
     end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
   };
@@ -364,19 +356,16 @@ async function loadAssets(options) {
       queryParams.sortOrder = sortBy[0].order;
   }
   
-  // Clean up undefined/null/empty string query params
   Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
 
   try {
-    // Only ONE API call is needed!
     const { data, error } = await useMyFetch('/api/assets', { query: queryParams });
 
     if (error.value) {
       throw new Error('Failed to load assets list.');
     }
 
-    // The data is already enriched by the server. No more client-side merging!
     assets.value = data.value?.assets || [];
     totalAssets.value = data.value?.totalAssets || 0;
 
@@ -390,26 +379,24 @@ async function loadAssets(options) {
   }
 }
 
-// --- Date Filter Functions ---
 const clearDateRange = () => {
   startDate.value = null;
   endDate.value = null;
-  selectedDateFilterPreset.value = null; // Clear preset when dates are cleared
+  selectedDateFilterPreset.value = null;
 };
 
 const applyDateFilters = () => {
-  // If manual dates are set or cleared, clear any active preset selection
   if ((startDate.value !== null || endDate.value !== null) && selectedDateFilterPreset.value !== null) {
       selectedDateFilterPreset.value = null;
   } else if (startDate.value === null && endDate.value === null) {
-      selectedDateFilterPreset.value = null; // Also clear if both are null
+      selectedDateFilterPreset.value = null;
   }
   loadAssets({ ...currentTableOptions.value, page: 1 });
 };
 
 const setDateRangePreset = (preset) => {
   const today = new Date();
-  today.setHours(0, 0, 0, 0); // Normalize to start of day
+  today.setHours(0, 0, 0, 0);
 
   let newStartDate = null;
   let newEndDate = null;
@@ -420,34 +407,27 @@ const setDateRangePreset = (preset) => {
       newEndDate = new Date(today); 
       break;
     case 'week':
-      // Start of the current week (Sunday)
       newStartDate = new Date(today);
       newStartDate.setDate(today.getDate() - today.getDay());
-      // End of the current week (Saturday)
       newEndDate = new Date(newStartDate);
       newEndDate.setDate(newStartDate.getDate() + 6);
       break;
     case 'month':
-      // Start of the current month
       newStartDate = new Date(today.getFullYear(), today.getMonth(), 1);
-      // End of the current month
-      newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0); // Last day of current month
+      newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       break;
     case 'year':
-      // Start of the current year
       newStartDate = new Date(today.getFullYear(), 0, 1);
-      // End of the current year
       newEndDate = new Date(today.getFullYear(), 11, 31);
       break;
   }
   startDate.value = newStartDate;
   endDate.value = newEndDate;
-  selectedDateFilterPreset.value = preset; // Keep preset active
+  selectedDateFilterPreset.value = preset;
   loadAssets({ ...currentTableOptions.value, page: 1 });
 };
 
 
-// Function to fetch all assets matching current filters for printing
 async function fetchAllAssetsForPrint() {
     try {
         const queryParams = {
@@ -455,7 +435,7 @@ async function fetchAllAssetsForPrint() {
             category: categoryFilter.value === 'All' ? '' : categoryFilter.value,
             start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
             end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
-            itemsPerPage: 999999 // Request a very high number of items to get all data
+            itemsPerPage: 999999
         };
         Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
@@ -472,7 +452,7 @@ async function fetchAllAssetsForPrint() {
 
 
 const openPrintDialog = async () => {
-  loading.value = true; // Show loading while fetching all data
+  loading.value = true;
   assetsForPrint.value = await fetchAllAssetsForPrint();
   loading.value = false;
 
@@ -494,6 +474,21 @@ const printContent = () => {
           <style>
             /* Basic print styles */
             body { font-family: sans-serif; margin: 20px; color: #333; }
+            .print-header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .print-logo {
+              max-width: 100px; /* Adjust size as needed */
+              height: auto;
+              display: block;
+              margin: 0 auto 10px auto; /* Center with some bottom margin */
+            }
+            .print-app-name {
+              font-size: 1.5em; /* Adjust size as needed */
+              font-weight: bold;
+              margin-bottom: 10px;
+            }
             h3 { text-align: center; margin-bottom: 20px; color: #333; }
             p { text-align: center; margin-bottom: 15px; color: #555; }
             .print-table {
@@ -521,12 +516,27 @@ const printContent = () => {
           </style>
         </head>
         <body>
+          <div class="print-header">
+            <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
+            <div class="print-app-name">B-Bud</div>
+          </div>
           ${printContentDiv.innerHTML}
         </body>
       </html>
     `);
     printWindow.document.close();
     printWindow.focus();
+
+    // Set the onafterprint event handler BEFORE calling print()
+    printWindow.onafterprint = () => {
+      // Small delay to ensure browser print dialog fully closes before trying to close the window
+      setTimeout(() => {
+        if (printWindow && !printWindow.closed) {
+          printWindow.close();
+        }
+      }, 100); // 100ms delay
+    };
+
     printWindow.print();
   } else {
     $toast.fire({ title: 'Print area not found.', icon: 'error' });
@@ -534,8 +544,6 @@ const printContent = () => {
 };
 
 
-// --- LIFECYCLE HOOK ---
-// Fetch categories when the component is mounted
 onMounted(() => {
   loadCategories();
 });

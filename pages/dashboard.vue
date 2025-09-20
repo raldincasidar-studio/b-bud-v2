@@ -1,13 +1,10 @@
 <template>
   <v-container class="my-12" role="main">
-    <div class="d-flex flex-column justify-center align-center mb-10" role="timer" aria-live="polite">
-      <!-- ACCESSIBILITY FIX: Changed h1 to a p tag to ensure only one h1 exists on the page. Screen readers can still identify it by its explicit label. -->
-      <p class="text-h1 mx-2" aria-label="Current time">
-        {{ formattedTime }}
-      </p>
-      <!-- ACCESSIBILITY FIX: Changed h2 to a p tag to maintain a logical heading order. -->
-      <p class="text-subtitle-1 mx-2" aria-label="Current date">
-        {{ formattedDate }}
+    <!-- REVISED: Logo is now centered with "B-bud" text below it. -->
+    <div class="d-flex flex-column justify-center align-center mb-10">
+      <v-img src="@/assets/img/logo.png" width="120" contain alt="B-bud Community Logo"></v-img>
+      <p class="text-h5 font-weight-bold mt-2 text-primary">
+        B-Bud
       </p>
     </div>
 
@@ -22,8 +19,17 @@
         </h2>
       </v-col>
       <v-col cols="auto">
-        <!-- ACCESSIBILITY FIX: Added a descriptive alt attribute for the image. -->
-        <v-img src="@/assets/img/logo.png" width="100" contain alt="Community Logo"></v-img>
+        <!-- REVISED: Timer is now on the right side, where the logo was, and is smaller. -->
+        <div class="text-right" role="timer" aria-live="polite">
+          <!-- ACCESSIBILITY FIX: Changed h1 to a p tag to ensure only one h1 exists on the page. Screen readers can still identify it by its explicit label. -->
+          <p class="text-h3 mx-2" aria-label="Current time">
+            {{ formattedTime }}
+          </p>
+          <!-- ACCESSIBILITY FIX: Changed h2 to a p tag to maintain a logical heading order. -->
+          <p class="text-subtitle-1 mx-2" aria-label="Current date">
+            {{ formattedDate }}
+          </p>
+        </div>
       </v-col>
     </v-row>
 

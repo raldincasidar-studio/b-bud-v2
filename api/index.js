@@ -12,7 +12,7 @@ const { MongoClient, ObjectId } = require("mongodb");
 const { GoogleGenAI, createUserContent, createPartFromUri, Type } = require('@google/genai');
 
 const MONGODB_URI = 'mongodb+srv://raldincasidar:dindin23@accounting-system.haaem.mongodb.net/?retryWrites=true&w=majority'
-const GEMINI_API_KEY = 'AIzaSyAH0ZrwBAzmxZItNI0i6HA90s3Cauju5VM'
+const GEMINI_API_KEY = 'AIzaSyALqIrMfrfpDN7CP7bp682FVKbdWUUeMcU'
 // --- SMTP Configuration ---
 const SMTP_HOST = process.env.SMTP_HOST || 'smtp.gmail.com';
 const SMTP_PORT = parseInt(process.env.SMTP_PORT || '465', 10);
@@ -708,7 +708,7 @@ const createResidentDocument = (data, isHead = false, headAddress = null) => {
     };
 };
 
-// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED
+// POST /api/residents - CREATE A NEW HOUSEHOLD (HEAD + MEMBERS) - UPDATED (birth_date not included for primary user)
 app.post('/api/residents', async (req, res) => {
     const dab = await db();
     const residentsCollection = dab.collection('residents');
@@ -722,26 +722,104 @@ app.post('/api/residents', async (req, res) => {
             const membersToCreate = headData.household_members_to_create || [];
 
             // --- Step 1: Validate and Prepare the Household Head ---
-            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password) {
-                throw new Error('Validation failed: Head requires first name, last_name, email, and password.');
-            }
-            // NEW FIELD: Validate type_of_household for the head
-            if (!headData.type_of_household) {
-                throw new Error('Validation failed: Type of household is required for the Household Head.');
+            if (!headData.first_name || !headData.last_name || !headData.email || !headData.password || !headData.date_of_birth) {
+                throw new Error('Validation failed: Head requires first name, last_name, email, password, and date of birth.');
             }
 
+            // Existing Email Check (already case-insensitive due to .toLowerCase())
             const existingEmail = await residentsCollection.findOne({ email: headData.email.toLowerCase() }, { session });
             if (existingEmail) {
                 throw new Error('Conflict: The email address for the Household Head is already in use.');
             }
 
+            // --- CURRENT DUPLICATE PRIMARY USER CHECK: Based on Name and MAIN Address Components ---
+            // Normalizing all relevant fields from incoming headData for consistent comparison.
+            const normalizedFirstName = headData.first_name.trim().toLowerCase();
+            const normalizedMiddleName = headData.middle_name ? headData.middle_name.trim().toLowerCase() : null;
+            const normalizedLastName = headData.last_name.trim().toLowerCase();
+            const normalizedSuffix = headData.suffix ? headData.suffix.trim().toLowerCase() : null;
+
+            const normalizedAddressHouseNumber = headData.address_house_number ? String(headData.address_house_number).trim().toLowerCase() : null;
+            const normalizedAddressStreet = headData.address_street.trim().toLowerCase();
+            const normalizedAddressSubdivisionZone = headData.address_subdivision_zone ? headData.address_subdivision_zone.trim().toLowerCase() : null;
+
+            let inputCityMunicipalityForComparison = headData.address_city_municipality.trim().toLowerCase();
+            const cityMatchCandidates = new Set([inputCityMunicipalityForComparison]);
+            if (inputCityMunicipalityForComparison.endsWith(' city')) {
+                cityMatchCandidates.add(inputCityMunicipalityForComparison.replace(/ city$/, ''));
+            } else {
+                cityMatchCandidates.add(inputCityMunicipalityForComparison + ' city');
+            }
+            if (inputCityMunicipalityForComparison === 'manila') {
+                cityMatchCandidates.add('manila city');
+            }
+
+            const queryConditions = {
+                first_name: { $regex: normalizedFirstName, $options: 'i' },
+                last_name: { $regex: normalizedLastName, $options: 'i' },
+                middle_name: normalizedMiddleName !== null
+                    ? { $regex: normalizedMiddleName, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                suffix: normalizedSuffix !== null
+                    ? { $regex: normalizedSuffix, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+
+                address_house_number: normalizedAddressHouseNumber !== null
+                    ? { $regex: normalizedAddressHouseNumber, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                address_street: { $regex: normalizedAddressStreet, $options: 'i' },
+                address_subdivision_zone: normalizedAddressSubdivisionZone !== null
+                    ? { $regex: normalizedAddressSubdivisionZone, $options: 'i' }
+                    : { $in: [null, "", undefined] },
+                address_city_municipality: {
+                    $in: Array.from(cityMatchCandidates).map(city => new RegExp(`^${city}$`, 'i'))
+                },
+
+                is_household_head: true,
+            };
+
+            const duplicatePrimaryUser = await residentsCollection.findOne(queryConditions, { session });
+
+            if (duplicatePrimaryUser) {
+                console.warn("Duplicate primary user found:", duplicatePrimaryUser);
+                throw new Error('Conflict: A primary household head with this name and main address already exists in the system.');
+            }
+            // --- END DUPLICATE PRIMARY USER CHECK ---
+
             const headResidentDocument = createResidentDocument(headData, true);
-            // Store head's email, contact_number, and password as pending
+
+            // --- Store Original Casing for Display ---
+            headResidentDocument.display_first_name = headData.first_name.trim();
+            headResidentDocument.display_middle_name = headData.middle_name ? headData.middle_name.trim() : null;
+            headResidentDocument.display_last_name = headData.last_name.trim();
+            headResidentDocument.display_suffix = headData.suffix ? headData.suffix.trim() : null;
+            // Also for address components that might be displayed with original casing
+            headResidentDocument.display_address_house_number = headData.address_house_number ? String(headData.address_house_number).trim() : null;
+            headResidentDocument.display_address_unit_room_apt_number = headData.address_unit_room_apt_number ? headData.address_unit_room_apt_number.trim() : null;
+            headResidentDocument.display_address_street = headData.address_street.trim();
+            headResidentDocument.display_address_subdivision_zone = headData.address_subdivision_zone ? headData.address_subdivision_zone.trim() : null;
+            headResidentDocument.display_address_city_municipality = headData.address_city_municipality.trim();
+            headResidentDocument.display_type_of_household = headData.type_of_household ? headData.type_of_household.trim() : null;
+
+
+            // --- Normalize fields for INSERTION (existing logic, for search/comparison) ---
+            headResidentDocument.first_name = normalizedFirstName; // Already normalized above
+            headResidentDocument.middle_name = normalizedMiddleName; // Already normalized above
+            headResidentDocument.last_name = normalizedLastName; // Already normalized above
+            headResidentDocument.suffix = normalizedSuffix; // Already normalized above
+
+            headResidentDocument.address_house_number = normalizedAddressHouseNumber; // Already normalized above
+            headResidentDocument.address_unit_room_apt_number = headData.address_unit_room_apt_number ? headData.address_unit_room_apt_number.trim().toLowerCase() : null; // Keep lowercase for consistency if unit number is searchable
+            headResidentDocument.address_street = normalizedAddressStreet; // Already normalized above
+            headResidentDocument.address_subdivision_zone = normalizedAddressSubdivisionZone; // Already normalized above
+            headResidentDocument.address_city_municipality = inputCityMunicipalityForComparison; // Already normalized above
+            headResidentDocument.type_of_household = headData.type_of_household ? headData.type_of_household.trim() : null; // Keep as is for internal use
+
             headResidentDocument.email = headData.email.toLowerCase();
             headResidentDocument.contact_number = headData.contact_number ? String(headData.contact_number).trim() : null;
-            headResidentDocument.pending_password_hash = md5(headData.password); // Store new password temporarily for the head's own activation
+            headResidentDocument.pending_password_hash = md5(headData.password);
 
-            // --- AI Validation for Proof of Residency (multiple files + authorization letter) ---
+            // AI Validation expects original casing, so pass headData directly
             if (!Array.isArray(headData.proof_of_residency_base64) || headData.proof_of_residency_base64.length === 0) {
               throw new Error('Validation failed: At least one proof of residency document is required.');
             }
@@ -751,21 +829,21 @@ app.post('/api/residents', async (req, res) => {
                 middle_name: headData.middle_name,
                 last_name: headData.last_name,
                 suffix: headData.suffix,
+                date_of_birth: headData.date_of_birth,
                 address_house_number: headData.address_house_number,
-                address_unit_room_apt_number: headData.address_unit_room_apt_number, // NEW FIELD
+                address_unit_room_apt_number: headData.address_unit_room_apt_number,
                 address_street: headData.address_street,
                 address_subdivision_zone: headData.address_subdivision_zone,
                 address_city_municipality: headData.address_city_municipality,
-                type_of_household: headData.type_of_household // NEW FIELD
+                type_of_household: headData.type_of_household
               },
-              headData.proof_of_residency_base64, // Array of base64 strings
-              headData.authorization_letter_base64 || null // Optional authorization letter
+              headData.proof_of_residency_base64,
+              headData.authorization_letter_base64 || null
             );
 
             if (!aiResidencyValidation.isValid) {
               throw new Error(`Proof of Residency AI validation failed: ${aiResidencyValidation.message}`);
             }
-
 
             // ... (validation for voter, PWD, Senior as existing, remains the same) ...
             if (headData.is_voter) {
@@ -780,31 +858,48 @@ app.post('/api/residents', async (req, res) => {
                     throw new Error(proofOfPWDResult.message);
                 }
             }
-            
+
             const headInsertResult = await residentsCollection.insertOne(headResidentDocument, { session });
             const insertedHeadId = headInsertResult.insertedId;
-            // Removed account_number assignment here.
 
-            newHouseholdHead = { _id: insertedHeadId, ...headResidentDocument };
+            // Include display names in the returned object
+            newHouseholdHead = {
+                _id: insertedHeadId,
+                ...headResidentDocument,
+                first_name: headResidentDocument.display_first_name, // Override with display name for immediate response
+                middle_name: headResidentDocument.display_middle_name,
+                last_name: headResidentDocument.display_last_name,
+                suffix: headResidentDocument.display_suffix
+            };
 
             // --- Step 2: Validate and Prepare Household Members ---
             const createdMemberIds = [];
-            // const processedEmails = new Set(headData.email ? [headData.email.toLowerCase()] : []); // This was unused
 
             for (const memberData of membersToCreate) {
-                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head) {
-                    throw new Error(`Validation failed for member: Missing required fields.`);
+                if (!memberData.first_name || !memberData.last_name || !memberData.relationship_to_head || !memberData.date_of_birth) {
+                    throw new Error(`Validation failed for member: Missing required fields (first_name, last_name, relationship_to_head, date_of_birth).`);
                 }
-                // const memberAge = calculateAge(memberData.date_of_birth); // Unused here
 
-                // When creating a member, createResidentDocument will copy address/household type from headData
-                const newMemberDoc = createResidentDocument(memberData, false, headData); // headData is passed here
+                const newMemberDoc = createResidentDocument(memberData, false, headData);
+
+                // --- Store Original Casing for Display for Members ---
+                newMemberDoc.display_first_name = memberData.first_name.trim();
+                newMemberDoc.display_middle_name = memberData.middle_name ? memberData.middle_name.trim() : null;
+                newMemberDoc.display_last_name = memberData.last_name.trim();
+                newMemberDoc.display_suffix = memberData.suffix ? memberData.suffix.trim() : null;
+
+                // Normalize member fields (existing logic for search/comparison)
+                newMemberDoc.first_name = memberData.first_name.trim().toLowerCase();
+                newMemberDoc.middle_name = memberData.middle_name ? memberData.middle_name.trim().toLowerCase() : null;
+                newMemberDoc.last_name = memberData.last_name.trim().toLowerCase();
+                newMemberDoc.suffix = memberData.suffix ? memberData.suffix.trim().toLowerCase() : null;
                 newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
                 newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
+
                 if (memberData.password) {
                     newMemberDoc.pending_password_hash = md5(memberData.password);
                 }
-                
+
                 // ... (validation for voter, PWD as existing, remains the same) ...
                 if (memberData.is_voter) {
                     const proofOfVoterResult = await validateProofOfVoter(memberData, memberData.voter_registration_proof_base64);
@@ -821,7 +916,6 @@ app.post('/api/residents', async (req, res) => {
 
                 const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
                 const insertedMemberId = memberInsertResult.insertedId;
-                // Removed account_number assignment here.
 
                 createdMemberIds.push(insertedMemberId);
             }
@@ -837,11 +931,10 @@ app.post('/api/residents', async (req, res) => {
             }
         }); // End of the transaction
 
-        // The audit log description below will also need to be adjusted as 'account_number' is not available in newHouseholdHead
         await createAuditLog({
           userId: newHouseholdHead._id.toString(),
-          userName: `${newHouseholdHead.first_name} ${newHouseholdHead.last_name}`,
-          description: `Resident '${newHouseholdHead.first_name} ${newHouseholdHead.last_name}' created a new household.`, // Simplified description
+          userName: `${newHouseholdHead.display_first_name} ${newHouseholdHead.display_last_name}`, // Use display name for audit log
+          description: `Resident '${newHouseholdHead.display_first_name} ${newHouseholdHead.display_last_name}' created a new household.`,
           action: "REGISTER",
           entityType: "Resident",
           entityId: newHouseholdHead._id.toString(),
@@ -849,19 +942,21 @@ app.post('/api/residents', async (req, res) => {
 
         res.status(201).json({
             message: 'Household registered successfully! All accounts are pending activation.',
-            resident: newHouseholdHead // The frontend will need to derive the account number from _id
+            resident: newHouseholdHead
         });
 
     } catch (error) {
         console.error("Error during household registration transaction:", error);
-        if (error.message.startsWith('Conflict:')) {
+        if (error.message.startsWith('Conflict: The email address')) {
             return res.status(409).json({ error: 'The email is already been registered.', message: error.message });
+        }
+        if (error.message.startsWith('Conflict: A primary household head with this name')) {
+            return res.status(409).json({ error: 'Duplicate Primary User', message: error.message });
         }
         if (error.message.startsWith('Validation failed:')) {
              return res.status(400).json({ error: 'Validation Error', message: error.message });
         }
         if (error.message.startsWith('Proof of Residency AI validation failed:')) {
-          // Special handling for AI validation errors
           return res.status(400).json({ error: 'AI Validation Error', message: error.message });
         }
         console.error('Mobile Registration error: ', error);
@@ -1040,6 +1135,8 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 }
             }
 
+            // createResidentDocument will copy address and type_of_household from householdHead
+            // Ensure createResidentDocument also handles initial date_created, date_updated if it's not passed
             const newMemberDoc = createResidentDocument(memberData, false, householdHead);
             newMemberDoc.email = memberData.email ? String(memberData.email).toLowerCase() : null;
             newMemberDoc.contact_number = memberData.contact_number ? String(memberData.contact_number).trim() : null;
@@ -1047,7 +1144,6 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 newMemberDoc.pending_password_hash = md5(memberData.password);
             }
             
-            newMemberDoc.proof_of_relationship_file = memberData.proof_of_relationship_file || null;
             newMemberDoc.proof_of_relationship_base64 = memberData.proof_of_relationship_base64 || null;
             
             if (memberData.is_voter) {
@@ -1063,29 +1159,37 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
                 }
             }
             // Add validation for senior citizen if needed
+            // Also add handling for senior_citizen_id and senior_citizen_card_file if coming from memberData
+            if (memberData.is_senior_citizen && (memberData.senior_citizen_id || memberData.senior_citizen_card_file)) {
+                // Add validation similar to PWD/Voter if applicable
+                newMemberDoc.senior_citizen_id = memberData.senior_citizen_id || null;
+                newMemberDoc.senior_citizen_card_base64 = memberData.senior_citizen_card_base64 || null;
+            }
+
 
             newMemberDoc.status = 'Pending';
             newMemberDoc.date_approved = null;
-            newMemberDoc.created_at = new Date();
-            newMemberDoc.updated_at = new Date();
+            // Changed from created_at/updated_at to date_created/date_updated for consistency
+            newMemberDoc.date_created = new Date();
+            newMemberDoc.date_updated = new Date();
 
             const memberInsertResult = await residentsCollection.insertOne(newMemberDoc, { session });
             newMemberId = memberInsertResult.insertedId;
-            // Removed account_number assignment here.
 
             await residentsCollection.updateOne(
                 { _id: new ObjectId(householdHeadId) },
-                { $push: { household_member_ids: newMemberId }, $set: { updated_at: new Date() } },
+                { $push: { household_member_ids: newMemberId }, 
+                  $set: { date_updated: new Date() } // IMPORTANT: Changed from updated_at to date_updated
+                },
                 { session }
             );
         });
 
         const headDetails = await residentsCollection.findOne({ _id: new ObjectId(householdHeadId) });
-        // The audit log description below will need to be adjusted as 'account_number' is not directly available
         await createAuditLog({
           userId: householdHeadId,
           userName: `${headDetails.first_name} ${headDetails.last_name}`,
-          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`, // Simplified description
+          description: `Added a new member, '${memberData.first_name} ${memberData.last_name}', to their household.`,
           action: "ADD_MEMBER",
           entityType: "Resident",
           entityId: newMemberId.toString(),
@@ -1346,7 +1450,7 @@ app.post('/api/residents/:householdHeadId/members', async (req, res) => {
 app.get('/api/residents', async (req, res) => {
   try {
     const {
-      search, status, is_voter, is_senior, is_pwd,
+      search, status, is_voter, is_senior, is_pwd, is_household_head, // ADDED is_household_head here
       occupation, minAge, maxAge, sortBy, sortOrder,
       start_date, end_date // <-- ADDED: Date range query parameters
     } = req.query;
@@ -1375,6 +1479,13 @@ app.get('/api/residents', async (req, res) => {
     if (is_pwd === 'true') filters.push({ is_pwd: true });
     if (is_senior === 'true') filters.push({ is_senior_citizen: true });
     if (occupation) filters.push({ occupation_status: occupation });
+
+    // --- ADDED: Household Role Filtering ---
+    if (is_household_head !== undefined) { // Check if the parameter is explicitly provided
+      // Convert string 'true'/'false' from query to boolean
+      filters.push({ is_household_head: is_household_head === 'true' });
+    }
+    // --- END ADDED Household Role Filtering ---
     
     if (minAge || maxAge) {
       const ageFilter = {};
@@ -2489,6 +2600,10 @@ app.get('/api/households', async (req, res) => {
   // Search (optional, can search by head's name or household number)
   const search = req.query.search || '';
 
+  // Sorting
+  const sortBy = req.query.sortBy || 'last_name'; // Default sort by last name
+  const sortOrder = req.query.sortOrder === 'desc' ? -1 : 1; // Default ascending
+
   const dab = await db();
   const residentsCollection = dab.collection('residents');
 
@@ -2502,34 +2617,83 @@ app.get('/api/households', async (req, res) => {
       query.$or = [
         { last_name: { $regex: searchRegex } },          // Search by head's last name
         { first_name: { $regex: searchRegex } },         // Search by head's first name
-        { address_house_number: { $regex: searchRegex } } // Search by household number
+        { address_house_number: { $regex: searchRegex } }, // Search by household number
+        { address_unit_room_apt_number: { $regex: searchRegex } }, // Search by unit number
+        { type_of_household: { $regex: searchRegex } },  // Search by type of household
+        { address_street: { $regex: searchRegex } },     // NEW: Search by street
+        { address_subdivision_zone: { $regex: searchRegex } }, // NEW: Search by subdivision/zone
+        { address_city_municipality: { $regex: searchRegex } } // NEW: Search by city/municipality
       ];
     }
+
+    // Define sort object dynamically
+    const sort = {};
+    if (sortBy) {
+        // Map frontend sort keys to backend field names if they differ
+        const backendSortKey = {
+            'head_date_approved': 'date_approved',
+            'head_date_updated': 'date_updated',
+            'head_full_name': 'last_name', // Sort by last name for full name column
+            'household_name': 'last_name' // Sort by last name for household name column
+            // Add other mappings if necessary, otherwise use sortBy directly
+        }[sortBy] || sortBy;
+        sort[backendSortKey] = sortOrder;
+        // If sorting by name-related fields, add a secondary sort for consistency
+        if (['last_name', 'first_name'].includes(backendSortKey)) {
+            sort['first_name'] = sortOrder; // Secondary sort for first name
+        }
+    } else {
+        // Default sort if no sortBy is provided
+        sort['last_name'] = 1;
+        sort['first_name'] = 1;
+    }
+
 
     // Fetch household heads with necessary fields for transformation
     const householdHeads = await residentsCollection
       .find(query)
       .project({ // Select only the fields needed
-        _id: 1, // ID of the household head (can be useful)
+        _id: 1,
         last_name: 1,
-        first_name: 1, // In case last_name is not unique for display
+        first_name: 1,
+        address_street: 1,            // NEW FIELD
+        address_subdivision_zone: 1,  // NEW FIELD
+        address_city_municipality: 1, // NEW FIELD
         address_house_number: 1,
-        household_member_ids: 1 // For counting members
+        household_member_ids: 1,
+        address_unit_room_apt_number: 1,
+        type_of_household: 1,
+        date_approved: 1,
+        date_updated: 1,
       })
       .skip(skip)
       .limit(itemsPerPage)
-      .sort({ last_name: 1, first_name: 1 }) // Sort by head's name
+      .sort(sort) // Apply dynamic sorting
       .toArray();
 
     // Transform the data
-    const formattedHouseholds = householdHeads.map(head => ({
-      household_id: head._id, // The ID of the resident who is the head
-      household_name: `${head.last_name}'s Household`,
-      household_number: head.address_house_number || 'N/A', // Use 'N/A' if not available
-      number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
-      head_first_name: head.first_name, // Include for clarity if needed
-      head_last_name: head.last_name,   // Include for clarity if needed
-    }));
+    const formattedHouseholds = householdHeads.map(head => {
+      const addressParts = [
+        head.address_house_number,
+        head.address_street,
+        head.address_subdivision_zone,
+        head.address_city_municipality,
+      ].filter(Boolean); // Filter out any null or empty parts
+
+      return {
+        household_id: head._id,
+        household_name: `${head.last_name}'s Household`,
+        household_number: head.address_house_number || 'N/A',
+        address: addressParts.join(', ') || 'N/A', // NEW Combined Address field
+        number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
+        head_first_name: head.first_name,
+        head_last_name: head.last_name,
+        head_address_unit_room_apt_number: head.address_unit_room_apt_number || 'N/A',
+        head_type_of_household: head.type_of_household || 'N/A',
+        head_date_approved: head.date_approved || null,
+        head_date_updated: head.date_updated || null,
+      };
+    });
 
     const totalHouseholds = await residentsCollection.countDocuments(query);
 
@@ -2632,24 +2796,215 @@ app.post('/api/residents/:id/members', async (req, res) => {
 
 
 
+// Ensure 'Type' is imported from your Google Generative AI setup if it's not globally available.
+// For example: const { GoogleGenerativeAI, Part, GenerativeModel, ChatSession, HarmBlockThreshold, HarmCategory } = require("@google/generative-ai");
+// const { Type } = require('@google/generative-ai'); // This is how you'd typically import Type.
+
+async function validateDocumentRequestDetails(ai, requestType, documentDetails, purpose) {
+  try {
+    const responseSchema = {
+        type: Type.OBJECT, // Assuming 'Type' is defined/imported from a schema library like @google/generative-ai
+        properties: {
+            isValid: {
+            type: Type.BOOLEAN,
+            description: "True if the document details and purpose are valid and consistent for the given request type, otherwise false.",
+            },
+            message: {
+            type: Type.STRING,
+            description: "A message explaining whether the details are valid or not, and the reason for the validation result.",
+            },
+        },
+        required: ["isValid", "message"],
+    };
+
+    const contents = [];
+
+    let promptText = `
+    Your task is to validate the provided document details (JSON payload) and purpose (string) against the specified request type.
+    Carefully analyze the 'details' object and the 'purpose' to ensure they are complete, consistent, and plausible *based on the specific requirements for the '${requestType}' document type*.
+
+    **Request Type:** ${requestType}
+    `;
+
+    // Add specific validation instructions based on requestType
+    if (requestType === 'Certificate of Cohabitation') {
+        promptText += `
+        **Specific Instructions for Certificate of Cohabitation:**
+        *   The 'details' object *must* contain 'male_partner_id', 'male_partner_name', 'male_partner_birthdate', 'female_partner_id', 'female_partner_name', 'female_partner_birthdate', and 'year_started_cohabiting'.
+        *   'male_partner_id' and 'female_partner_id' should be non-empty strings (e.g., MongoDB ObjectId strings).
+        *   'male_partner_name' and 'female_partner_name' should be non-empty strings representing full names.
+        *   'male_partner_birthdate' and 'female_partner_birthdate' should be valid dates in YYYY-MM-DD format (e.g., '1990-01-15'). They should represent a plausible age (e.g., at least 18 years old and not older than 120 years). Dates should not be in the future.
+        *   'year_started_cohabiting' should be a valid 4-digit year (e.g., '2010'). It must be numeric, not in the future, and not earlier than the birth year of both partners.
+        *   The 'purpose' should clearly relate to cohabitation (e.g., 'for legal purposes', 'for housing application', 'for SSS benefits', 'for school registration of child'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Clearance') {
+        promptText += `
+        **Specific Instructions for Barangay Clearance:**
+        *   The 'details' object *must* contain 'type_of_work', 'number_of_storeys', and 'purpose_of_clearance'. 'other_work' is optional.
+        *   'type_of_work' should be a descriptive string (e.g., 'sidewalk repair', 'drainage tapping', 'fence construction').
+        *   'number_of_storeys' should be a positive numeric value (e.g., '1', '2', '3') or '0' if it's a lot with no building.
+        *   'purpose_of_clearance' should be a descriptive string (e.g., 'for job application', 'for business registration', 'for school requirement').
+        *   'other_work' if present, should be a descriptive string.
+        *   The main 'purpose' field should be consistent with or an elaboration of 'purpose_of_clearance'. Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Business Clearance') {
+        promptText += `
+        **Specific Instructions for Barangay Business Clearance:**
+        *   The 'details' object *must* contain 'business_name' and 'nature_of_business'.
+        *   'business_name' should be the legitimate trade name of the business (e.g., 'JM Sari-Sari Store', 'Online Gadgets Hub').
+        *   'nature_of_business' should describe the type of business activity (e.g., 'retail', 'food service', 'online selling').
+        *   The 'purpose' should clearly state the reason for needing the business clearance (e.g., 'for DTI registration', 'for renewal of business permit', 'for mayor’s permit application'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Business Permit') {
+        promptText += `
+        **Specific Instructions for Barangay Business Permit:**
+        *   The 'details' object *must* contain 'business_name' and 'business_address'.
+        *   'business_name' should be the legitimate trade name.
+        *   'business_address' should be a valid, specific, and complete address within the barangay (e.g., '123 Main St, Zone 4, Barangay San Jose').
+        *   The 'purpose' should clearly state the reason for needing the business permit (e.g., 'for new business operation', 'for business expansion', 'to comply with local regulations'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Certification (First Time Jobseeker)') {
+        promptText += `
+        **Specific Instructions for Barangay Certification (First Time Jobseeker):**
+        *   The 'details' object *must* contain 'years_lived' and 'months_lived'.
+        *   'years_lived' and 'months_lived' should be non-negative numeric values (e.g., '5', '10', '0') representing the duration of residency.
+        *   The 'purpose' should clearly state its relevance to job seeking (e.g., 'for employment', 'for first job application', 'to avail of DOLE benefits'). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Certificate of Indigency') {
+        promptText += `
+        **Specific Instructions for Certificate of Indigency:**
+        *   The 'details' object *must* contain 'medical_educational_financial'.
+        *   'medical_educational_financial' must be one of 'Medical', 'Educational', or 'Financial'.
+        *   The 'purpose' should specifically elaborate on the selected category (e.g., 'for medical assistance for child' if 'Medical' is chosen, 'for school enrollment of sibling' if 'Educational' is chosen, 'for financial aid due to unemployment' if 'Financial' is chosen). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay BADAC Certificate') {
+        promptText += `
+        **Specific Instructions for Barangay BADAC Certificate:**
+        *   The 'details' object *must* contain 'badac_certificate'.
+        *   'badac_certificate' must be one of 'PNP Application', 'School Requirement', 'Job Application', 'Board Exam', 'Others'.
+        *   The 'purpose' should specifically elaborate on the selected category (e.g., 'for PNP entrance exam application' if 'PNP Application' is chosen, 'for school admission' if 'School Requirement' is chosen). Ensure it's not gibberish.
+        `;
+    } else if (requestType === 'Barangay Permit (for installations)') {
+        promptText += `
+        **Specific Instructions for Barangay Permit (for installations):**
+        *   The 'details' object *must* contain 'installation_construction_repair' and 'project_site'.
+        *   'installation_construction_repair' should specify the type of activity (e.g., 'septic tank installation', 'house renovation', 'electrical wiring repair').
+        *   'project_site' should describe the specific location of the project (e.g., 'Lot 1, Block 2, Phase 3, Greenview Subdivision').
+        *   The 'purpose' should clearly state the reason for the permit (e.g., 'for house construction', 'for water line repair', 'to install new internet connection'). Ensure it's not gibberish.
+        `;
+    }
+    // NEW & UPDATED: Explicit instructions for documents with minimal 'details'
+    else if (requestType === 'Certificate of Oneness' || requestType === 'Certificate of Good Moral' ||
+             requestType === 'Certificate of Solo Parent' || requestType === 'Certificate of Residency') {
+        promptText += `
+        **Specific Instructions for '${requestType}':**
+        *   The 'details' object is expected to be *empty or contain no relevant fields* for this request type. If the 'details' object contains any unexpected fields, it should be considered invalid.
+        *   The 'purpose' is the primary field for validation. It should be a non-empty, descriptive string that clearly states the reason for needing the '${requestType}'.
+        *   For example:
+            *   **Certificate of Oneness:** 'For records purposes' or 'Proof of singleness for legal documents'.
+            *   **Certificate of Good Moral:** 'For job application requirements', 'For school admission', 'For a character reference'.
+            *   **Certificate of Solo Parent:** 'To avail solo parent benefits', 'For legal recognition as solo parent'.
+            *   **Certificate of Residency:** 'Proof of address for utility application', 'For school enrollment', 'For local government assistance'.
+        *   Ensure the 'purpose' does not contain gibberish or nonsensical input.
+        `;
+    }
+    // General fallback for any other/unknown request type
+    else {
+        promptText += `
+        **General Instructions for Other/Unknown Request Type:**
+        *   The 'details' object should be carefully examined. If it contains fields, they should appear logical and consistent with a generic document request, and should not be empty if present.
+        *   The 'purpose' must be a non-empty, descriptive string that makes general sense for a document request. It should not contain gibberish.
+        `;
+    }
+
+    promptText += `
+    **General Validation Rules (Applicable to all types, in conjunction with specific instructions):**
+    *   **Field Presence and Relevance:** Only validate fields that are explicitly required by the 'request_type's specific instructions, or fields that are *present* in the 'documentDetails' payload and are logically relevant to the 'request_type'. Do not flag missing fields if the specific instructions state the 'details' object is expected to be empty or minimal.
+    *   **Non-empty Check:** All required fields (as per specific instructions) and any provided fields in 'documentDetails' (if relevant) must not be empty (empty string, null, or undefined).
+    *   **Numeric Fields:** Numeric fields (like years, months, storeys) should contain valid non-negative integer numbers.
+    *   **Date Fields:** Date fields should strictly adhere to the YYYY-MM-DD format, represent a plausible real-world date, and should not be in the future.
+    *   **ID/Name Fields:** ID fields (like male_partner_id) and name fields should be non-empty strings.
+    *   **Purpose Quality:** The 'purpose' field should be descriptive, coherent, and logically consistent with the 'request_type'. It must not be gibberish, random characters, or extremely short non-descriptive text.
+
+    Return a JSON object with "isValid" (boolean) and "message" (string).
+    *   Keep the message concise but comprehensive, explaining the outcome.
+    *   Example valid response: \`{"isValid": true, "message": "All details validated successfully for Certificate of Good Moral. Purpose is descriptive."}\`
+    *   Example invalid response: \`{"isValid": false, "message": "For Certificate of Good Moral, the 'details' object should be empty, but it contains unexpected fields. Also, the purpose is gibberish."}\`
+    *   Example invalid response: \`{"isValid": false, "message": "Missing 'male_partner_birthdate' for Certificate of Cohabitation. Birthdate must be in YYYY-MM-DD format."}\`
+    `;
+
+    contents.push({ text: promptText });
+    contents.push({ text: `Provided Document Details JSON Payload: ${JSON.stringify(documentDetails)}` });
+    contents.push({ text: `Provided Purpose Text: ${purpose}` });
+
+    console.log("Generating content from the model for Document Request Details validation using 'gemini-2.5-flash'...");
+    const result = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: contents,
+        generationConfig: {
+            responseMimeType: "application/json",
+            responseSchema: responseSchema
+        }
+    });
+
+    console.log("Full Gemini AI result object (Document Details):", JSON.stringify(result, null, 2));
+
+    let rawResponseTextFromAI;
+    let finalParsedJSON;
+
+    if (result && result.candidates && result.candidates.length > 0) {
+        const firstCandidate = result.candidates[0];
+        if (firstCandidate.content && firstCandidate.content.parts && firstCandidate.content.parts.length > 0) {
+            rawResponseTextFromAI = firstCandidate.content.parts[0].text;
+        }
+    }
+
+    if (!rawResponseTextFromAI) {
+        console.error("Gemini AI did not return expected text content for document details validation.");
+        return { isValid: false, message: 'AI validation service received an incomplete or malformed response from Gemini for document details. Please check API key, model availability, and network.' };
+    }
+
+    console.log("Raw response text from Gemini (Document Details):", rawResponseTextFromAI);
+
+    // Attempt to extract JSON from markdown code block, or parse as-is
+    const jsonMatch = rawResponseTextFromAI.match(/```json\n([\s\S]*?)\n```/);
+    if (jsonMatch && jsonMatch[1]) {
+        finalParsedJSON = JSON.parse(jsonMatch[1]);
+    } else {
+        console.warn("Gemini AI response for document details was not wrapped in ```json```. Attempting to parse as-is.");
+        finalParsedJSON = JSON.parse(rawResponseTextFromAI);
+    }
+
+    console.log("Parsed JSON from Gemini for Document Request Details validation:", finalParsedJSON);
+
+    return finalParsedJSON;
+
+  } catch (error) {
+    console.error("An error occurred during document request details validation by AI:", error);
+    return { isValid: false, message: 'AI validation service encountered an error during document details validation. Please try again. Details: ' + error.message };
+  }
+}
+
+
 
 // ======================= DOCUMENT REQUEST ======================= //
 
 // ADD NEW DOCUMENT (POST)
-// POST /api/document-requests - ADD NEW DOCUMENT REQUEST (Handles new 'details' object and 'processed_by_personnel')
+// POST /api/document-requests - ADD NEW DOCUMENT REQUEST
 app.post('/api/document-requests', async (req, res) => {
-  const dab = await db();
+  const dab = await db(); // Assuming db() connects to your database
   const {
     requestor_resident_id,
-    processed_by_personnel,
+    processed_by_personnel, // This might be provided by the frontend or defaulted in backend
     request_type,
     purpose,
-    details,
+    details, // This is the JSON format payload from the user
   } = req.body;
 
-  // --- 2. UPDATE VALIDATION ---
-  if (!requestor_resident_id || !request_type ) {
-    return res.status(400).json({ error: 'Missing required fields: requestor and type are required.' });
+  // --- 2. Initial Basic Validation ---
+  // Added 'purpose' as a generally required field, unless specifically handled by AI for 'Certificate of Oneness'
+  if (!requestor_resident_id || !request_type || (request_type !== 'Certificate of Oneness' && !purpose)) {
+    return res.status(400).json({ error: 'Missing required fields: requestor, document type, and purpose (if applicable).' });
   }
   if (!ObjectId.isValid(requestor_resident_id)) {
     return res.status(400).json({ error: 'Invalid requestor resident ID format.' });
@@ -2659,25 +3014,38 @@ app.post('/api/document-requests', async (req, res) => {
     const residentsCollection = dab.collection('residents');
     const requestsCollection = dab.collection('document_requests');
 
-    // --- ADDED: Account Status Check ---
+    // --- Account Status Check (Existing) ---
     await checkResidentAccountStatus(requestor_resident_id, dab);
-    // --- END ADDED ---
 
-    // Fetch the requestor's name for a more descriptive log
+    // Fetch the requestor's name for a more descriptive audit log
     const requestor = await residentsCollection.findOne({ _id: new ObjectId(requestor_resident_id) });
     const requestorName = requestor ? `${requestor.first_name} ${requestor.last_name}`.trim() : 'an unknown resident';
+
+    // --- NEW: AI Validation for Document Request Details ---
+    console.log(`[AI PRE-ASSESSMENT] Performing AI validation for document request details for type: '${request_type}'`);
+    const aiValidationResult = await validateDocumentRequestDetails(ai, request_type, details || {}, purpose || ''); // Pass 'ai' instance and ensure details/purpose are not null
+
+    if (!aiValidationResult.isValid) {
+      console.warn(`[AI PRE-ASSESSMENT] AI validation failed for document request type '${request_type}': ${aiValidationResult.message}`);
+      return res.status(400).json({ // Use 400 Bad Request or 422 Unprocessable Entity
+        error: 'Document details failed AI pre-assessment.',
+        message: aiValidationResult.message
+      });
+    }
+    console.log(`[AI PRE-ASSESSMENT] AI validation successful for document request type '${request_type}'. Message: ${aiValidationResult.message}`);
+    // --- END NEW AI Validation ---
 
     // Generate a unique, user-friendly reference number
     const customRefNo = await generateUniqueReference(requestsCollection);
 
-    // --- 3. ADD THE NEW FIELD TO THE DATABASE OBJECT ---
     const newRequest = {
       ref_no: customRefNo,
       requestor_resident_id: new ObjectId(requestor_resident_id),
-      processed_by_personnel: String(processed_by_personnel).trim(), // Save the personnel's name
+      // Default to 'Self-Requested' or 'System' if processed_by_personnel is not explicitly provided by an admin/personnel context
+      processed_by_personnel: String(processed_by_personnel || 'Self-Requested').trim(),
       request_type: String(request_type).trim(),
       purpose: String(purpose).trim(),
-      details: details || {},
+      details: details || {}, // Ensure details is an object
       document_status: "Pending",
       created_at: new Date(),
       updated_at: new Date(),
@@ -2685,37 +3053,36 @@ app.post('/api/document-requests', async (req, res) => {
 
     const result = await requestsCollection.insertOne(newRequest);
 
-    // --- 4. UPDATE THE AUDIT LOG DESCRIPTION ---
+    // --- Audit Log Update ---
     await createAuditLog({
-        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was processed by ${processed_by_personnel}.`,
+        description: `New document request '${request_type}' (Ref: ${customRefNo}) for resident ${requestorName} was submitted. AI pre-assessment result: ${aiValidationResult.message}`,
         action: "CREATE",
         entityType: "DocumentRequest",
         entityId: result.insertedId.toString(),
-        userId: requestor ? requestor._id : null,
+        userId: requestor ? requestor._id.toString() : null, // Ensure userId is string
         userName: requestorName,
     }, req);
 
-    // Update the response to the frontend
     res.status(201).json({
       message: 'Document request added successfully',
       requestId: result.insertedId,
-      refNo: customRefNo
+      refNo: customRefNo,
+      aiValidationMessage: aiValidationResult.message // Optionally send AI message to frontend
     });
 
   } catch (error) {
     console.error('Error adding document request:', error);
-    // --- ADDED: Specific error handling for account status restrictions ---
+    // Specific error handling for account status restrictions (Existing)
     if (error.message.includes("account is pending approval") ||
         error.message.includes("account has been declined") ||
         error.message.includes("account has been permanently deactivated") ||
         error.message.includes("account is currently On Hold/Deactivated")) {
-      return res.status(403).json({ // 403 Forbidden is appropriate for access denied
-        error: 'Action Restricted. Account status On Hold / Deactivated.',
+      return res.status(403).json({
+        error: 'Action Restricted.',
         message: error.message
       });
     }
-    // --- END ADDED ---
-    res.status(500).json({ error: 'Error adding document request.' });
+    res.status(500).json({ error: 'Error adding document request.', message: error.message || 'An internal server error occurred.' });
   }
 });
 
@@ -2753,7 +3120,8 @@ app.get('/api/documents', async (req, res) => {
         description: 1,
         PurposeOfDocument: 1,
         ContactNumber: 1,
-        action: { $ifNull: [ "$action", "" ] }
+        action: { $ifNull: [ "$action", "" ] },
+        date_added: 1
       }
     })
     .sort({ date_added: -1 })
@@ -2957,47 +3325,88 @@ app.post('/api/admins', async (req, res) => {
 
 // GET ALL ADMINS (GET)
 app.get('/api/admins', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    try {
+        const dab = await db(); // Assuming db() connects to your MongoDB
+        const collection = dab.collection('admins'); // Assuming 'admins' collection
 
-  const dab = await db();
-  const adminsCollection = dab.collection('admins');
+        const {
+            search,
+            page: reqPage,
+            itemsPerPage: reqItemsPerPage,
+            sortBy,
+            sortOrder,
+            start_date, // NEW: Date range start
+            end_date    // NEW: Date range end
+        } = req.query;
 
-  // UPDATED: Search query to use the new 'fullname' field
-  const query = search ? {
-    $or: [
-      { username: { $regex: new RegExp(search, 'i') } },
-      { name: { $regex: new RegExp(search, 'i') } }, // Search the combined name field
-      { email: { $regex: new RegExp(search, 'i') } },
-      { role: { $regex: new RegExp(search, 'i') } },
-    ]
-  } : {};
+        const page = parseInt(reqPage) || 1;
+        const itemsPerPage = parseInt(reqItemsPerPage) || 10;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
-  // UPDATED: Projection to return the new name fields
-  const admins = await adminsCollection.find(query, {
-    projection: {
-      username: 1,
-      firstname: 1,
-      middlename: 1,
-      lastname: 1,
-      name: 1, // Return the full name for display
-      email: 1,
-      role: 1,
-      _id: 1,
-      createdAt: 1,
-      action: { $ifNull: ["$action", ""] }
+        const filters = [];
+
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            filters.push({
+                $or: [
+                    { name: searchRegex },
+                    { username: searchRegex },
+                    { email: searchRegex },
+                    { role: searchRegex }
+                ]
+            });
+        }
+
+        // --- NEW: Add Date Range Filtering for 'createdAt' ---
+        if (start_date || end_date) {
+            const createdAtFilter = {};
+            if (start_date) {
+                createdAtFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+            }
+            if (end_date) {
+                createdAtFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+            }
+            if (Object.keys(createdAtFilter).length > 0) {
+                filters.push({ createdAt: createdAtFilter });
+            }
+        }
+        // --- END NEW Date Range Filtering ---
+
+        const finalQuery = filters.length > 0 ? { $and: filters } : {};
+
+        let sortOptions = { createdAt: -1 }; // Default sort by creation date descending
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
+
+        const admins = await collection.find(finalQuery)
+            .project({ // Select only necessary fields
+                name: 1,
+                username: 1,
+                email: 1,
+                role: 1,
+                createdAt: 1,
+                _id: 1
+            })
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        const totalAdmins = await collection.countDocuments(finalQuery);
+
+        res.json({
+            admins: admins,
+            totalAdmins: totalAdmins,
+            page: page,
+            itemsPerPage: itemsPerPage,
+            totalPages: Math.ceil(totalAdmins / itemsPerPage)
+        });
+
+    } catch (error) {
+        console.error("Error fetching admins:", error);
+        res.status(500).json({ error: 'Failed to fetch administrators.' });
     }
-  })
-    .skip((page - 1) * itemsPerPage)
-    .limit(itemsPerPage)
-    .toArray();
-
-  const totalAdmins = await adminsCollection.countDocuments(query);
-  res.json({
-    admins: admins,
-    totalAdmins: totalAdmins
-  });
 });
 
 // GET ADMIN BY ID (GET)
@@ -3222,12 +3631,14 @@ app.get('/api/barangay-officials', async (req, res) => {
             status: statusFilter,
             position: positionFilter,
             sortBy,
-            sortOrder
+            sortOrder,
+            term_start_gte, // NEW: Term start greater than or equal to
+            term_end_lte    // NEW: Term end less than or equal to
         } = req.query;
 
         const page = parseInt(req.query.page) || 1;
         const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-        const skip = (page - 1) * itemsPerPage;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
         // --- 2. (Optional but Recommended) Automatic Status Update ---
         // This ensures the data is always fresh before querying.
@@ -3237,9 +3648,16 @@ app.get('/api/barangay-officials', async (req, res) => {
             { status: 'Active', term_end: { $lt: currentDate } },
             { $set: { status: 'Inactive' } }
         );
-        // Set to 'Active' if they are within their term but still 'Inactive'
+        // Set to 'Active' if they are within their term (term_start <= now and term_end >= now or term_end is null)
         await collection.updateMany(
-            { status: 'Inactive', term_start: { $lte: currentDate }, term_end: { $gte: currentDate } },
+            { 
+                status: 'Inactive', 
+                term_start: { $lte: currentDate }, 
+                $or: [
+                    { term_end: { $gte: currentDate } },
+                    { term_end: null } // Officials with no end date are considered active
+                ]
+            },
             { $set: { status: 'Active' } }
         );
 
@@ -3247,10 +3665,10 @@ app.get('/api/barangay-officials', async (req, res) => {
         let query = {};
         const conditions = [];
 
-        if (statusFilter) {
+        if (statusFilter && statusFilter !== 'All') { // Assuming 'All' means no filter
             conditions.push({ status: statusFilter });
         }
-        if (positionFilter) {
+        if (positionFilter && positionFilter !== 'All') { // Assuming 'All' means no filter
             conditions.push({ position: positionFilter });
         }
         if (search) {
@@ -3263,6 +3681,27 @@ app.get('/api/barangay-officials', async (req, res) => {
                 ]
             });
         }
+        
+        // --- NEW: Add Term Date Range Filtering Conditions ---
+        if (term_start_gte) {
+            conditions.push({ term_start: { $gte: new Date(term_start_gte) } });
+        }
+        if (term_end_lte) {
+            // For term_end_lte, we want officials whose term ends on or before the specified date.
+            // We also need to consider officials whose term_end is null (representing 'Present' or indefinite).
+            // If term_end_lte is specified, it generally implies filtering for terms that have a defined end
+            // within that boundary. To include 'Present' officials only if their start date falls within
+            // the early part of the range, or if the end date is not explicitly bounded by term_end_lte,
+            // the logic can get complex.
+            //
+            // For simplicity and direct interpretation of "term_end_lte":
+            // We filter for officials whose 'term_end' is less than or equal to the provided date.
+            // This will exclude 'Present' officials (term_end: null) when term_end_lte is set,
+            // as 'null' is not <= a specific date. This seems to align with expecting a bounded term.
+            conditions.push({ term_end: { $lte: new Date(term_end_lte) } });
+        }
+        // --- END NEW Term Date Range Filtering Conditions ---
+
         if (conditions.length > 0) {
             query = { $and: conditions };
         }
@@ -3270,13 +3709,19 @@ app.get('/api/barangay-officials', async (req, res) => {
         // --- 4. Define Sorting Options ---
         let sortOptions = { term_start: -1 }; // Default sort: newest term first
         if (sortBy) {
-            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+            // Special handling for 'name' sort if it's a concatenated field
+            if (sortBy === 'name') {
+              sortOptions = { last_name: sortOrder === 'desc' ? -1 : 1, first_name: sortOrder === 'desc' ? -1 : 1 };
+            } else {
+              sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+            }
         }
 
         // --- 5. Fetch Paginated Data ---
         const officials = await collection.find(query)
             .project({ // Select only necessary fields for the list view
                 first_name: 1,
+                middle_name: 1, // Added middle_name for full name construction
                 last_name: 1,
                 position: 1,
                 status: 1,
@@ -3295,7 +3740,7 @@ app.get('/api/barangay-officials', async (req, res) => {
         // --- 7. Send the Response ---
         res.json({
             officials,
-            total: totalOfficials,
+            totalOfficials: totalOfficials, // Renamed 'total' to 'totalOfficials' for consistency with frontend
             page,
             itemsPerPage,
             totalPages: Math.ceil(totalOfficials / itemsPerPage)
@@ -3598,50 +4043,76 @@ async function createNotification(dbInstance, notificationData) {
 
 // =================== NOTIFICATION MODULE CRUD =========================== //
 
-// GET ALL NOTIFICATIONS (Admin view - with search, pagination, and type filter)
+// GET ALL NOTIFICATIONS (GET) - Updated to handle filters and DATE RANGE
 app.get('/api/notifications', async (req, res) => {
-  const search = req.query.search || '';
-  const page = parseInt(req.query.page) || 1;
-  const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
-  const typeFilter = req.query.type || '';
-  const skip = (page - 1) * itemsPerPage;
-
   try {
-    const dab = await db();
-    const notificationsCollection = dab.collection('notifications');
+    const {
+      search, type, sortBy, sortOrder,
+      start_date, end_date // ADDED: Date range query parameters
+    } = req.query;
+    
+    const page = parseInt(req.query.page) || 1;
+    const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
+    const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; 
 
-    let query = {};
-    const andConditions = [];
+    const dab = await db();
+    const notificationsCollection = dab.collection('notifications'); // Assuming 'notifications' collection
+
+    const filters = [];
+
+    if (type) {
+      filters.push({ type: type });
+    }
+
+    // --- ADDED: Date Range Filtering for 'date' field ---
+    // Assuming 'date' in your notification documents represents the effective date
+    if (start_date || end_date) {
+      const dateFilter = {};
+      if (start_date) {
+        dateFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+      }
+      if (end_date) {
+        dateFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+      }
+      if (Object.keys(dateFilter).length > 0) {
+        filters.push({ date: dateFilter }); 
+      }
+    }
+    // --- END ADDED Date Range Filtering ---
 
     if (search) {
-      const searchRegex = new RegExp(search, 'i');
-      andConditions.push({
+      const searchRegex = new RegExp(search.trim(), 'i');
+      filters.push({
         $or: [
-          { name: { $regex: searchRegex } },
-          { content: { $regex: searchRegex } },
-          { by: { $regex: searchRegex } },
-          { type: { $regex: searchRegex } },
+          { name: searchRegex },
+          { content: searchRegex },
+          { by: searchRegex }, // Assuming 'by' is the author field
+          // Add other searchable fields if applicable
         ],
       });
     }
 
-    // UPDATED: Aligned types with frontend
-    if (typeFilter && ['News', 'Events', 'Alert'].includes(typeFilter)) {
-      andConditions.push({ type: typeFilter });
-    }
+    const finalQuery = filters.length > 0 ? { $and: filters } : {};
 
-    if (andConditions.length > 0) {
-      query = { $and: andConditions };
+    let sortOptions = { date: -1 }; // Default sort by date descending (from 'Effective Date')
+    if (sortBy) {
+        sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
     }
-
+    
+    const projection = {
+        name: 1, type: 1, content: 1, target_audience: 1, recipients: 1,
+        date: 1, by: 1, _id: 1,
+    };
+    
     const notifications = await notificationsCollection
-      .find(query)
-      .sort({ date: -1 })
+      .find(finalQuery)
+      .project(projection)
+      .sort(sortOptions)
       .skip(skip)
       .limit(itemsPerPage)
       .toArray();
 
-    const totalNotifications = await notificationsCollection.countDocuments(query);
+    const totalNotifications = await notificationsCollection.countDocuments(finalQuery);
 
     res.json({
       notifications: notifications,
@@ -3650,6 +4121,7 @@ app.get('/api/notifications', async (req, res) => {
       itemsPerPage: itemsPerPage,
       totalPages: Math.ceil(totalNotifications / itemsPerPage),
     });
+
   } catch (error) {
     console.error("Error fetching notifications:", error);
     res.status(500).json({ error: "Failed to fetch notifications", message: error.message });
@@ -5077,11 +5549,11 @@ app.get('/api/complaints', async (req, res) => {
   }
 });
 
-// GET COMPLAINTS FOR A SPECIFIC RESIDENT
+// backend: // GET COMPLAINTS FOR A SPECIFIC RESIDENT
 app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
   const { residentId } = req.params;
   const search = req.query.search || '';
-  const status = req.query.status || ''; // <-- ADDED: Read the status query parameter
+  const status = req.query.status || ''; // Status will be '' if frontend sends no status (for 'All')
   const page = parseInt(req.query.page) || 1;
   const itemsPerPage = parseInt(req.query.itemsPerPage) || 10;
   const skip = (page - 1) * itemsPerPage;
@@ -5095,46 +5567,43 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     const dab = await db();
     const collection = dab.collection('complaints');
 
-    // Build the initial match query for the complainant's resident ID
-    let finalMatchQuery = { complainant_resident_id: residentObjectId };
+    // Start with the mandatory condition for the complainant's resident ID
+    let matchConditions = [{ complainant_resident_id: residentObjectId }];
 
-    // Add status filter if a status is provided (and it's not 'All' which results in undefined on frontend)
-    if (status) {
-        finalMatchQuery.status = status;
+    // Add status filter if a specific status is provided AND it's not 'All'
+    if (status && status !== 'All') { 
+        // --- FIX STARTS HERE ---
+        // Change from $regex to exact match for status
+        matchConditions.push({ status: status }); 
+        // --- FIX ENDS HERE ---
     }
 
     // Add search filter if a search term is provided
     if (search) {
-        const searchRegex = new RegExp(search.trim(), 'i');
+        const searchRegex = new RegExp(search.trim(), 'i'); // Case-insensitive search
         const searchCriteria = [
             { ref_no: { $regex: searchRegex } },
             { person_complained_against_name: { $regex: searchRegex } },
             { "person_complained_details.first_name": { $regex: searchRegex } },
             { "person_complained_details.last_name": { $regex: searchRegex } },
-            { status: { $regex: searchRegex } }, // Also search within status for flexibility
+            { status: { $regex: searchRegex } }, // Allow searching within status text
             { notes_description: { $regex: searchRegex } },
-            { category: { $regex: searchRegex } }, // Added category to search
+            { category: { $regex: searchRegex } },
         ];
-        
-        // If we already have filters (like status), combine with $and
-        if (finalMatchQuery.status) {
-            finalMatchQuery = {
-                $and: [
-                    { complainant_resident_id: residentObjectId },
-                    { status: finalMatchQuery.status },
-                    { $or: searchCriteria }
-                ]
-            };
-        } else {
-            // No specific status filter, just combine resident ID and search
-            finalMatchQuery = {
-                $and: [
-                    { complainant_resident_id: residentObjectId },
-                    { $or: searchCriteria }
-                ]
-            };
-        }
+        matchConditions.push({ $or: searchCriteria });
     }
+
+    // Construct the final $match query
+    let finalMatchQuery = {};
+    if (matchConditions.length === 1) {
+        // If only the resident ID condition exists
+        finalMatchQuery = matchConditions[0];
+    } else if (matchConditions.length > 1) {
+        // If multiple conditions exist (resident ID + status, or resident ID + search, or all three)
+        finalMatchQuery = { $and: matchConditions };
+    }
+    // Note: matchConditions will always have at least one element (complainant_resident_id),
+    // so finalMatchQuery will always be correctly constructed.
 
     const aggregationPipeline = [
       { $match: finalMatchQuery }, // Use the correctly constructed finalMatchQuery
@@ -5201,7 +5670,6 @@ app.get('/api/complaints/by-resident/:residentId', async (req, res) => {
     res.status(500).json({ error: "Failed to fetch complaints for this resident." });
   }
 });
-
 
 // GET COMPLAINT REQUEST BY ID (GET)
 app.get('/api/complaints/:id', async (req, res) => {
@@ -6833,59 +7301,89 @@ async function createAuditLog(logData, req = null) {
 
 // ======================= AUDIT LOGS ======================= //
 
-// GET /api/audit-logs
+// GET ALL AUDIT LOGS
 app.get('/api/audit-logs', async (req, res) => {
-  try {
-    const {
-      search,
-      page = 1,
-      itemsPerPage = 10,
-      sortBy,
-      sortOrder
-    } = req.query;
+    try {
+        const dab = await db(); // Assuming db() connects to your MongoDB
+        const collection = dab.collection('audit_logs'); // Assuming 'audit_logs' collection
 
-    const skip = (parseInt(page) - 1) * parseInt(itemsPerPage);
-    const limit = parseInt(itemsPerPage);
+        const {
+            search,
+            page: reqPage,
+            itemsPerPage: reqItemsPerPage,
+            sortBy,
+            sortOrder,
+            start_date, // NEW: Date range start
+            end_date    // NEW: Date range end
+        } = req.query;
 
-    const dab = await db();
-    const collection = dab.collection('audit_logs');
+        const page = parseInt(reqPage) || 1;
+        const itemsPerPage = parseInt(reqItemsPerPage) || 10;
+        const skip = (itemsPerPage > 100000) ? 0 : (page - 1) * itemsPerPage; // Handle "print all" scenario
 
-    let query = {};
-    if (search) {
-      const searchRegex = new RegExp(search.trim(), 'i');
-      query = {
-        $or: [
-          { description: searchRegex },
-          { user_name: searchRegex },
-          { action: searchRegex },
-          { entityType: searchRegex }
-        ]
-      };
+        const filters = [];
+
+        if (search) {
+            const searchRegex = new RegExp(search.trim(), 'i');
+            filters.push({
+                $or: [
+                    { description: searchRegex },
+                    { user_name: searchRegex },
+                    { ref_no: searchRegex }
+                    // Add other searchable fields if applicable
+                ]
+            });
+        }
+
+        // --- NEW: Add Date Range Filtering for 'createdAt' ---
+        if (start_date || end_date) {
+            const createdAtFilter = {};
+            if (start_date) {
+                createdAtFilter.$gte = new Date(start_date); // Convert ISO string to Date object
+            }
+            if (end_date) {
+                createdAtFilter.$lte = new Date(end_date);   // Convert ISO string to Date object
+            }
+            if (Object.keys(createdAtFilter).length > 0) {
+                filters.push({ createdAt: createdAtFilter });
+            }
+        }
+        // --- END NEW Date Range Filtering ---
+
+        const finalQuery = filters.length > 0 ? { $and: filters } : {};
+
+        let sortOptions = { createdAt: -1 }; // Default sort by creation date descending
+        if (sortBy) {
+            sortOptions = { [sortBy]: sortOrder === 'desc' ? -1 : 1 };
+        }
+
+        const logs = await collection.find(finalQuery)
+            .project({ // Select only necessary fields
+                ref_no: 1,
+                user_name: 1,
+                description: 1,
+                createdAt: 1,
+                _id: 0 // Exclude _id if not needed, as ref_no is used as item-value
+            })
+            .sort(sortOptions)
+            .skip(skip)
+            .limit(itemsPerPage)
+            .toArray();
+
+        const total = await collection.countDocuments(finalQuery);
+
+        res.json({
+            logs: logs,
+            total: total,
+            page: page,
+            itemsPerPage: itemsPerPage,
+            totalPages: Math.ceil(total / itemsPerPage)
+        });
+
+    } catch (error) {
+        console.error("Error fetching audit logs:", error);
+        res.status(500).json({ error: 'Failed to fetch audit logs.' });
     }
-
-    let sortOptions = { createdAt: -1 }; // Default sort: newest first
-    if (sortBy) {
-        // Map frontend keys to backend fields if necessary
-        const sortField = sortBy === 'description' ? 'description' : 'createdAt';
-        sortOptions = { [sortField]: sortOrder === 'desc' ? -1 : 1 };
-    }
-
-    const logs = await collection.find(query)
-      .sort(sortOptions)
-      .skip(skip)
-      .limit(limit)
-      .toArray();
-
-    const totalLogs = await collection.countDocuments(query);
-
-    res.json({
-      logs: logs,
-      total: totalLogs,
-    });
-  } catch (error) {
-    console.error("Error fetching audit logs:", error);
-    res.status(500).json({ error: "Failed to fetch audit logs", message: error.message });
-  }
 });
 
 
@@ -7608,7 +8106,7 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
     // 1. Add the main prompt as a text part
     contents.push({
       text: `
-      Your task is to validate one or more proof of residency documents and, optionally, an authorization letter, against provided JSON user data.
+      Your task is to validate one or more documents, which may include proof of residency documents and/or a birth certificate, and optionally an authorization letter, against provided JSON user data.
 
       **Instructions:**
       1.  **Proof of Residency Validation:** For each provided 'proof of residency' image:
@@ -7617,22 +8115,30 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
           *   Compare these extracted details with the 'first_name', 'middle_name', 'last_name', 'suffix', 'address_house_number', 'address_street', 'address_subdivision_zone', 'address_city_municipality' from the provided JSON data.
           *   Note any discrepancies in names or addresses.
 
-      2.  **Authorization Letter (Optional):** If an 'authorization letter' image is provided:
+      2.  **Birth Certificate Validation (if provided):** If a document is identified as a birth certificate among the provided proofs:
+          *   Confirm it appears to be a genuine birth certificate.
+          *   Extract the date of birth from the document.
+          *   Compare this extracted date of birth with the 'date_of_birth' field from the provided JSON data. The expected format for 'date_of_birth' in userJSON is YYYY-MM-DD.
+          *   Note any discrepancies in the date of birth.
+
+      3.  **Authorization Letter (Optional):** If an 'authorization letter' image is provided:
           *   Confirm it appears to be a genuine letter.
           *   Extract its content, specifically looking for statements that authorize the applicant (whose details are in the JSON) to use the provided proof of residency documents, especially if the names on the proofs do not match the applicant's name. It should clearly state that the bill is under a different name (e.g., a family member or landlord) but that the applicant resides at the address.
 
-      3.  **Final Verdict:**
+      4.  **Final Verdict:**
           *   Set "isValid" to \`true\` if:
               *   All proof of residency documents are legitimate and their details (name, address) match the JSON data **OR**
-              *   There are name discrepancies on the proof documents, but the 'authorization letter' (if provided) is legitimate and clearly explains/authorizes the use of the documents by the applicant at the specified address.
+              *   There are name discrepancies on the proof documents, but the 'authorization letter' (if provided) is legitimate and clearly explains/authoFrizes the use of the documents by the applicant at the specified address.
+              *   **AND**, if a birth certificate was provided, its extracted date of birth matches the 'date_of_birth' in the user JSON data.
           *   Set "isValid" to \`false\` if:
               *   Any proof of residency document is deemed illegitimate or forged.
               *   Details on the proof documents do not match the JSON, AND no valid authorization letter is provided to explain the discrepancy.
               *   The authorization letter (if provided) is illegitimate or does not clearly authorize the use of the proof documents.
+              *   **OR**, if a birth certificate was provided, and its extracted date of birth does not match the 'date_of_birth' in the user JSON data.
 
       **Return a JSON object with "isValid" (boolean) and "message" (string).**
       *   Keep the message concise but comprehensive, explaining the outcome.
-      *   For example: 'All documents validated successfully.', 'Name on [Document Type] does not match. Authorization letter is required.', 'Proof of residency [Document Type] is invalid.', 'Name on [Document Type] does not match, but authorization letter clarifies residency at the address.', etc.
+      *   For example: 'All documents validated successfully.', 'Name on [Document Type] does not match. Authorization letter is required.', 'Proof of residency [Document Type] is invalid.', 'Name on [Document Type] does not match, but authorization letter clarifies residency at the address.', **'Date of birth on birth certificate does not match user data.'**, 'Birth certificate provided but date of birth does not match.' etc.
       `
     });
     
@@ -7642,7 +8148,7 @@ async function validateProofOfResidency(userJSON, proofsInBase64, authorizationL
     // 3. Add multiple proof images (each with its own preceding text label part)
     for (const [index, proofBase64] of proofsInBase64.entries()) {
         // Text label part for the proof document
-        contents.push({ text: `Proof of Residency Document ${index + 1}:` });
+        contents.push({ text: `Proof of Residency Document or Other Proof ${index + 1}:` });
         contents.push({
             inlineData: {
                 mimeType: getMimeTypeFromBase64(proofBase64),

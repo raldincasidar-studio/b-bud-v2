@@ -536,18 +536,22 @@
             </p>
             <v-btn color="primary" class="mt-4" @click="startCamera">Retry Camera</v-btn>
           </div>
-          <div v-else-if="!isCameraActive && !capturedImage" class="text-center pa-4">
-            <v-progress-circular indeterminate color="primary"></v-progress-circular>
-            <p class="mt-2 text-white">Starting camera...</p>
-            <p class="text-caption text-grey-lighten-1">
-              If the camera doesn't start, please ensure you've granted permission.
-            </p>
-          </div>
           <div v-else class="camera-display-wrapper">
+            <!-- The video element is always present here when not in permission error state -->
             <video ref="videoElement" autoplay playsinline class="camera-feed" v-show="!capturedImage"></video>
             <canvas ref="canvasElement" class="captured-preview" v-show="capturedImage"></canvas>
 
-            <div class="camera-controls">
+            <!-- Loading overlay when camera is not active and no image captured -->
+            <div v-if="!isCameraActive && !capturedImage" class="camera-status-overlay">
+              <v-progress-circular indeterminate color="primary"></v-progress-circular>
+              <p class="mt-2 text-white">Starting camera...</p>
+              <p class="text-caption text-grey-lighten-1">
+                If the camera doesn't start, please ensure you've granted permission.
+              </p>
+            </div>
+
+            <!-- Controls (only show if camera is active or an image is captured) -->
+            <div class="camera-controls" v-if="isCameraActive || capturedImage">
               <v-btn v-if="!capturedImage" color="primary" icon="mdi-camera" size="x-large" @click="takePhoto"></v-btn>
               <template v-else>
                 <v-btn color="error" class="mr-2" prepend-icon="mdi-refresh" @click="retakePhoto">Retake</v-btn>
@@ -563,7 +567,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, watch, onBeforeUnmount } from 'vue';
+import { ref, onMounted, computed, watch, onBeforeUnmount, nextTick } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '../../composables/useMyFetch';
 import { useNuxtApp } from '#app';
@@ -870,35 +874,99 @@ function openCameraDialog() {
 async function startCamera() {
   isCameraActive.value = false;
   cameraPermissionError.value = false; // Reset permission error
-  capturedImage.value = ''; // Reset captured image
-  if (mediaStream) {
-    stopCameraStream();
-  }
+  capturedImage.value = ''; // Reset captured image (in case retrying)
 
+  // Stop any existing stream before starting a new one
+  stopCameraStream();
+
+  // Ensure the video element is rendered and available in the DOM
+  await nextTick();
+  if (!videoElement.value) {
+    console.error("Video element not found in DOM after nextTick.");
+    $toast.fire({
+        title: 'Camera initialization failed: video element not ready.',
+        icon: 'error',
+        timer: 3000
+    });
+    cameraDialog.value = false; // Close dialog if video element isn't there
+    return;
+  }
+  
   try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } }); // Prefer rear camera on mobile
-    if (videoElement.value) {
-      videoElement.value.srcObject = mediaStream;
-      // Wait for video to load metadata to ensure dimensions are available
-      await new Promise(resolve => {
-        videoElement.value.onloadedmetadata = () => resolve();
-      });
-      isCameraActive.value = true;
-    }
+    // Request camera access, preferring the environment (rear) camera
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    videoElement.value.srcObject = mediaStream;
+
+    // Create a promise to wait for the video to load its metadata
+    // This ensures the video dimensions are available before we try to use them (e.g., for canvas)
+    const videoLoadedPromise = new Promise((resolve, reject) => {
+      videoElement.value.onloadedmetadata = () => {
+        resolve();
+      };
+      videoElement.value.onerror = (e) => {
+        reject(new Error(`Video element error: ${e.message || 'Unknown'}`));
+      };
+
+      // Add a timeout in case onloadedmetadata never fires
+      setTimeout(() => {
+        if (!isCameraActive.value) { // If still not active, reject
+          reject(new Error("Camera stream metadata load timed out (5s)."));
+        }
+      }, 5000); // 5-second timeout
+    });
+
+    await videoLoadedPromise;
+    isCameraActive.value = true;
   } catch (err) {
     console.error("Error accessing camera:", err);
+    isCameraActive.value = false;
+    stopCameraStream(); // Ensure stream is stopped on error
+
     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
       cameraPermissionError.value = true;
-      // Do not close cameraDialog, let the user see the permission error message
-    } else {
       $toast.fire({
-        title: 'Could not access camera. Please check your device settings.',
+        title: 'Camera access denied. Please enable camera permissions for this site in your browser settings and try again.',
+        icon: 'error',
+        timer: 6000
+      });
+      // Do not close cameraDialog here, let the user see the permission error message
+    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+      $toast.fire({
+        title: 'No camera found on your device.',
         icon: 'error',
         timer: 5000
       });
-      cameraDialog.value = false; // Close for other errors
+      cameraDialog.value = false; // Close if no camera found
+    } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+      $toast.fire({
+        title: 'Camera is already in use or could not be started. Try closing other apps using the camera.',
+        icon: 'error',
+        timer: 6000
+      });
+      cameraDialog.value = false; // Close if camera is busy
+    } else if (err.name === 'OverconstrainedError') {
+       $toast.fire({
+        title: 'Camera not available with requested settings (e.g., no rear camera).',
+        icon: 'warning',
+        timer: 5000
+      });
+      cameraDialog.value = false;
+    } else if (err.message.includes("Camera stream metadata load timed out")) {
+        $toast.fire({
+            title: 'Camera failed to initialize within expected time. Please try again.',
+            icon: 'error',
+            timer: 5000
+        });
+        cameraDialog.value = false;
     }
-    isCameraActive.value = false;
+    else {
+      $toast.fire({
+        title: `Could not access camera: ${err.message || 'Unknown error.'}`,
+        icon: 'error',
+        timer: 5000
+      });
+      cameraDialog.value = false; // Close for other generic errors
+    }
   }
 }
 
@@ -924,8 +992,16 @@ function takePhoto() {
   canvas.height = video.videoHeight;
 
   const context = canvas.getContext('2d');
+  // Draw the image onto the canvas, applying the same horizontal flip if needed
+  // This ensures consistency between the live feed and the captured photo
+  context.save(); // Save the current state of the canvas
+  if (getComputedStyle(video).transform.includes('scaleX(-1)')) {
+    context.translate(canvas.width, 0); // Move origin to the right edge
+    context.scale(-1, 1); // Flip horizontally
+  }
   context.drawImage(video, 0, 0, canvas.width, canvas.height);
-  
+  context.restore(); // Restore the canvas state
+
   capturedImage.value = canvas.toDataURL('image/jpeg', 0.9); // Get base64 JPEG image
   stopCameraStream(); // Stop camera after taking photo
 }
@@ -952,13 +1028,12 @@ function closeCamera() {
   cameraPermissionError.value = false; // Reset permission error on close
 }
 
-// Watch for camera dialog opening to start camera
+// Watch for camera dialog opening/closing to manage stream
 watch(cameraDialog, (newValue) => {
-  if (newValue) {
-    // startCamera() is now called directly by openCameraDialog
-  } else {
+  if (!newValue) { // When camera dialog closes, ensure stream is stopped and states are reset
     stopCameraStream();
-    cameraPermissionError.value = false; // Reset permission error when dialog closes
+    capturedImage.value = '';
+    cameraPermissionError.value = false;
   }
 });
 </script>
@@ -1100,6 +1175,24 @@ watch(cameraDialog, (newValue) => {
   object-fit: contain; /* Ensure entire video/image is visible */
   background-color: black;
   border-radius: 8px;
+  /* Add this line to un-mirror the horizontally "inverted" camera feed */
+  transform: scaleX(-1);
+}
+
+.camera-status-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent overlay */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: white;
+  text-align: center;
+  border-radius: 8px; /* Matches camera-feed border-radius */
 }
 
 .camera-controls {

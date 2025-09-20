@@ -124,24 +124,6 @@
               </v-btn>
             </v-col>
           </v-row>
-
-          <!-- New row for Filter by Year dropdown, aligned below Start/End Date -->
-          <v-row>
-            <v-col cols="12" md="3">
-              <v-select
-                v-model="selectedYear"
-                :items="years"
-                label="Quick Filter by Year"
-                variant="outlined"
-                density="compact"
-                hide-details
-                clearable
-                @click:clear="clearSelectedYear(); loadBudgets()"
-                @update:model-value="loadBudgets()"
-                class="mt-0 pt-0 pr-2"
-              ></v-select>
-            </v-col>
-          </v-row>
         </v-card-text>
         <v-divider></v-divider>
         <!-- End Date Range Selection & Actions -->
@@ -200,12 +182,12 @@
                 <span v-else-if="endDate">
                     (Filtered up to {{ formattedEndDate }})
                 </span>
-                <span v-else-if="selectedYear">
-                    (Filtered for Year: {{ selectedYear }})
-                </span>
                 <span v-else>
                     (No specific date filter applied)
                 </span>
+            </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ budgetsForPrint.length }} Budgets
             </p>
             <table class="print-table">
               <thead>
@@ -234,6 +216,7 @@
 import { ref, watch, computed, onMounted } from 'vue';
 import { useMyFetch } from '@/composables/useMyFetch';
 import { useNuxtApp } from '#app'; 
+import logoImage from '~/assets/img/logo.png'; // Import the logo image
 
 const { $toast } = useNuxtApp();
 
@@ -269,55 +252,9 @@ const selectedDateFilterPreset = ref(null); // 'day', 'week', 'month', 'year'
 const formattedStartDate = computed(() => startDate.value ? new Date(startDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 const formattedEndDate = computed(() => endDate.value ? new Date(endDate.value).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '');
 
-
-// --- Existing Year Dropdown Logic (Adapted) ---
-const distinctBudgetYears = ref([]); 
-const selectedYear = ref(null); 
-
 // --- Print functionality refs and methods ---
 const printDialog = ref(false);
 const budgetsForPrint = ref([]); // Holds all data for printing
-
-
-async function fetchDistinctBudgetYears() {
-  try {
-    const { data, error } = await useMyFetch('/api/budgets/years');
-    if (error.value) {
-      console.error("Failed to fetch distinct budget years:", error.value);
-      distinctBudgetYears.value = [];
-    } else {
-      distinctBudgetYears.value = data.value?.years || [];
-      distinctBudgetYears.value.sort((a, b) => a - b);
-    }
-  } catch (err) {
-    console.error("An exception occurred while fetching distinct budget years:", err);
-    distinctBudgetYears.value = [];
-  }
-}
-
-// Years for the dropdown
-const years = computed(() => {
-  if (distinctBudgetYears.value.length > 0) {
-    return distinctBudgetYears.value;
-  }
-  const currentYear = new Date().getFullYear();
-  // Provide a default range if no years are in DB
-  return [currentYear - 2, currentYear - 1, currentYear, currentYear + 1, currentYear + 2].sort((a, b) => a - b);
-});
-
-// Set initial selectedYear based on fetched years or current year
-watch(distinctBudgetYears, (newYears) => {
-  if (newYears.length > 0) {
-    const currentYear = new Date().getFullYear();
-    if (newYears.includes(currentYear)) {
-      selectedYear.value = currentYear;
-    } else {
-      selectedYear.value = newYears[newYears.length - 1]; 
-    }
-  } else {
-    selectedYear.value = new Date().getFullYear(); 
-  }
-}, { immediate: true }); 
 
 
 // --- WATCHERS for Search and Filters ---
@@ -327,13 +264,6 @@ watch(searchKey, () => {
   searchDebounceTimer = setTimeout(() => {
     loadBudgets({ ...currentTableOptions.value, page: 1 });
   }, 500);
-});
-
-// Watch for changes in selectedYear (always triggers loadBudgets if changed)
-watch(selectedYear, (newVal, oldVal) => {
-  if (newVal !== oldVal) {
-    loadBudgets({ ...currentTableOptions.value, page: 1 });
-  }
 });
 
 
@@ -368,11 +298,6 @@ async function loadBudgets(options) {
       queryParams.end_date = new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString();
     }
 
-    // Only apply selected year filter if NO specific date range is set
-    if (!startDate.value && !endDate.value && selectedYear.value) {
-      queryParams.filterYear = selectedYear.value;
-    }
-
     // Clean up undefined/null/empty string query params
     Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
@@ -402,10 +327,6 @@ const clearDateRange = () => {
   startDate.value = null;
   endDate.value = null;
   selectedDateFilterPreset.value = null; 
-};
-
-const clearSelectedYear = () => {
-  selectedYear.value = null;
 };
 
 const applyDateFilters = () => {
@@ -441,7 +362,7 @@ const setDateRangePreset = (preset) => {
       newEndDate = new Date(today.getFullYear(), today.getMonth() + 1, 0); 
       break;
     case 'year':
-      const targetYear = selectedYear.value || today.getFullYear(); 
+      const targetYear = today.getFullYear(); 
       newStartDate = new Date(targetYear, 0, 1); 
       newEndDate = new Date(targetYear, 11, 31); 
       break;
@@ -472,11 +393,10 @@ async function fetchAllBudgetsForPrint() {
             search: searchKey.value,
             start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
             end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
-            filterYear: (!startDate.value && !endDate.value && selectedYear.value) ? selectedYear.value : undefined,
             itemsPerPage: 999999 // Request a very high number of items to get all data
         };
-        // If no date filters are set, default to current year for report (consistent with old logic)
-        if (!queryParams.start_date && !queryParams.end_date && !queryParams.filterYear) {
+        // If no date filters are set, default to current year for report
+        if (!queryParams.start_date && !queryParams.end_date) {
             queryParams.filterYear = new Date().getFullYear();
         }
 
@@ -517,6 +437,21 @@ const printContent = () => {
           <style>
             /* Basic print styles */
             body { font-family: sans-serif; margin: 20px; color: #333; }
+            .print-header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .print-logo {
+              max-width: 100px; /* Adjust size as needed */
+              height: auto;
+              display: block;
+              margin: 0 auto 10px auto; /* Center with some bottom margin */
+            }
+            .print-app-name {
+              font-size: 1.5em; /* Adjust size as needed */
+              font-weight: bold;
+              margin-bottom: 10px;
+            }
             h3 { text-align: center; margin-bottom: 20px; color: #333; }
             p { text-align: center; margin-bottom: 15px; color: #555; }
             .print-table {
@@ -547,12 +482,27 @@ const printContent = () => {
           </style>
         </head>
         <body>
+          <div class="print-header">
+            <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
+            <div class="print-app-name">B-Bud</div>
+          </div>
           ${printContentDiv.innerHTML}
         </body>
       </html>
     `);
     printWindow.document.close();
     printWindow.focus();
+
+    // Set the onafterprint event handler BEFORE calling print()
+    printWindow.onafterprint = () => {
+      // Small delay to ensure browser print dialog fully closes before trying to close the window
+      setTimeout(() => {
+        if (printWindow && !printWindow.closed) {
+          printWindow.close();
+        }
+      }, 100); // 100ms delay
+    };
+
     printWindow.print();
   } else {
     $toast.fire({ title: 'Print area not found.', icon: 'error' });
@@ -560,9 +510,8 @@ const printContent = () => {
 };
 
 
-// Initial load of the table data and distinct years
+// Initial load of the table data
 onMounted(async () => {
-    await fetchDistinctBudgetYears();
     loadBudgets({ page: 1, itemsPerPage: itemsPerPage.value, sortBy: [] });
 });
 </script>

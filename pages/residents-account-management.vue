@@ -43,7 +43,7 @@
 
       <v-card-text>
   <v-card-title class="font-size-15 text-left pb-0 pl-0 mr-0">Date Range Selection & Actions</v-card-title>
-    
+
   <v-row align="center" justify="center">
     <v-col cols="12" sm="6" md="3">
       <v-menu
@@ -151,7 +151,7 @@
         </template>
 
         <template v-slot:item.full_name="{ item }">
-          {{ item.first_name }} {{ item.middle_name }} {{ item.last_name }} {{ item.suffix }}
+          {{ capitalizeName(item.first_name) }} {{ capitalizeName(item.middle_name) }} {{ capitalizeName(item.last_name) }} {{ capitalizeName(item.suffix) }}
         </template>
 
         <template v-slot:item.address_house_number="{ item }">
@@ -176,7 +176,7 @@
         <!-- UPDATED SLOT to include action menu -->
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <v-menu>
+            <!-- <v-menu>
               <template v-slot:activator="{ props }">
                 <v-btn icon="mdi-dots-vertical" v-bind="props" variant="tonal" size="small"></v-btn>
               </template>
@@ -193,7 +193,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu>
+            </v-menu> -->
         </template>
 
         <template v-slot:no-data>
@@ -207,7 +207,7 @@
       <v-card>
         <v-card-title class="text-h5">{{ dialogTitle }} Account</v-card-title>
         <v-card-text>
-          <p class="mb-4">Please provide a reason for {{ dialogActionText }} the account for <strong>{{ residentToAction?.first_name }} {{ residentToAction?.last_name }}</strong>.</p>
+          <p class="mb-4">Please provide a reason for {{ dialogActionText }} the account for <strong>{{ capitalizeName(residentToAction?.first_name) }} {{ capitalizeName(residentToAction?.last_name) }}</strong>.</p>
           <v-textarea
             v-model="actionReason"
             :label="`Reason for ${dialogActionText}`"
@@ -257,6 +257,9 @@
                     (No date filter applied)
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ residentsForPrint.length }} Accounts
+            </p>
             <table class="print-table">
               <thead>
                 <tr>
@@ -266,7 +269,7 @@
               <tbody>
                 <tr v-for="item in residentsForPrint" :key="item._id"> <!-- Use residentsForPrint here -->
                   <td>#{{ item._id.slice(-4) }}</td>
-                  <td>{{ item.first_name }} {{ item.middle_name }} {{ item.last_name }} {{ item.suffix }}</td>
+                  <td>{{ capitalizeName(item.first_name) }} {{ capitalizeName(item.middle_name) }} {{ capitalizeName(item.last_name) }} {{ capitalizeName(item.suffix) }}</td>
                   <td>{{ item.address_house_number }}</td>
                   <td>{{ formatDateTime(item.date_added) }}</td>
                   <td>{{ formatDateTime(item.date_approved) }}</td>
@@ -287,6 +290,7 @@
 import { ref, watch, computed } from 'vue';
 import { useRoute } from 'vue-router';
 import { useMyFetch } from '~/composables/useMyFetch';
+import logoImage from '~/assets/img/logo.png'; // Import the logo image
 
 const { $toast } = useNuxtApp();
 const route = useRoute();
@@ -356,6 +360,15 @@ const printableHeaders = computed(() => {
   return headers.value.filter(header => header.key !== 'actions');
 });
 
+// NEW helper function to capitalize the first letter of each word (uncomment this if retain the original format )
+const capitalizeName = (value) => {
+  if (!value) return '';
+  return String(value)
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
 // NEW helper function to determine the displayed status
 const getDisplayStatus = (resident) => {
   if (resident.status === 'Approved' && resident.account_status === 'Deactivated') {
@@ -419,9 +432,9 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
       // Otherwise, update the primary `status` field.
       payload = { status: newStatus };
     }
-    
-    if (reason) { 
-      payload.reason = reason; 
+
+    if (reason) {
+      payload.reason = reason;
     }
 
     // This endpoint must be able to handle updates to both `status` and `account_status`.
@@ -431,7 +444,7 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
     });
 
     if (error.value) throw new Error(error.value.data?.message || 'Failed to update status.');
-    
+
     let successMessage = 'Status updated successfully!';
     if (newStatus === 'Deactivated') {
         successMessage = 'Account deactivated. Associated requests are being invalidated.';
@@ -439,7 +452,7 @@ async function updateResidentStatus(resident, newStatus, reason = null) {
         successMessage = 'Account hold has been removed successfully.';
     }
     $toast.fire({ title: successMessage, icon: 'success' });
-    
+
     await loadResidents(currentTableOptions.value);
 
   } catch (e) {
@@ -453,7 +466,7 @@ async function loadResidents(options) {
   loading.value = true;
   currentTableOptions.value = options;
   const { page, itemsPerPage: rpp, sortBy } = options;
-  
+
   try {
     const queryParams = {
       search: searchKey.value,
@@ -461,12 +474,6 @@ async function loadResidents(options) {
       itemsPerPage: rpp,
       status: statusFilter.value === 'All' ? undefined : statusFilter.value,
       // Convert Date objects to ISO strings for API, ensuring start/end of day
-      // IMPORTANT: Your backend API at /api/residents MUST be updated to accept
-      // 'start_date' and 'end_date' query parameters and filter the results
-      // based on the 'date_added' (or relevant date field) of the residents.
-      // Example backend logic (Node.js/Express with Mongoose):
-      // if (req.query.start_date) query.date_added = { ...query.date_added, $gte: new Date(req.query.start_date) };
-      // if (req.query.end_date) query.date_added = { ...query.date_added, $lte: new Date(req.query.end_date) };
       start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
       end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
     };
@@ -481,12 +488,12 @@ async function loadResidents(options) {
     const { data, error } = await useMyFetch('/api/residents', { query: queryParams });
 
     if (error.value) throw new Error('Failed to load residents.');
-    
+
     residents.value = data.value.residents || [];
     totalItems.value = data.value.total || 0; // Ensure your backend returns the total count for the *filtered* data
   } catch (e) {
     $toast.fire({ title: e.message, icon: 'error' });
-    residents.value = []; 
+    residents.value = [];
     totalItems.value = 0;
   } finally {
     loading.value = false;
@@ -531,7 +538,7 @@ const setDateRangePreset = (preset) => {
   switch (preset) {
     case 'day':
       newStartDate = new Date(today);
-      newEndDate = new Date(today); 
+      newEndDate = new Date(today);
       break;
     case 'week':
       // Start of the current week (Sunday)
@@ -570,14 +577,14 @@ async function fetchAllResidentsForPrint() {
             start_date: startDate.value ? new Date(startDate.value.setHours(0, 0, 0, 0)).toISOString() : undefined,
             end_date: endDate.value ? new Date(endDate.value.setHours(23, 59, 59, 999)).toISOString() : undefined,
             // Request a very high number of items to get all data
-            itemsPerPage: 999999 
+            itemsPerPage: 999999
         };
         Object.keys(queryParams).forEach(key => (queryParams[key] === undefined || queryParams[key] === null || queryParams[key] === '') && delete queryParams[key]);
 
         const { data, error } = await useMyFetch('/api/residents', { query: queryParams });
 
         if (error.value) throw new Error('Failed to load all residents for printing.');
-        
+
         return data.value.residents || [];
     } catch (e) {
         $toast.fire({ title: e.message, icon: 'error' });
@@ -610,6 +617,21 @@ const printContent = () => {
           <style>
             /* Basic print styles */
             body { font-family: sans-serif; margin: 20px; color: #333; }
+            .print-header {
+              text-align: center;
+              margin-bottom: 20px;
+            }
+            .print-logo {
+              max-width: 100px; /* Adjust size as needed */
+              height: auto;
+              display: block;
+              margin: 0 auto 10px auto; /* Center with some bottom margin */
+            }
+            .print-app-name {
+              font-size: 1.5em; /* Adjust size as needed */
+              font-weight: bold;
+              margin-bottom: 10px;
+            }
             h3 { text-align: center; margin-bottom: 20px; color: #333; }
             p { text-align: center; margin-bottom: 15px; color: #555; }
             .print-table {
@@ -637,14 +659,29 @@ const printContent = () => {
           </style>
         </head>
         <body>
+          <div class="print-header">
+            <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
+            <div class="print-app-name">B-Bud</div>
+          </div>
           ${printContentDiv.innerHTML}
         </body>
       </html>
     `);
     printWindow.document.close();
     printWindow.focus();
+
+    // Set the onafterprint event handler BEFORE calling print()
+    printWindow.onafterprint = () => {
+      // Small delay to ensure browser print dialog fully closes before trying to close the window
+      setTimeout(() => {
+        if (printWindow && !printWindow.closed) {
+          printWindow.close();
+        }
+      }, 100); // 100ms delay
+    };
+
     printWindow.print();
-    // printWindow.close(); // You might choose to keep it open for user inspection.
+    // Do NOT close printWindow here. The onafterprint event will handle it.
   } else {
     $toast.fire({ title: 'Print area not found.', icon: 'error' });
   }
@@ -661,13 +698,13 @@ const getStatusColor = (s) => ({
 
 const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
-    const options = { 
-        year: 'numeric', 
-        month: 'short', 
-        day: 'numeric', 
-        hour: '2-digit', 
+    const options = {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
         minute: '2-digit',
-        hour12: true 
+        hour12: true
     };
     return new Date(dateString).toLocaleString('en-US', options);
 };
@@ -714,7 +751,7 @@ const formatDateTime = (dateString) => {
     height: auto !important;
     width: auto !important;
   }
-  
+
   .v-toolbar {
     display: none !important; /* Hide toolbar in print */
   }
