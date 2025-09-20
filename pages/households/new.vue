@@ -1,330 +1,857 @@
-<script setup>
-import { ref } from "vue";
-import { useMyFetch } from "../composables/useMyFetch";
-const { $toast } = useNuxtApp();
-const router = useRouter();
-
-const firstName = ref("");
-const middleName = ref("");
-const lastName = ref("");
-const gender = ref("");
-const dateOfBirth = ref("");
-const civilStatus = ref("");
-const subdivision = ref("");
-const block = ref("");
-const lot = ref("");
-const yearLived = ref("");
-const occupation = ref("");
-const isVoter = ref("");
-const contactNo = ref("");
-const emailAddress = ref("");
-const proofOfResidency = ref(null);
-const proofOfResidencyBase64 = ref("");
-const proofOfResidencyName = ref("");
-
-const isHouseholdHead = ref('No');
-const householdList = ref([]);
-
-const convertToBase64 = (file) => {
-  return new Promise((resolve, reject) => {
-    console.log('Reading file: ', file.target.files[0]);
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file.target.files[0]);
-  });
-};
-
-const handleFileUpload = async (file) => {
-  if (file) {
-    try {
-      proofOfResidencyBase64.value = await convertToBase64(file);
-      proofOfResidencyName.value = file.name;
-    } catch (error) {
-      console.error("Error converting file to Base64:", error);
-      $toast.fire({
-        title: 'Error processing file',
-        icon: 'error',
-      });
-      proofOfResidency.value = null; // Reset the file input
-      proofOfResidencyBase64.value = "";
-      proofOfResidencyName.value = "";
-    }
-  } else {
-    proofOfResidencyBase64.value = "";
-    proofOfResidencyName.value = "";
-  }
-};
-
-const searchResidentQuery = ref("");
-const residentId = ref("");
-const residentSearchResult = ref([]);
-
-const searchResidents = async () => {
-  const query = searchResidentQuery.value;
-  if (!query || query.length < 2) return;
-
-  residentSearchResult.value = [];
-
-  const { data, error } = await useMyFetch("/api/residents/search", {
-    query: { q: query },
-  });
-
-  if (error.value) {
-    console.error("Failed to search residents:", error.value);
-    return;
-  }
-
-  residentSearchResult.value = (data.value?.residents || []).map(
-    (resident) => ({
-      value: resident._id,
-      title: resident.name,
-      age: Math.floor((Date.now() - new Date(resident.dateOfBirth).getTime()) / (1000 * 60 * 60 * 24 * 365.25)) || 0,
-      ...resident
-    })
-  );
-
-  console.log('Search result: ', residentSearchResult.value);
-};
-
-const selectResident = (event) => {
-  householdList.value.push(event);
-};
-
-const removeResident = (index) => {
-  householdList.value.splice(index, 1);
-};
-
-const saveResident = async () => {
-  const residentData = {
-    firstName: firstName.value,
-    middleName: middleName.value,
-    lastName: lastName.value,
-    gender: gender.value,
-    dateOfBirth: dateOfBirth.value,
-    civilStatus: civilStatus.value,
-    subdivision: subdivision.value,
-    block: block.value,
-    lot: lot.value,
-    yearLived: yearLived.value,
-    occupation: occupation.value,
-    isVoter: isVoter.value,
-    contactNo: contactNo.value,
-    emailAddress: emailAddress.value,
-    proofOfResidency: proofOfResidencyBase64.value,
-    proofOfResidencyName: proofOfResidencyName.value,
-    isHouseholdHead: isHouseholdHead.value === 'Yes',
-    householdList: householdList.value?.map((resident) => resident.id) || [],
-  };
-
-  try {
-    const { data, error } = await useMyFetch("/api/residents", {
-      method: 'post',
-      body: residentData,
-    });
-
-    if (error.value || data?.value?.error) return $toast.fire({
-      title: data?.value?.error || 'Something went wrong while adding resident',
-      icon: 'error',
-    })
-
-    $toast.fire({
-      title: data?.value?.message || 'Resident added successfully',
-      icon: 'success',
-    });
-    router.push('/residents'); // Assuming you have a residents list page
-  } catch (error) {
-    console.error(error);
-    $toast.fire({
-      title: 'Something went wrong while adding resident',
-      icon: 'error',
-    });
-  }
-};
-</script>
-
 <template>
   <v-container class="my-10">
     <v-row justify="space-between mb-10">
-      <v-col><h2>Add New Resident</h2></v-col>
+      <v-col>
+        <h2 class="text-h4 font-weight-bold">Add New Resident</h2>
+        <p class="text-grey-darken-1">Register a new resident, and optionally add household members if they are the household head.</p>
+      </v-col>
       <v-col class="text-right">
         <v-btn
-          rounded
           size="large"
-          variant="tonal"
           @click="saveResident"
-          prepend-icon="mdi-account-plus"
+          prepend-icon="mdi-content-save-all"
           color="primary"
+          :loading="saving"
         >
-          Add Resident
+          Save Resident
         </v-btn>
       </v-col>
     </v-row>
 
-    <v-card prepend-icon="mdi-account-card-details" title="Personal Information">
-      <v-card-item>
+    <!-- Main Resident Information Card -->
+    <v-card class="mb-6" flat border>
+      <v-card-title class="text-h6 font-weight-medium">Personal Hello Information</v-card-title>
+      <v-card-text class="pt-4">
         <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="firstName" label="First Name"></v-text-field>
+          <v-col cols="12" md="4">
+            <label class="v-label">First Name *</label>
+            <v-text-field v-model="form.first_name" label="First Name *" variant="outlined" :error-messages="vHead$.first_name.$errors.map(e => e.$message)" @blur="vHead$.first_name.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="middleName" label="Middle Name"></v-text-field>
+          <v-col cols="12" md="4">
+            <label class="v-label">Middle Name</label>
+            <v-text-field v-model="form.middle_name" label="Middle Name" variant="outlined"></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="lastName" label="Last Name"></v-text-field>
+          <v-col cols="12" md="4">
+            <label class="v-label">Last Name *</label>
+            <v-text-field v-model="form.last_name" label="Last Name *" variant="outlined" :error-messages="vHead$.last_name.$errors.map(e => e.$message)" @blur="vHead$.last_name.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Suffix</label>
+            <v-select v-model="form.suffix" :items="suffixOptions" label="Suffix" variant="outlined" clearable></v-select>
+          </v-col>
+
+          <v-col cols="12" md="4">
+            <label class="v-label">Sex *</label>
+            <v-select v-model="form.sex" :items="['Male', 'Female']" label="Sex *" variant="outlined" placeholder="Select Sex" :error-messages="vHead$.sex.$errors.map(e => e.$message)" @blur="vHead$.sex.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Date of Birth *</label>
+            <v-text-field v-model="form.date_of_birth" label="Date of Birth *" type="date" variant="outlined" :error-messages="vHead$.date_of_birth.$errors.map(e => e.$message)" @blur="vHead$.date_of_birth.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Age</label>
+            <v-text-field :model-value="headCalculatedAge" label="Age" type="number" variant="outlined" readonly hint="Auto-calculated" persistent-hint></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Civil Status *</label>
+            <v-select v-model="form.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status *" variant="outlined" placeholder="Select Civil Status" :error-messages="vHead$.civil_status.$errors.map(e => e.$message)" @blur="vHead$.civil_status.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Citizenship *</label>
+            <v-select v-model="form.citizenship" :items="['Filipino', 'Other']" label="Citizenship *" variant="outlined" placeholder="Select Citizenship" :error-messages="vHead$.citizenship.$errors.map(e => e.$message)" @blur="vHead$.citizenship.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Occupation Status *</label>
+            <v-select v-model="form.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status *" variant="outlined" :error-messages="vHead$.occupation_status.$errors.map(e => e.$message)" @blur="vHead$.occupation_status.$touch()"></v-select>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Email Address *</label>
+            <v-text-field v-model="form.email" label="Email Address *" type="email" variant="outlined" :error-messages="vHead$.email.$errors.map(e => e.$message)" @blur="vHead$.email.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="4">
+            <label class="v-label">Contact Number *</label>
+            <v-text-field v-model="form.contact_number" label="Contact Number *" variant="outlined" maxlength="11" :error-messages="vHead$.contact_number.$errors.map(e => e.$message)" @blur="vHead$.contact_number.$touch()"></v-text-field>
           </v-col>
         </v-row>
-
+        
+        <v-divider class="my-6"></v-divider>
+        <p class="text-subtitle-2 mb-4">Address Information</p>
         <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-select
-              v-model="gender"
-              :items="['Male', 'Female', 'Other']"
-              label="Gender"
-            ></v-select>
+           <!-- NEW FIELD: Unit/Room/Apartment number -->
+          <v-col cols="12" md="4">
+            <label class="v-label">Unit/Room/Apartment Number</label>
+            <v-text-field v-model="form.address_unit_room_apt_number" label="Unit/Room/Apartment Number" variant="outlined"></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field
-              v-model="dateOfBirth"
-              label="Date of Birth"
-              type="date"
-            ></v-text-field>
+          <v-col cols="12" md="4">
+            <label class="v-label">House Number/Lot/Block *</label>
+            <v-text-field v-model="form.address_house_number" label="House Number/Lot/Block *" variant="outlined" :error-messages="vHead$.address_house_number.$errors.map(e => e.$message)" @blur="vHead$.address_house_number.$touch()"></v-text-field>
           </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-select
-              v-model="civilStatus"
-              :items="['Single', 'Married', 'Divorced', 'Widowed', 'Separated']"
-              label="Civil Status"
-            ></v-select>
+          <v-col cols="12" md="4">
+            <label class="v-label">Street *</label>
+            <v-text-field v-model="form.address_street" label="Street *" variant="outlined" :error-messages="vHead$.address_street.$errors.map(e => e.$message)" @blur="vHead$.address_street.$touch()"></v-text-field>
           </v-col>
-        </v-row>
+          <v-col cols="12" md="6">
+            <label class="v-label">Subdivision/Zone/Sitio/Purok *</label>
+            <v-text-field v-model="form.address_subdivision_zone" label="Subdivision/Zone/Sitio/Purok *" variant="outlined" :error-messages="vHead$.address_subdivision_zone.$errors.map(e => e.$message)" @blur="vHead$.address_subdivision_zone.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">City/Municipality</label>
+            <v-text-field v-model="form.address_city_municipality" label="City/Municipality" variant="outlined" readonly></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Years at Current Address *</label>
+            <v-text-field v-model="form.years_at_current_address" label="Years at Current Address *" type="number" variant="outlined" :error-messages="vHead$.years_at_current_address.$errors.map(e => e.$message)" @blur="vHead$.years_at_current_address.$touch()"></v-text-field>
+          </v-col>
 
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="subdivision" label="Subdivision"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="block" label="Block"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="lot" label="Lot"></v-text-field>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="yearLived" label="Year Lived"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="occupation" label="Occupation"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-select
-              v-model="isVoter"
-              :items="['Yes', 'No']"
-              label="Are you a voter?"
-            ></v-select>
-          </v-col>
-        </v-row>
-
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="contactNo" label="Contact No"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
-            <v-text-field v-model="emailAddress" label="Email Address"></v-text-field>
-          </v-col>
-          <v-col cols="12" sm="6" md="4">
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload Proof of Residency *</label>
             <v-file-input
-              v-model="proofOfResidency"
-              label="Upload Proof of Residency"
-              accept="image/*,application/pdf"
-              @change="handleFileUpload"
-            ></v-file-input>
-            <small v-if="proofOfResidencyName">Selected file: {{ proofOfResidencyName }}</small>
-          </v-col>
-        </v-row>
-      </v-card-item>
-    </v-card>
-
-    <v-card class="mt-10" prepend-icon="mdi-home-group" title="Household">
-      <v-card-item>
-        <v-row>
-          <v-col cols="12" sm="6" md="4">
-            <v-select
-              v-model="isHouseholdHead"
-              :items="['Yes', 'No']"
-              label="Are you a household head?"
-            ></v-select>
-          </v-col>
-        </v-row>
-
-        <v-row v-if="isHouseholdHead === 'Yes'">
-          <v-col cols="12">
-            <v-text-field
-              prepend-inner-icon="mdi-magnify"
+              v-model="form.proof_of_residency_file"
+              label="Upload Proof of Residency *"
               variant="outlined"
-              color="primary"
-              label="Search for Residents"
-              placeholder="Search by name, contact number, or address..."
-              v-model="searchResidentQuery"
-              @keydown="searchResidents"
-              item-title="title"
-              item-value="value"
-              rounded="lg"
-            />
-          </v-col>
-          <v-col cols="12">
-            <v-list subheader="Search result">
-              <v-list-item
-                @click="selectResident(resident)"
-                v-for="(resident, index) in residentSearchResult"
-                :key="index"
-              >
-                <v-list-item-content>
-                  <v-list-item-title>{{ resident.title }}</v-list-item-title>
-                </v-list-item-content>
-              </v-list-item>
-            </v-list>
-            
+              accept="image/*,application/pdf"
+              :error-messages="vHead$.proof_of_residency_file.$errors.map(e => e.$message)"
+              show-size
+              clearable
+              multiple
+              counter
+              :max="5"
+              @blur="vHead$.proof_of_residency_file.$touch()">
+            </v-file-input>
+            <div class="d-flex flex-wrap gap-2 mt-2">
+              <div v-for="(item, index) in proofResidencyPreviews" :key="item.id" class="position-relative">
+                <template v-if="item.file && item.file.type.startsWith('image/')">
+                  <v-img :src="item.url" class="border rounded" height="100" width="100" contain></v-img>
+                </template>
+                <template v-else-if="item.file && item.file.type === 'application/pdf'">
+                  <v-icon size="64" class="border rounded" style="width: 100px; height: 100px; display: flex; align-items: center; justify-content: center;">
+                    mdi-file-pdf-box
+                  </v-icon>
+                  <p class="text-caption text-truncate mt-1" style="max-width: 100px;">{{ item.file.name }}</p>
+                </template>
+                <v-btn icon="mdi-close-circle" size="x-small" color="error" class="position-absolute" style="top: -8px; right: -8px;" @click="removeProofOfResidencyImage(index)"></v-btn>
+              </div>
+            </div>
           </v-col>
         </v-row>
 
-        <v-row v-if="isHouseholdHead === 'Yes'">
+        <v-divider class="my-6"></v-divider>
+        <p class="text-subtitle-2 mb-4">Voter Information</p>
+        <v-row v-if="headCalculatedAge >= 18">
           <v-col cols="12">
-            <v-table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Gender</th>
-                  <th>Action</th>
-                </tr>
-              </thead>
-              <tbody v-if="householdList.length">
-                <tr v-for="(household, index) in householdList" :key="index">
-                  <td>{{ household.name }}</td>
-                  <td>{{ household.gender }}</td>
-                  <td>{{ household.relationship }}</td>
-                  <td>
-                    <v-btn
-                      variant="outlined"
-                      size="small"
-                      @click="removeResident(index)"
-                    >
-                      Remove
-                    </v-btn>
-                  </td>
-                </tr>
-              </tbody>
-              <tbody v-else>
-                <tr>
-                  <td colspan="5" class="text-center py-10">No household members found.</td>
-                </tr>
-              </tbody>
-            </v-table>
+            <label class="v-label font-weight-medium mb-1">Registered Voter?</label>
+            <v-radio-group v-model="form.is_voter" inline>
+              <v-radio label="No" :value="false"></v-radio>
+              <v-radio label="Yes" :value="true"></v-radio>
+            </v-radio-group>
           </v-col>
         </v-row>
-      </v-card-item>
+        <v-row v-if="form.is_voter && headCalculatedAge >= 18">
+          <v-col cols="12" md="6">
+            <label class="v-label">Voter's ID Number</label>
+            <v-text-field v-model="form.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vHead$.voter_id_number.$errors.map(e => e.$message)" @blur="vHead$.voter_id_number.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload Voter's ID Card</label>
+            <v-file-input v-model="form.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vHead$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.voter_id_file.$touch()"></v-file-input>
+            <v-img v-if="voterIdPreviewUrl" :src="voterIdPreviewUrl" class="mt-2" height="150" contain></v-img>
+          </v-col>
+        </v-row>
+
+        <v-divider class="my-6"></v-divider>
+        <p class="text-subtitle-2 mb-4">Special Classification</p>
+        <v-row>
+          <v-col cols="12">
+            <label class="v-label font-weight-medium mb-1">Person with Disability (PWD)?</label>
+            <v-radio-group v-model="form.is_pwd" inline>
+              <v-radio label="No" :value="false"></v-radio>
+              <v-radio label="Yes" :value="true"></v-radio>
+            </v-radio-group>
+          </v-col>
+        </v-row>
+        <v-row v-if="form.is_pwd">
+          <v-col cols="12" md="6">
+            <label class="v-label">PWD ID Number</label>
+            <v-text-field v-model="form.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vHead$.pwd_id.$errors.map(e => e.$message)" @blur="vHead$.pwd_id.$touch()"></v-text-field>
+          </v-col>
+          <v-col cols="12" md="6">
+            <label class="v-label">Upload PWD ID Card</label>
+            <v-file-input v-model="form.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vHead$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.pwd_card_file.$touch()"></v-file-input>
+            <v-img v-if="pwdCardPreviewUrl" :src="pwdCardPreviewUrl" class="mt-2" height="150" contain></v-img>
+          </v-col>
+        </v-row>
+        <v-row v-if="isHeadSenior">
+          <v-divider class="my-4"></v-divider>
+          <v-col cols="12">
+            <label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label>
+            <v-radio-group v-model="form.is_senior_citizen" inline>
+              <v-radio label="No" :value="false"></v-radio>
+              <v-radio label="Yes" :value="true"></v-radio>
+            </v-radio-group>
+          </v-col>
+          <template v-if="form.is_senior_citizen">
+            <v-col cols="12" md="6">
+              <label class="v-label">Senior Citizen ID Number</label>
+              <v-text-field v-model="form.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vHead$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vHead$.senior_citizen_id.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Senior Citizen ID Card</label>
+              <v-file-input v-model="form.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vHead$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vHead$.senior_citizen_card_file.$touch()"></v-file-input>
+              <v-img v-if="seniorCardPreviewUrl" :src="seniorCardPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
+          </template>
+        </v-row>
+      </v-card-text>
     </v-card>
+
+    <!-- Household Members Section -->
+    <v-card class="mt-10" flat border>
+      <v-card-title class="text-h6 font-weight-medium d-flex justify-space-between align-center">
+        <span>Household Members</span>
+        <v-btn color="primary" variant="tonal" @click="openMemberDialog()" prepend-icon="mdi-account-plus" :disabled="!form.is_household_head">Add New Member</v-btn>
+      </v-card-title>
+      <v-card-text>
+        <div v-if="!form.is_household_head" class="text-center text-grey py-4">
+          Select "Yes" for "Are you a household head?" to add members.
+        </div>
+        <v-table v-else-if="form.household_members_to_create.length > 0">
+          <thead>
+            <tr>
+              <th class="text-left">Name</th>
+              <th class="text-left">Relationship</th>
+              <th class="text-left">Age</th>
+              <th class="text-left">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(member, index) in form.household_members_to_create" :key="index">
+              <td>{{ member.first_name }} {{ member.middle_name ? member.middle_name + ' ' : '' }}{{ member.last_name }}{{ member.suffix ? ' ' + member.suffix : '' }}</td>
+              <td>{{ member.relationship_to_head === 'Other' ? member.other_relationship : member.relationship_to_head }}</td>
+              <td>{{ calculateAge(member.date_of_birth) }}</td>
+              <td>
+                <v-btn icon="mdi-pencil-outline" variant="text" color="primary" size="small" @click="openMemberDialog(index)"></v-btn>
+                <v-btn icon="mdi-delete-outline" variant="text" color="error" size="small" @click="removeMember(index)"></v-btn>
+              </td>
+            </tr>
+          </tbody>
+        </v-table>
+        <p v-else class="text-center text-grey py-4">No members have been added yet.</p>
+      </v-card-text>
+    </v-card>
+
+    <!-- Member Form Dialog -->
+    <v-dialog v-model="showMemberDialog" persistent max-width="900px" scrollable>
+      <v-card>
+        <v-card-title class="text-h5">{{ editingMemberIndex === null ? 'Add New' : 'Edit' }} Household Member</v-card-title>
+        <v-card-text>
+          <p class="text-subtitle-2 mb-4">Personal Information</p>
+          <v-row>
+            <v-col cols="12" md="4">
+              <label class="v-label">First Name *</label>
+              <v-text-field v-model="memberForm.first_name" label="First Name *" variant="outlined" :error-messages="vMember$.first_name.$errors.map(e => e.$message)" @blur="vMember$.first_name.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Middle Name</label>
+              <v-text-field v-model="memberForm.middle_name" label="Middle Name" variant="outlined"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="3">
+              <label class="v-label">Last Name *</label>
+              <v-text-field v-model="memberForm.last_name" label="Last Name *" variant="outlined" :error-messages="vMember$.last_name.$errors.map(e => e.$message)" @blur="vMember$.last_name.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="1">
+              <label class="v-label">Suffix</label>
+              <v-select v-model="memberForm.suffix" :items="suffixOptions" label="Suffix" variant="outlined" clearable></v-select>
+            </v-col>
+            
+            <v-col cols="12" md="6">
+              <label class="v-label">Relationship to Head *</label>
+              <v-select v-model="memberForm.relationship_to_head" :items="relationshipOptions" label="Relationship to Head *" variant="outlined" :error-messages="vMember$.relationship_to_head.$errors.map(e => e.$message)" @blur="vMember$.relationship_to_head.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="6" v-if="memberForm.relationship_to_head === 'Other'">
+                <label class="v-label">Please Specify Relationship *</label>
+                <v-text-field v-model="memberForm.other_relationship" label="Please Specify Relationship *" variant="outlined" :error-messages="vMember$.other_relationship.$errors.map(e => e.$message)" @blur="vMember$.other_relationship.$touch()"></v-text-field>
+            </v-col>
+
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Proof of Relationship *</label>
+              <v-file-input v-model="memberForm.proof_of_relationship_file" label="Upload Proof of Relationship *" variant="outlined" accept="image/*,.pdf" hint="Required for relationship validation'." persistent-hint :error-messages="vMember$.proof_of_relationship_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.proof_of_relationship_file.$touch()"></v-file-input>
+              <v-img v-if="memberRelationshipProofPreviewUrl" :src="memberRelationshipProofPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
+
+            <v-col cols="12" md="3">
+              <label class="v-label">Sex *</label>
+              <v-select v-model="memberForm.sex" :items="['Male', 'Female']" label="Sex *" variant="outlined" placeholder="Select Sex" :error-messages="vMember$.sex.$errors.map(e => e.$message)" @blur="vMember$.sex.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="3">
+              <label class="v-label">Date of Birth *</label>
+              <v-text-field v-model="memberForm.date_of_birth" label="Date of Birth *" type="date" variant="outlined" :error-messages="vMember$.date_of_birth.$errors.map(e => e.$message)" @blur="vMember$.date_of_birth.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="2">
+              <label class="v-label">Age</label>
+              <v-text-field :model-value="memberAge" label="Age" type="number" variant="outlined" readonly></v-text-field>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Civil Status *</label>
+              <v-select v-model="memberForm.civil_status" :items="['Single', 'Married', 'Widowed', 'Separated']" label="Civil Status *" variant="outlined" placeholder="Select Civil Status" :error-messages="vMember$.civil_status.$errors.map(e => e.$message)" @blur="vMember$.civil_status.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Citizenship *</label>
+              <v-select v-model="memberForm.citizenship" :items="['Filipino', 'Other']" label="Citizenship *" variant="outlined" placeholder="Select Citizenship" :error-messages="vMember$.citizenship.$errors.map(e => e.$message)" @blur="vMember$.citizenship.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Occupation Status *</label>
+              <v-select v-model="memberForm.occupation_status" :items="['Labor force', 'Unemployed', 'Out of School Youth (OSY)', 'Student', 'Retired', 'Not Applicable']" label="Occupation Status *" variant="outlined" :error-messages="vMember$.occupation_status.$errors.map(e => e.$message)" @blur="vMember$.occupation_status.$touch()"></v-select>
+            </v-col>
+            <v-col cols="12" md="4">
+              <label class="v-label">Contact Number</label>
+              <v-text-field v-model="memberForm.contact_number" label="Contact Number" variant="outlined"></v-text-field>
+            </v-col>
+          </v-row>
+          
+          <v-divider class="my-6"></v-divider>
+          <p class="text-subtitle-2 mb-4">Voter Information</p>
+          <v-row v-if="memberAge >= 18">
+            <v-col cols="12">
+              <label class="v-label font-weight-medium mb-1">Registered Voter?</label>
+              <v-radio-group v-model="memberForm.is_voter" inline>
+                <v-radio label="No" :value="false"></v-radio>
+                <v-radio label="Yes" :value="true"></v-radio>
+              </v-radio-group>
+            </v-col>
+          </v-row>
+          <v-row v-if="memberForm.is_voter && memberAge >= 18">
+            <v-col cols="12" md="6">
+              <label class="v-label">Voter's ID Number</label>
+              <v-text-field v-model="memberForm.voter_id_number" label="Voter's ID Number" variant="outlined" hint="Required if ID card is not uploaded." persistent-hint :error-messages="vMember$.voter_id_number.$errors.map(e => e.$message)" @blur="vMember$.voter_id_number.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload Voter's ID Card</label>
+              <v-file-input v-model="memberForm.voter_id_file" label="Upload Voter's ID Card" variant="outlined" accept="image/*,application/pdf" hint="Required if ID number is not provided." persistent-hint :error-messages="vMember$.voter_id_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.voter_id_file.$touch()"></v-file-input>
+              <v-img v-if="memberVoterIdPreviewUrl" :src="memberVoterIdPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
+          </v-row>
+          
+          <v-divider class="my-6"></v-divider>
+          <p class="text-subtitle-2 mb-4">Special Classification</p>
+          <v-row>
+            <v-col cols="12">
+              <label class="v-label font-weight-medium mb-1">Person with Disability (PWD)?</label>
+              <v-radio-group v-model="memberForm.is_pwd" inline>
+                <v-radio label="No" :value="false"></v-radio>
+                <v-radio label="Yes" :value="true"></v-radio>
+              </v-radio-group>
+            </v-col>
+          </v-row>
+          <v-row v-if="memberForm.is_pwd">
+            <v-col cols="12" md="6">
+              <label class="v-label">PWD ID Number</label>
+              <v-text-field v-model="memberForm.pwd_id" label="PWD ID Number" variant="outlined" hint="Required if PWD card is not uploaded." persistent-hint :error-messages="vMember$.pwd_id.$errors.map(e => e.$message)" @blur="vMember$.pwd_id.$touch()"></v-text-field>
+            </v-col>
+            <v-col cols="12" md="6">
+              <label class="v-label">Upload PWD ID Card</label>
+              <v-file-input v-model="memberForm.pwd_card_file" label="Upload PWD ID Card" variant="outlined" accept="image/*" hint="Required if PWD ID number is not provided." persistent-hint :error-messages="vMember$.pwd_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.pwd_card_file.$touch()"></v-file-input>
+              <v-img v-if="memberPwdCardPreviewUrl" :src="memberPwdCardPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
+          </v-row>
+          <v-row v-if="isMemberSenior">
+            <v-divider class="my-4"></v-divider>
+            <v-col cols="12">
+              <label class="v-label font-weight-medium mb-1">Registered Senior Citizen? (Age 60+)</label>
+              <v-radio-group v-model="memberForm.is_senior_citizen" inline>
+                <v-radio label="No" :value="false"></v-radio>
+                <v-radio label="Yes" :value="true"></v-radio>
+              </v-radio-group>
+            </v-col>
+            <template v-if="memberForm.is_senior_citizen">
+              <v-col cols="12" md="6">
+                <label class="v-label">Senior Citizen ID Number</label>
+                <v-text-field v-model="memberForm.senior_citizen_id" label="Senior Citizen ID Number" variant="outlined" hint="Required if Senior card is not uploaded." persistent-hint :error-messages="vMember$.senior_citizen_id.$errors.map(e => e.$message)" @blur="vMember$.senior_citizen_id.$touch()"></v-text-field>
+              </v-col>
+              <v-col cols="12" md="6">
+                <label class="v-label">Upload Senior Citizen ID Card</label>
+                <v-file-input v-model="memberForm.senior_citizen_card_file" label="Upload Senior Citizen ID Card" variant="outlined" accept="image/*" hint="Required if Senior ID number is not provided." persistent-hint :error-messages="vMember$.senior_citizen_card_file.$errors.map(e => e.$message)" show-size clearable @blur="vMember$.senior_citizen_card_file.$touch()"></v-file-input>
+                <v-img v-if="memberSeniorCardPreviewUrl" :src="memberSeniorCardPreviewUrl" class="mt-2" height="150" contain></v-img>
+            </v-col>
+            </template>
+          </v-row>
+        </v-card-text>
+        <v-card-actions>
+          <v-spacer></v-spacer>
+          <v-btn color="grey" text @click="closeMemberDialog">Cancel</v-btn>
+          <v-btn color="primary" @click="saveMember">{{ editingMemberIndex === null ? 'Add Member' : 'Save Changes' }}</v-btn>
+        </v-card-actions>
+      </v-card>
+    </v-dialog>
   </v-container>
 </template>
+
+<script setup>
+import { reactive, ref, computed, watch, onBeforeUnmount } from 'vue';
+import { useRouter } from 'vue-router';
+import { useVuelidate } from '@vuelidate/core';
+import { required, email, minLength, requiredIf, helpers, numeric } from '@vuelidate/validators';
+import { useMyFetch } from '~/composables/useMyFetch';
+import { useNuxtApp } from '#app';
+
+const { $toast } = useNuxtApp();
+const router = useRouter();
+const saving = ref(false);
+
+const suffixOptions = ['Jr.', 'Sr.', 'I', 'II', 'III', 'IV', 'V', 'VI'];
+const relationshipOptions = [
+  'Spouse', 'Son', 'Daughter', 'Father', 'Mother', 'Brother', 'Sister', 'Grandfather', 'Grandmother', 
+  'Grandchild', 'Uncle', 'Aunt', 'Cousin', 'Nephew', 'Niece', 'In-law', 
+  'Household Help / Kasambahay', 'Other'
+];
+
+// Main Resident Form (Potential Household Head)
+const form = reactive({
+  first_name: '', middle_name: '', last_name: '', suffix: null,
+  sex: null, date_of_birth: '',
+  civil_status: null, citizenship: 'Filipino', occupation_status: null, email: '', contact_number: '',
+  address_house_number: '', 
+  address_unit_room_apt_number: '',
+  address_street: '', address_subdivision_zone: '', address_city_municipality: 'Manila City',
+  years_at_current_address: null, 
+  proof_of_residency_file: [],
+  is_voter: false, voter_id_number: '', voter_id_file: null,
+  is_pwd: false, pwd_id: '', pwd_card_file: null,
+  is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null,
+  is_household_head: false, // New field to determine if this resident is a head
+  household_members_to_create: [], // Array to hold new member objects
+});
+
+const voterIdPreviewUrl = ref(null);
+const pwdCardPreviewUrl = ref(null);
+const seniorCardPreviewUrl = ref(null);
+const proofResidencyPreviews = ref([]); 
+let proofResidencyIdCounter = 0;
+
+const calculateAge = (dob) => {
+  if (!dob) return null;
+  const birthDate = new Date(dob);
+  if (isNaN(birthDate.getTime())) return null;
+  let age = new Date().getFullYear() - birthDate.getFullYear();
+  const m = new Date().getMonth() - birthDate.getMonth();
+  if (m < 0 || (m === 0 && new Date().getDate() < birthDate.getDate())) age--;
+  return age >= 0 ? age : null;
+};
+
+const headCalculatedAge = computed(() => calculateAge(form.date_of_birth));
+const isHeadSenior = computed(() => headCalculatedAge.value !== null && headCalculatedAge.value >= 60);
+
+const dateOfBirthValidation = {
+  required,
+  minValue: helpers.withMessage('Date of birth cannot be more than 100 years ago.', (value) => {
+    if (!value) return true;
+    const hundredYearsAgo = new Date();
+    hundredYearsAgo.setFullYear(hundredYearsAgo.getFullYear() - 100);
+    return new Date(value) >= hundredYearsAgo;
+  }),
+  maxValue: helpers.withMessage('Date of birth cannot be in the future.', (value) => {
+    if (!value) return true;
+    return new Date(value) <= new Date();
+  })
+};
+
+const headRules = {
+  first_name: { 
+    required: helpers.withMessage('First Name is required.', required), 
+    alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+  },
+  middle_name: { 
+    alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+  },
+  last_name: { 
+    required: helpers.withMessage('Last Name is required.', required), 
+    alpha: helpers.withMessage('Only alphabetic characters and spaces are allowed.', helpers.regex(/^[a-zA-Z\s]*$/)) 
+  },
+  suffix: {},
+  sex: { required: helpers.withMessage('Sex is required.', required) }, 
+  date_of_birth: dateOfBirthValidation,
+  civil_status: { required: helpers.withMessage('Civil Status is required.', required) }, 
+  citizenship: { required: helpers.withMessage('Citizenship is required.', required) }, 
+  occupation_status: { required: helpers.withMessage('Occupation Status is required.', required) },
+  email: { required: helpers.withMessage('Email Address is required.', required), email: helpers.withMessage('Must be a valid email address.', email) }, 
+  contact_number: { required: helpers.withMessage('Contact Number is required.', required), numeric: helpers.withMessage('Must be a valid contact number (digits only).', numeric), minLength: helpers.withMessage('Contact Number must be 11 digits.', minLength(11)) },
+  address_house_number: { required: helpers.withMessage('House Number/Lot/Block is required.', required), numeric: helpers.withMessage('Must be a valid number.', numeric) }, 
+  address_unit_room_apt_number: { },
+  address_street: { required: helpers.withMessage('Street is required.', required) }, 
+  address_subdivision_zone: { required: helpers.withMessage('Subdivision/Zone/Sitio/Purok is required.', required) },
+  years_at_current_address: { required: helpers.withMessage('Years at Current Address is required.', required), numeric: helpers.withMessage('Must be a valid number.', numeric) }, 
+  proof_of_residency_file: { 
+    required: helpers.withMessage('At least one Proof of Residency is required.', (value) => value && value.length > 0),
+    maxLength: helpers.withMessage('You can upload a maximum of 5 proof of residency files.', (value) => {
+      return value.length <= 5;
+    })
+  },
+  is_voter: {},
+  voter_id_number: { 
+    requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf((value) => form.is_voter && !form.voter_id_file)) 
+  },
+  voter_id_file: { 
+    requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf((value) => form.is_voter && !form.voter_id_number)) 
+  },
+  is_pwd: {},
+  pwd_id: { 
+    requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf((value) => form.is_pwd && !form.pwd_card_file)) 
+  },
+  pwd_card_file: { 
+    requiredIf: helpers.withMessage('PWD Card or ID Number is required.', requiredIf((value) => form.is_pwd && !form.pwd_id)) 
+  },
+  is_senior_citizen: {},
+  senior_citizen_id: { 
+    requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf((value) => form.is_senior_citizen && !form.senior_citizen_card_file)) 
+  },
+  senior_citizen_card_file: { 
+    requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf((value) => form.is_senior_citizen && !form.senior_citizen_id)) 
+  },
+};
+const vHead$ = useVuelidate(headRules, form);
+
+// Member Dialog State
+const showMemberDialog = ref(false);
+const editingMemberIndex = ref(null);
+
+const getInitialMemberForm = () => ({
+  first_name: '', middle_name: '', last_name: '', suffix: null,
+  relationship_to_head: null, other_relationship: '',
+  sex: null, date_of_birth: '', civil_status: null, citizenship: 'Filipino',
+  occupation_status: null, contact_number: '',
+  is_voter: false, voter_id_number: '', voter_id_file: null,
+  is_pwd: false, pwd_id: '', pwd_card_file: null,
+  is_senior_citizen: false, senior_citizen_id: '', senior_citizen_card_file: null,
+  proof_of_relationship_file: null
+});
+
+const memberForm = reactive(getInitialMemberForm());
+
+const memberVoterIdPreviewUrl = ref(null);
+const memberPwdCardPreviewUrl = ref(null);
+const memberSeniorCardPreviewUrl = ref(null);
+const memberRelationshipProofPreviewUrl = ref(null);
+
+const memberAge = computed(() => calculateAge(memberForm.date_of_birth));
+const isMemberSenior = computed(() => memberAge.value !== null && memberAge.value >= 60);
+
+const memberRules = {
+  first_name: { required: helpers.withMessage('First Name is required.', required) }, 
+  last_name: { required: helpers.withMessage('Last Name is required.', required) },
+  suffix: {},
+  relationship_to_head: { required: helpers.withMessage('Relationship to Head is required.', required) },
+  other_relationship: { 
+    requiredIf: helpers.withMessage('Please specify the relationship.', requiredIf(() => memberForm.relationship_to_head === 'Other')) 
+  },
+  sex: { required: helpers.withMessage('Sex is required.', required) }, 
+  date_of_birth: dateOfBirthValidation, 
+  civil_status: { required: helpers.withMessage('Civil Status is required.', required) },
+  citizenship: { required: helpers.withMessage('Citizenship is required.', required) }, 
+  occupation_status: { required: helpers.withMessage('Occupation Status is required.', required) },
+  proof_of_relationship_file: { required: helpers.withMessage('Proof of Relationship is required.', required) },
+  is_voter: {},
+  voter_id_number: { 
+    requiredIf: helpers.withMessage("Voter's ID Number or Card is required.", requiredIf((value) => memberForm.is_voter && !memberForm.voter_id_file)) 
+  },
+  voter_id_file: { 
+    requiredIf: helpers.withMessage("Voter's ID Card or Number is required.", requiredIf((value) => memberForm.is_voter && !memberForm.voter_id_number)) 
+  },
+  is_pwd: {},
+  pwd_id: { 
+    requiredIf: helpers.withMessage('PWD ID Number or Card is required.', requiredIf((value) => memberForm.is_pwd && !memberForm.pwd_card_file)) 
+  },
+  pwd_card_file: { 
+    requiredIf: helpers.withMessage('PWD Card or ID Number is required.', requiredIf((value) => memberForm.is_pwd && !memberForm.pwd_id)) 
+  },
+  is_senior_citizen: {},
+  senior_citizen_id: { 
+    requiredIf: helpers.withMessage('Senior Citizen ID Number or Card is required.', requiredIf((value) => memberForm.is_senior_citizen && !memberForm.senior_citizen_card_file)) 
+  },
+  senior_citizen_card_file: { 
+    requiredIf: helpers.withMessage('Senior Citizen Card or ID Number is required.', requiredIf((value) => memberForm.is_senior_citizen && !memberForm.senior_citizen_id)) 
+  },
+};
+const vMember$ = useVuelidate(memberRules, memberForm);
+
+const urlCreator = (file) => file ? URL.createObjectURL(file) : null;
+const urlRevoker = (url) => { if (url) URL.revokeObjectURL(url); };
+
+// Watchers for main resident's file previews
+watch(() => form.proof_of_residency_file, (currentFiles, oldFiles) => {
+  if (oldFiles) {
+    proofResidencyPreviews.value.forEach(item => {
+      if (!currentFiles.includes(item.file)) { // Revoke if file is no longer in currentFiles
+        urlRevoker(item.url);
+      }
+    });
+  }
+
+  const newPreviews = [];
+  const filesToPreview = currentFiles.slice(0, 5); // Ensure limit is respected
+  filesToPreview.forEach(file => {
+    const existingPreview = proofResidencyPreviews.value.find(p => p.file === file);
+    if (existingPreview) {
+      newPreviews.push(existingPreview);
+    } else {
+      newPreviews.push({
+        file: file,
+        url: urlCreator(file),
+        id: proofResidencyIdCounter++
+      });
+    }
+  });
+  proofResidencyPreviews.value = newPreviews;
+}, { deep: true, immediate: true });
+
+watch(() => form.voter_id_file, (newFile, oldFile) => { 
+  urlRevoker(voterIdPreviewUrl.value); 
+  voterIdPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => form.pwd_card_file, (newFile, oldFile) => { 
+  urlRevoker(pwdCardPreviewUrl.value); 
+  pwdCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => form.senior_citizen_card_file, (newFile, oldFile) => { 
+  urlRevoker(seniorCardPreviewUrl.value); 
+  seniorCardPreviewUrl.value = urlCreator(newFile); 
+});
+
+const removeProofOfResidencyImage = (indexToRemove) => {
+  urlRevoker(proofResidencyPreviews.value[indexToRemove]?.url);
+  form.proof_of_residency_file.splice(indexToRemove, 1);
+  proofResidencyPreviews.value.splice(indexToRemove, 1);
+  vHead$.value.proof_of_residency_file.$touch(); // Trigger re-validation
+};
+
+// Watchers for member's file previews
+watch(() => memberForm.voter_id_file, (newFile, oldFile) => { 
+  urlRevoker(memberVoterIdPreviewUrl.value);
+  memberVoterIdPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.pwd_card_file, (newFile, oldFile) => { 
+  urlRevoker(memberPwdCardPreviewUrl.value);
+  memberPwdCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.senior_citizen_card_file, (newFile, oldFile) => { 
+  urlRevoker(memberSeniorCardPreviewUrl.value);
+  memberSeniorCardPreviewUrl.value = urlCreator(newFile); 
+});
+watch(() => memberForm.proof_of_relationship_file, (newFile, oldFile) => { 
+  urlRevoker(memberRelationshipProofPreviewUrl.value);
+  memberRelationshipProofPreviewUrl.value = urlCreator(newFile); 
+});
+
+
+// Member Dialog Functions
+const openMemberDialog = (index = null) => { 
+  if (index !== null) {
+    editingMemberIndex.value = index;
+    // Deep copy the member object to avoid direct mutation
+    Object.assign(memberForm, JSON.parse(JSON.stringify(form.household_members_to_create[index])));
+
+    // Re-create URLs for existing files when editing
+    memberVoterIdPreviewUrl.value = urlCreator(memberForm.voter_id_file);
+    memberPwdCardPreviewUrl.value = urlCreator(memberForm.pwd_card_file);
+    memberSeniorCardPreviewUrl.value = urlCreator(memberForm.senior_citizen_card_file);
+    memberRelationshipProofPreviewUrl.value = urlCreator(memberForm.proof_of_relationship_file);
+  } else {
+    editingMemberIndex.value = null;
+    Object.assign(memberForm, getInitialMemberForm());
+    // Clear preview URLs for new member
+    urlRevoker(memberVoterIdPreviewUrl.value); memberVoterIdPreviewUrl.value = null;
+    urlRevoker(memberPwdCardPreviewUrl.value); memberPwdCardPreviewUrl.value = null;
+    urlRevoker(memberSeniorCardPreviewUrl.value); memberSeniorCardPreviewUrl.value = null;
+    urlRevoker(memberRelationshipProofPreviewUrl.value); memberRelationshipProofPreviewUrl.value = null;
+  }
+  showMemberDialog.value = true;
+};
+
+const closeMemberDialog = () => {
+    showMemberDialog.value = false;
+    editingMemberIndex.value = null;
+    vMember$.value.$reset(); // Reset validation state for the member form
+
+    // Revoke and clear preview URLs
+    urlRevoker(memberVoterIdPreviewUrl.value);
+    urlRevoker(memberPwdCardPreviewUrl.value);
+    urlRevoker(memberSeniorCardPreviewUrl.value);
+    urlRevoker(memberRelationshipProofPreviewUrl.value);
+    memberVoterIdPreviewUrl.value = null;
+    memberPwdCardPreviewUrl.value = null;
+    memberSeniorCardPreviewUrl.value = null;
+    memberRelationshipProofPreviewUrl.value = null;
+
+    Object.assign(memberForm, getInitialMemberForm()); // Reset memberForm to initial state
+};
+
+const saveMember = async () => {
+  const isFormCorrect = await vMember$.value.$validate();
+  if (!isFormCorrect) return;
+
+  if (editingMemberIndex.value !== null) {
+    form.household_members_to_create[editingMemberIndex.value] = { ...memberForm };
+  } else {
+    form.household_members_to_create.push({ ...memberForm });
+  }
+  closeMemberDialog();
+};
+
+const removeMember = (index) => { 
+  // Revoke object URLs for files of the removed member to prevent memory leaks
+  const memberToRemove = form.household_members_to_create[index];
+  urlRevoker(urlCreator(memberToRemove.voter_id_file));
+  urlRevoker(urlCreator(memberToRemove.pwd_card_file));
+  urlRevoker(urlCreator(memberToRemove.senior_citizen_card_file));
+  urlRevoker(urlCreator(memberToRemove.proof_of_relationship_file));
+
+  form.household_members_to_create.splice(index, 1); 
+};
+
+
+const convertFileToBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    // If the file is already a base64 string (e.g., when editing and not changing the file)
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      resolve(file);
+      return;
+    }
+
+    if (!(file instanceof File || file instanceof Blob)) {
+        console.warn('Attempted to convert non-File/Blob object to base64:', file);
+        resolve(null);
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+};
+
+async function saveResident() {
+  const isFormCorrect = await vHead$.value.$validate();
+  
+  if (!isFormCorrect) { 
+    $toast.fire({ title: 'Please correct all errors for the Resident Information.', icon: 'error' }); 
+    return; 
+  }
+  
+  if (headCalculatedAge.value < 15 && form.is_household_head) {
+    $toast.fire({ title: 'Household Head must be at least 15 years old to register.', icon: 'error' });
+    return;
+  }
+
+  saving.value = true;
+  try {
+    const payload = { ...form };
+    
+    payload.age = headCalculatedAge.value;
+    payload.status = 'Pending'; // Default status for new resident
+    payload.date_created = new Date(); // Set creation date
+    payload.date_updated = new Date(); // Set updated date
+
+    const [
+      voter_registration_proof_base64,
+      pwd_card_base64,
+      senior_citizen_card_base64,
+      proof_of_residency_base64_array
+    ] = await Promise.all([
+      convertFileToBase64(form.voter_id_file),
+      convertFileToBase64(form.pwd_card_file),
+      convertFileToBase64(form.senior_citizen_card_file),
+      Promise.all(form.proof_of_residency_file.slice(0, 5).map(file => convertFileToBase64(file))),
+    ]);
+
+    payload.voter_registration_proof_base64 = voter_registration_proof_base64;
+    payload.pwd_card_base64 = pwd_card_base64;
+    payload.senior_citizen_card_base64 = senior_citizen_card_base64;
+    payload.proof_of_residency_base64 = proof_of_residency_base64_array.filter(Boolean);
+    
+    payload.household_members_to_create = await Promise.all(
+      form.household_members_to_create.map(async (member) => {
+        const newMemberPayload = { ...member };
+        
+        newMemberPayload.status = 'Pending';
+        newMemberPayload.date_created = new Date(); 
+        newMemberPayload.date_updated = new Date();
+
+        const [
+            member_voter_registration_proof_base64,
+            member_pwd_card_base64,
+            member_senior_citizen_card_base64,
+            member_proof_of_relationship_base64
+        ] = await Promise.all([
+            convertFileToBase64(member.voter_id_file),
+            convertFileToBase64(member.pwd_card_file),
+            convertFileToBase64(member.senior_citizen_card_file),
+            convertFileToBase64(member.proof_of_relationship_file)
+        ]);
+
+        newMemberPayload.voter_registration_proof_base64 = member_voter_registration_proof_base64;
+        newMemberPayload.pwd_card_base64 = member_pwd_card_base64;
+        newMemberPayload.senior_citizen_card_base64 = member_senior_citizen_card_base64;
+        newMemberPayload.proof_of_relationship_base64 = member_proof_of_relationship_base64;
+
+        // Remove file objects before sending to backend
+        delete newMemberPayload.voter_id_file;
+        delete newMemberPayload.pwd_card_file;
+        delete newMemberPayload.senior_citizen_card_file;
+        delete newMemberPayload.proof_of_relationship_file;
+        
+        return newMemberPayload;
+      })
+    );
+    
+    // Remove file objects from the main payload before sending to backend
+    delete payload.voter_id_file;
+    delete payload.pwd_card_file;
+    delete payload.senior_citizen_card_file;
+    delete payload.proof_of_residency_file;
+    
+    const { data, error } = await useMyFetch("/api/residents", { method: 'post', body: payload });
+    if (error.value) throw new Error(error.value.data?.message || 'Error registering resident.');
+    
+    $toast.fire({ title: 'Resident registered successfully!', icon: 'success' });
+    
+    router.push('/residents-account-management'); // Redirect to a residents list or dashboard
+
+  } catch (err) {
+    console.error("Registration error:", err);
+    $toast.fire({ title: err.message || 'An unexpected error occurred.', icon: 'error' });
+  } finally {
+    saving.value = false;
+  }
+}
+
+onBeforeUnmount(() => {
+  // Revoke URLs for main resident files
+  urlRevoker(voterIdPreviewUrl.value);
+  urlRevoker(pwdCardPreviewUrl.value);
+  urlRevoker(seniorCardPreviewUrl.value);
+  proofResidencyPreviews.value.forEach(item => urlRevoker(item.url));
+
+  // Revoke URLs for all members' files
+  form.household_members_to_create.forEach(member => {
+    urlRevoker(urlCreator(member.voter_id_file));
+    urlRevoker(urlCreator(member.pwd_card_file));
+    urlRevoker(urlCreator(member.senior_citizen_card_file));
+    urlRevoker(urlCreator(member.proof_of_relationship_file));
+  });
+});
+</script>
+
+<style scoped>
+.v-label { opacity: 1; font-size: 0.875rem; color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity)); display: block; margin-bottom: 4px; font-weight: 500; }
+.gap-2 { gap: 8px; }
+.position-relative { position: relative; }
+.position-absolute { position: absolute; }
+.v-list-item-title {
+  font-size: 0.875rem !important;
+  line-height: 1.2;
+}
+</style>

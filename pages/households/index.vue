@@ -105,11 +105,11 @@
               variant="tonal"
               color="primary"
               size="small"
-              :to="`/residents/${item.household_id}`" 
-              prepend-icon="mdi-account-details-outline"
-              title="View Household Head Details"
+              :to="`/households/${item.household_id}`"
+              prepend-icon="mdi-home-account"
+              title="View Household Details"
             >
-              View Head
+              View Household
             </v-btn>
           </template>
 
