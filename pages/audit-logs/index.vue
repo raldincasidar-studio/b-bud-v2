@@ -195,6 +195,9 @@
                     (No specific date filter applied)
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ logsForPrint.length }} Logs
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

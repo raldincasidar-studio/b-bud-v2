@@ -21,7 +21,7 @@
           variant="outlined"
           color="primary"
           label="Search Households"
-          placeholder="Search by Head's Name, Household No..."
+          placeholder="Search by Head's Name, Household No., Address..."
           clearable
           flat
           hide-details
@@ -62,18 +62,23 @@
             {{ item.household_number }}
           </template>
 
+          <!-- Slot for Head Full Name -->
+          <template v-slot:item.head_full_name="{ item }">
+            {{ item.head_first_name }} {{ item.head_last_name }}
+          </template>
+
           <!-- Slot for Number of Members -->
           <template v-slot:item.number_of_members="{ item }">
             <v-chip small :color="item.number_of_members > 0 ? 'blue' : 'grey'">
               {{ item.number_of_members }}
             </v-chip>
           </template>
-          
-          <!-- Slot for Head Full Name -->
-          <template v-slot:item.head_full_name="{ item }">
-            {{ item.head_first_name }} {{ item.head_last_name }}
-          </template>
 
+          <!-- NEW Slot for Address -->
+          <template v-slot:item.address="{ item }">
+            {{ item.address }}
+          </template>
+          
           <!-- Slot for Unit/Room/Apartment Number -->
           <template v-slot:item.head_address_unit_room_apt_number="{ item }">
             {{ item.head_address_unit_room_apt_number || 'N/A' }}
@@ -136,6 +141,8 @@
         </v-toolbar>
         <v-card-text class="pa-8">
           <div id="print-area">
+            <!-- The content for printing is now generated dynamically in the printContent method -->
+            <!-- The template section here will still be shown in the dialog, but printContent overrides it for the actual print -->
             <h3 class="text-h5 text-center mb-6">Households Report</h3>
             <p class="text-center text-grey-darken-1 mb-4">
                 Report Date: {{ new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }) }}
@@ -145,6 +152,9 @@
                 <span v-else>
                     (No specific search filter applied)
                 </span>
+            </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ householdsForPrint.length }} Households
             </p>
             <table class="print-table">
               <thead>
@@ -158,6 +168,7 @@
                   <td>{{ item.household_number }}</td>
                   <td>{{ item.head_first_name }} {{ item.head_last_name }}</td>
                   <td>{{ item.number_of_members }}</td>
+                  <td>{{ item.address }}</td>
                   <td>{{ item.head_address_unit_room_apt_number || 'N/A' }}</td>
                   <td>{{ item.head_type_of_household || 'N/A' }}</td>
                   <td>{{ formatDate(item.head_date_approved) }}</td>
@@ -199,7 +210,7 @@ const headers = ref([
   { title: 'Household No.', key: 'household_number', sortable: false },
   { title: 'Head of Household', key: 'head_full_name', sortable: false, value: item => `${item.head_first_name || ''} ${item.head_last_name || ''}`.trim() },
   { title: 'No. of Members', key: 'number_of_members', sortable: false, align: 'center' },
-  // New fields
+  { title: 'Address', key: 'address', sortable: false }, // NEW ADDRESS FIELD
   { title: 'Unit/Room/Apt No.', key: 'head_address_unit_room_apt_number', sortable: false },
   { title: 'Type of Household', key: 'head_type_of_household', sortable: false },
   { title: 'Date Approved', key: 'head_date_approved', sortable: true, value: item => formatDate(item.head_date_approved) },
@@ -328,6 +339,30 @@ const printContent = () => {
   const printContentDiv = document.getElementById('print-area');
   if (printContentDiv) {
     const printWindow = window.open('', '_blank');
+
+    // Get the current date for the report
+    const reportDate = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const searchFilterText = searchKey.value ? `(Filtered by search: "${searchKey.value}")` : '(No specific search filter applied)';
+    const totalCountText = `Total Count: ${householdsForPrint.value.length} Households`;
+
+    // Construct the table rows dynamically for printing
+    const tableRowsHtml = householdsForPrint.value.map(item => `
+      <tr>
+        <td>${item.household_name}</td>
+        <td>${item.household_number}</td>
+        <td>${item.head_first_name} ${item.head_last_name}</td>
+        <td>${item.number_of_members}</td>
+        <td>${item.address}</td>
+        <td>${item.head_address_unit_room_apt_number || 'N/A'}</td>
+        <td>${item.head_type_of_household || 'N/A'}</td>
+        <td>${formatDate(item.head_date_approved)}</td>
+        <td>${formatDate(item.head_date_updated)}</td>
+      </tr>
+    `).join('');
+
+    // Construct the table headers dynamically for printing
+    const tableHeadersHtml = printableHeaders.value.map(header => `<th>${header.title}</th>`).join('');
+
     printWindow.document.write(`
       <html>
         <head>
@@ -352,6 +387,17 @@ const printContent = () => {
             }
             h3 { text-align: center; margin-bottom: 20px; color: #333; }
             p { text-align: center; margin-bottom: 15px; color: #555; }
+            .report-info {
+                text-align: center;
+                margin-bottom: 15px;
+                color: #555;
+            }
+            .total-count-display {
+                text-align: center;
+                font-weight: bold;
+                margin-bottom: 15px;
+                color: #333;
+            }
             .print-table {
               width: 100%;
               border-collapse: collapse;
@@ -384,7 +430,23 @@ const printContent = () => {
             <img src="${logoImage}" alt="B-Bud Logo" class="print-logo" />
             <div class="print-app-name">B-Bud</div>
           </div>
-          ${printContentDiv.innerHTML}
+          <h3 class="text-h5 text-center mb-6">Households Report</h3>
+          <p class="report-info">
+              Report Date: ${reportDate}
+              ${searchFilterText}
+          </p>
+          <p class="total-count-display">${totalCountText}</p>
+          <table class="print-table">
+            <thead>
+              <tr>
+                ${tableHeadersHtml}
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRowsHtml}
+            </tbody>
+          </table>
+          <p class="text-caption text-center mt-6">Generated by B-bud System.</p>
         </body>
       </html>
     `);

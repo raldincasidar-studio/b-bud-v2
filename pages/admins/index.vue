@@ -189,6 +189,9 @@
                     (No specific date filter applied)
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ adminsForPrint.length }} Admins
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

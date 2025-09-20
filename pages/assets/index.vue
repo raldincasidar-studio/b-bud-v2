@@ -223,6 +223,9 @@
                     (No date filter applied)
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ assetsForPrint.length }} Assets/Inventory
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

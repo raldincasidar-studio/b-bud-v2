@@ -241,6 +241,9 @@
                     for Type: {{ typeFilter }}
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ notificationsForPrint.length }} Notifications
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

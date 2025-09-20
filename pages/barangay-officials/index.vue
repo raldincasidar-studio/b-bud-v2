@@ -227,6 +227,9 @@
                     for Position: {{ positionFilter }}
                 </span>
             </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ officialsForPrint.length }} Barangay Officials
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

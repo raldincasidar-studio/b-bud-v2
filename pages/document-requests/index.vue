@@ -228,6 +228,10 @@
                     (No date filter applied)
                 </span>
             </p>
+            <!-- NEW: Total Count for print data -->
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ requestsForPrint.length }} Requests
+            </p>
             <table class="print-table">
               <thead>
                 <tr>

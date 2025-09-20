@@ -2619,7 +2619,10 @@ app.get('/api/households', async (req, res) => {
         { first_name: { $regex: searchRegex } },         // Search by head's first name
         { address_house_number: { $regex: searchRegex } }, // Search by household number
         { address_unit_room_apt_number: { $regex: searchRegex } }, // Search by unit number
-        { type_of_household: { $regex: searchRegex } } // Search by type of household
+        { type_of_household: { $regex: searchRegex } },  // Search by type of household
+        { address_street: { $regex: searchRegex } },     // NEW: Search by street
+        { address_subdivision_zone: { $regex: searchRegex } }, // NEW: Search by subdivision/zone
+        { address_city_municipality: { $regex: searchRegex } } // NEW: Search by city/municipality
       ];
     }
 
@@ -2653,12 +2656,15 @@ app.get('/api/households', async (req, res) => {
         _id: 1,
         last_name: 1,
         first_name: 1,
+        address_street: 1,            // NEW FIELD
+        address_subdivision_zone: 1,  // NEW FIELD
+        address_city_municipality: 1, // NEW FIELD
         address_house_number: 1,
         household_member_ids: 1,
-        address_unit_room_apt_number: 1, // NEW FIELD
-        type_of_household: 1,            // NEW FIELD
-        date_approved: 1,                // NEW FIELD (from frontend code)
-        date_updated: 1,                 // NEW FIELD (from frontend code)
+        address_unit_room_apt_number: 1,
+        type_of_household: 1,
+        date_approved: 1,
+        date_updated: 1,
       })
       .skip(skip)
       .limit(itemsPerPage)
@@ -2666,18 +2672,28 @@ app.get('/api/households', async (req, res) => {
       .toArray();
 
     // Transform the data
-    const formattedHouseholds = householdHeads.map(head => ({
-      household_id: head._id,
-      household_name: `${head.last_name}'s Household`,
-      household_number: head.address_house_number || 'N/A',
-      number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
-      head_first_name: head.first_name,
-      head_last_name: head.last_name,
-      head_address_unit_room_apt_number: head.address_unit_room_apt_number || 'N/A', // NEW
-      head_type_of_household: head.type_of_household || 'N/A',                         // NEW
-      head_date_approved: head.date_approved || null,                                 // NEW
-      head_date_updated: head.date_updated || null,                                   // NEW
-    }));
+    const formattedHouseholds = householdHeads.map(head => {
+      const addressParts = [
+        head.address_house_number,
+        head.address_street,
+        head.address_subdivision_zone,
+        head.address_city_municipality,
+      ].filter(Boolean); // Filter out any null or empty parts
+
+      return {
+        household_id: head._id,
+        household_name: `${head.last_name}'s Household`,
+        household_number: head.address_house_number || 'N/A',
+        address: addressParts.join(', ') || 'N/A', // NEW Combined Address field
+        number_of_members: Array.isArray(head.household_member_ids) ? head.household_member_ids.length : 0,
+        head_first_name: head.first_name,
+        head_last_name: head.last_name,
+        head_address_unit_room_apt_number: head.address_unit_room_apt_number || 'N/A',
+        head_type_of_household: head.type_of_household || 'N/A',
+        head_date_approved: head.date_approved || null,
+        head_date_updated: head.date_updated || null,
+      };
+    });
 
     const totalHouseholds = await residentsCollection.countDocuments(query);
 

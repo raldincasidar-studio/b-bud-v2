@@ -176,7 +176,7 @@
         <!-- UPDATED SLOT to include action menu -->
         <template v-slot:item.actions="{ item }">
             <v-btn variant="tonal" color="primary" size="small" :to="`/residents/${item._id}`" class="me-2">View</v-btn>
-            <v-menu>
+            <!-- <v-menu>
               <template v-slot:activator="{ props }">
                 <v-btn icon="mdi-dots-vertical" v-bind="props" variant="tonal" size="small"></v-btn>
               </template>
@@ -193,7 +193,7 @@
                   <v-list-item-title>{{ action.title }}</v-list-item-title>
                 </v-list-item>
               </v-list>
-            </v-menu>
+            </v-menu> -->
         </template>
 
         <template v-slot:no-data>
@@ -256,6 +256,9 @@
                 <span v-else>
                     (No date filter applied)
                 </span>
+            </p>
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ residentsForPrint.length }} Accounts
             </p>
             <table class="print-table">
               <thead>

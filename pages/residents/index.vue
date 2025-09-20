@@ -248,6 +248,10 @@
                     for {{ roleFilter }}s
                 </span>
             </p>
+            <!-- NEW: Total Count for print data -->
+            <p class="text-center font-weight-bold mb-4">
+                Total Count: {{ residentsForPrint.length }} Residents
+            </p>
             <table class="print-table">
               <thead>
                 <tr>
